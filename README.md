@@ -12,7 +12,9 @@ This repo is being used to track configuration + code changes on TurtleBot3 robo
 Document the steps to prepare the TurtleBot3 Raspberry Pi SBC **up through**:
 
 - Robotis SBC setup (Ubuntu Server, Wi‑Fi/SSH, stability tweaks)
-- ROS 2 Humble install **Step 1: Set locale (UTF‑8)** (and nothing beyond that yet)
+- ROS 2 Humble install and **Install and Build ROS Packages** (SBC setup Step 3.2.5, Step 2)
+
+**Workspace = this repo:** We use this repo as the `turtlebot3_ws` workspace on the Pi. The script installs into `src/` here so any changes you make to the cloned TurtleBot3/LDS/Coin D4 packages can be committed and pushed to this GitHub repo. Build/install/log are in `.gitignore`.
 
 ---
 
@@ -135,3 +137,64 @@ locale  # verify settings
 ```
 
 **Stop point**: Next ROS guide section is **“Setup Sources”** (not done yet in this README).
+
+---
+
+## SBC setup Step 3.2.5 — Install and Build ROS Packages (Step 2)
+
+After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "Install ROS 2 packages"), run **Step 2** of "Install and Build ROS Packages" so everything lives in this repo and changes can be committed.
+
+### On the Raspberry Pi (SBC)
+
+1. **Clone this repo** on the Pi into the workspace path you want (e.g. `turtlebot3_ws`):
+
+   ```bash
+   cd ~
+   git clone <your-repo-url> turtlebot3_ws
+   cd turtlebot3_ws
+   ```
+
+2. **Optional (2GB Pi):** Create swap before building (Robotis recommendation):
+
+   ```bash
+   sudo fallocate -l 2G /swapfile
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+   free -h
+   ```
+
+3. **Run the install script** (use wall power; build can take over an hour):
+
+   ```bash
+   chmod +x scripts/install_ros_packages_step2.sh
+   ./scripts/install_ros_packages_step2.sh
+   ```
+
+   The script will:
+   - Install apt and ROS packages (hls-lfcd-lds-driver, turtlebot3-msgs, dynamixel-sdk, xacro, etc.)
+   - Create `src/` and clone `turtlebot3`, `ld08_driver`, `coin_d4_driver` (Humble)
+   - Remove `turtlebot3_cartographer` and `turtlebot3_navigation2`
+   - Run `colcon build --symlink-install --parallel-workers 1`
+   - **Step 3:** Install USB udev rules for OpenCR (copy `99-turtlebot3-cdc.rules`, reload udev)
+   - Append `source <workspace>/install/setup.bash` and ROS Humble setup to `~/.bashrc`
+
+4. **Source the workspace** (or open a new shell):
+
+   ```bash
+   source ~/turtlebot3_ws/install/setup.bash
+   ```
+
+After this, `src/` contains the cloned repos; you can edit them and commit to this repo.
+
+**If you already ran the script before Step 3 was added**, run these on the Pi (after sourcing the workspace) to apply USB port settings for OpenCR:
+
+```bash
+source ~/turtlebot3_ws/install/setup.bash
+sudo cp $(ros2 pkg prefix turtlebot3_bringup)/share/turtlebot3_bringup/script/99-turtlebot3-cdc.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Next step on the e-manual: **3.2.5 Step 4** (ROS_DOMAIN_ID).

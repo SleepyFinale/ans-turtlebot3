@@ -1,0 +1,4 @@
+# Colcon workspace (keep src/ tracked so we can commit changes to cloned packages)
+build/
+install/
+log/
