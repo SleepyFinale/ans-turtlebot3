@@ -1,0 +1,9 @@
+/**:
+  ros__parameters:
+    port: "/dev/tb3_lidar"
+    frame_id: "base_scan"
+    baudrate: 230400
+    version: 4
+    topic_name: "scan"
+    reverse: False
+    warmup_time: 5  # seconds
