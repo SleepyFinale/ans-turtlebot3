@@ -14,13 +14,21 @@
 //
 // Author: Darby Lim
 
-#include "turtlebot3_node/sensors/laserScan.hpp"
+#include "turtlebot3_node/sensors/ultrasonic.hpp"
 
 #include <memory>
 #include <string>
 #include <utility>
 
 using robotis::turtlebot3::sensors::Ultrasonic;
+
+const float _angle_min = -1.57;
+const float _angle_max = 1.57;
+const float _angle_increment = 1.57;
+const float _time_increment = 0.0;
+const float _scan_time = 0.2;
+const float _range_min = 0.3; // 0.3m
+const float _range_max = 4.5; // 4.5m
 
 Ultrasonic::Ultrasonic(
   std::shared_ptr<rclcpp::Node> & nh,
@@ -48,25 +56,24 @@ void Ultrasonic::publish(
   ultrasonic_msg->angle_min = _angle_min;
   ultrasonic_msg->angle_max = _angle_max;
   ultrasonic_msg->angle_increment = _angle_increment;
-  ultrasonic_msg->time_increment _time_increment;
+  ultrasonic_msg->time_increment = _time_increment;
   ultrasonic_msg->scan_time = _scan_time;
   ultrasonic_msg->range_min = _range_min;
   ultrasonic_msg->range_max = _range_max;
 
-  float ranges[3];
-  ranges[0] = dxl_sdk_wrapper->get_data_from_device<float>(
+  ultrasonic_msg->ranges.resize(3);
+  ultrasonic_msg->ranges[0] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_l.addr,
     extern_control_table.ultrasonic_l.length);
 
-  ranges[1] = dxl_sdk_wrapper->get_data_from_device<float>(
+  ultrasonic_msg->ranges[1] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_f.addr,
     extern_control_table.ultrasonic_f.length);
 
-  ranges[2] = dxl_sdk_wrapper->get_data_from_device<float>(
+  ultrasonic_msg->ranges[2] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_r.addr,
     extern_control_table.ultrasonic_r.length);
 
-  ultrasonic_msg->ranges = ranges;
 
   ultrasonic_pub_->publish(std::move(ultrasonic_msg));
 }

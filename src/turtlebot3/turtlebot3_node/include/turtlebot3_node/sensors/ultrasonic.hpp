@@ -20,7 +20,7 @@
 #include <memory>
 #include <string>
 
-#include <sensor_msgs/msg/laserScan.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
 
 #include "turtlebot3_node/sensors/sensors.hpp"
 
@@ -43,13 +43,13 @@ public:
 
 private:
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr ultrasonic_pub_;
-  const float _angle_min = -1.57;
-  const float _angle_max = 1.57;
-  const float _angle_increment = 1.57;
-  const float _time_increment = 0.0;
-  const float _scan_time = 0.2;
-  const float _range_min = 0.3; // 0.3m
-  const float _range_max = 4.5; // 4.5m
+  float _angle_min;
+  float _angle_max;
+  float _angle_increment;
+  float _time_increment;
+  float _scan_time;
+  float _range_min;
+  float _range_max;
 
   std::string name_space_;
 };
