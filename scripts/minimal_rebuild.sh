@@ -23,7 +23,8 @@ fi
 
 cd "${WS_DIR}"
 
-PARALLEL_JOBS="${COLCON_PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 1)}"
+# Parallel workers: use COLCON_PARALLEL_JOBS if set, else 1 (override with COLCON_PARALLEL_JOBS=N for more).
+PARALLEL_JOBS="${COLCON_PARALLEL_JOBS:-1}"
 
 echo "Building minimal set for robot.launch.py (turtlebot3_description, turtlebot3_node, ld08_driver, turtlebot3_bringup)..."
 colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}" \

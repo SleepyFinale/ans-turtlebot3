@@ -25,9 +25,8 @@ fi
 
 cd "${WS_DIR}"
 
-# Parallel workers: use COLCON_PARALLEL_JOBS if set, else nproc (faster on multi-core).
-# On 2GB Raspberry Pi, set COLCON_PARALLEL_JOBS=1 to avoid OOM.
-PARALLEL_JOBS="${COLCON_PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 1)}"
+# Parallel workers: use COLCON_PARALLEL_JOBS if set, else 1 (override with COLCON_PARALLEL_JOBS=N for more).
+PARALLEL_JOBS="${COLCON_PARALLEL_JOBS:-1}"
 
 if [ "${1:-}" = "--source" ]; then
   echo "Skipping clean and build (--source only)."
