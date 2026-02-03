@@ -186,16 +186,17 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    source ~/turtlebot3_ws/install/setup.bash
    ```
 
-4. **Clean, rebuild, and source** After the initial build, you can use `scripts/clean_rebuild.sh` on the robot to remove `build/`, `install/`, and `log/`, run a full colcon build, and source the workspace in one step:
+4. **Rebuild scripts:** After the initial build:
+   - **Minimal rebuild (fast):** `scripts/minimal_rebuild.sh` builds only the packages needed for `ros2 launch turtlebot3_bringup robot.launch.py` (turtlebot3_description, turtlebot3_node, ld08_driver, turtlebot3_bringup). No clean step; use for quick iterations.
+   - **Full clean rebuild:** `scripts/clean_rebuild.sh` removes `build/`, `install/`, and `log/`, runs a full colcon build, and sources the workspace. Use `--no-clean` to build without cleaning, or `--source` to only source the existing install.
 
    ```bash
    cd ~/turtlebot3_ws
-   ./scripts/clean_rebuild.sh
+   ./scripts/minimal_rebuild.sh    # fast: only what robot.launch.py needs
+   ./scripts/clean_rebuild.sh      # full clean + build
    ```
 
-   Use `./scripts/clean_rebuild.sh --no-clean` to build and source without cleaning (faster for small changes), or `./scripts/clean_rebuild.sh --source` to only source the existing install. The script uses all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running to avoid out-of-memory during build.
-
-   If the script isn’t executable, run: `chmod +x ~/turtlebot3_ws/scripts/clean_rebuild.sh`
+   Both scripts use all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running. If scripts aren’t executable: `chmod +x ~/turtlebot3_ws/scripts/minimal_rebuild.sh ~/turtlebot3_ws/scripts/clean_rebuild.sh`
 
 ### USB port settings for OpenCR
 
