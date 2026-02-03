@@ -1,33 +1,43 @@
-# TurtleBot3 Burger (Blinky) Setup Notes
+# TurtleBot3 Burger Setup Notes
 
-This repo is being used to track configuration + code changes on TurtleBot3 robots. This specific robot is **Blinky** (one of four robots).
+This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot; you choose the correct **ROS_DOMAIN_ID** and connect using that robot’s hostname or IP.
 
-### References (authoritative)
+## References (authoritative)
 
 - **TurtleBot3 SBC setup (Robotis e-Manual)**: `https://emanual.robotis.com/docs/en/platform/turtlebot3/sbc_setup/`
 - **ROS 2 Humble install (Ubuntu debs)**: `https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html`
 
-### Goal of this document
+## Goal of this document
 
-Document the steps to prepare the TurtleBot3 Raspberry Pi SBC **up through**:
+Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 - Robotis SBC setup (Ubuntu Server, Wi‑Fi/SSH, stability tweaks)
 - ROS 2 Humble install and **Install and Build ROS Packages** (SBC setup Step 3.2.5, Step 2)
 
-**Workspace = this repo:** We use this repo as the `turtlebot3_ws` workspace on the Pi. The script installs into `src/` here so any changes you make to the cloned TurtleBot3/LDS/Coin D4 packages can be committed and pushed to this GitHub repo. Build/install/log are in `.gitignore`.
+**Workspace = cloned repo:** Clone [ans-turtlebot3](https://github.com/SleepyFinale/ans-turtlebot3) into `~/turtlebot3_ws` on the Pi; that repo contains the TurtleBot3/LDS/Coin D4 packages and other files needed for the workspace. After building, any changes you make in `src/` can be committed and pushed. Build/install/log are in `.gitignore`.
 
 ---
 
-## Robot identity
+## Robot fleet reference
 
-- **Robot name**: Blinky
-- **Platform**: TurtleBot3 Burger
-- **SBC**: Raspberry Pi (Ubuntu Server)
-- **ROS distro target**: Humble Hawksbill (Ubuntu 22.04 / Jammy)
+Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that robot (and on any Remote PC talking to it) to the value below. SSH using the hostname or IP for that robot.
+
+| Robot  | ROS_DOMAIN_ID | Hostname / SSH target     |
+| ------ | ------------- | ------------------------- |
+| Blinky | 30            | blinky@192.168.50.193     |
+| Pinky  | 31            | pinky@192.168.50.219      |
+| Inky   | 32            | inky@\<IP\>               |
+| Clyde  | 33            | clyde@\<IP\>              |
+
+- **Platform**: TurtleBot3 Burger  
+- **SBC**: Raspberry Pi (Ubuntu Server)  
+- **ROS distro**: Humble Hawksbill (Ubuntu 22.04 / Jammy)
+
+When following this README, substitute your robot’s hostname/IP and ROS_DOMAIN_ID where indicated.
 
 ---
 
-## SBC setup (Robotis e-Manual) — up to ROS 2 install
+## SBC Setup
 
 ### Install Ubuntu Server 22.04 onto microSD (Remote PC)
 
@@ -42,7 +52,7 @@ Robotis uses Raspberry Pi Imager to install Ubuntu Server 22.04 for Raspberry Pi
     - **Wi‑Fi SSID/password**
     - **Enable SSH** (password authentication)
 
-### First boot + basic configuration (on the TurtleBot3 SBC)
+### First Boot + Basic Configuration (TurtleBot3 SBC)
 
 - Boot the Raspberry Pi with HDMI + keyboard (first boot is easiest locally).
 - Log in (Ubuntu will prompt you to change password on first login if using the default user).
@@ -55,7 +65,7 @@ sudo nano /etc/netplan/50-cloud-init.yaml
 
 Edit Wi‑Fi settings (replace with your SSID/password), then save and reboot.
 
-### Disable unattended upgrades (Robotis)
+### Disable Unattended Upgrades
 
 Robotis disables auto-upgrades to avoid surprise background package operations:
 
@@ -70,30 +80,31 @@ APT::Periodic::Update-Package-Lists "0";
 APT::Periodic::Unattended-Upgrade "0";
 ```
 
-### Prevent boot delays if network is slow/unavailable (Robotis)
+### Prevent Boot Delays if Network is Slow/Unavailable
 
 ```bash
 sudo systemctl mask systemd-networkd-wait-online.service
 ```
 
-### Disable sleep/hibernate targets (Robotis)
+### Disable Sleep/Hibernate Targets
 
 ```bash
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 ```
 
-### Reboot (Robotis)
+### Reboot
 
 ```bash
 sudo reboot
 ```
 
-### SSH in from a remote PC (Robotis)
+### SSH in from a Remote PC
 
-After reboot, SSH to the SBC:
+After reboot, SSH to the SBC. Use the **username@IP** (or hostname) for the robot you’re setting up—see the [Robot fleet reference](#robot-fleet-reference) table. For example, for Pinky: `pinky@192.168.50.219`.
 
 ```bash
-ssh ubuntu@<RASPBERRY_PI_IP>
+ssh <USERNAME>@<ROBOT_IP>
+# e.g. ssh pinky@192.168.50.219
 ```
 
 If you need to find the IP on the SBC, Robotis suggests installing net-tools:
@@ -104,7 +115,7 @@ sudo apt install -y net-tools
 ifconfig
 ```
 
-### (Optional) Swap file for low-memory Pi models (Robotis note)
+### Swap File for Low-Memory Pi Models
 
 If the Raspberry Pi has only **2GB RAM**, Robotis recommends adding swap before building packages later:
 
@@ -119,7 +130,7 @@ free -h
 
 ---
 
-## ROS 2 Humble install (Ubuntu debs) — Step 1 complete
+## ROS 2 Humble Install
 
 Robotis points to the official ROS 2 Humble install guide. At this point we have completed:
 
@@ -136,65 +147,99 @@ export LANG=en_US.UTF-8
 locale  # verify settings
 ```
 
-**Stop point**: Next ROS guide section is **“Setup Sources”** (not done yet in this README).
+## Install and Build ROS Packages
 
----
+After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "Install ROS 2 packages"), run **Step 2** of "Install and Build ROS Packages". Clone the preconfigured workspace repo and install dependencies, then build.
 
-## SBC setup Step 3.2.5 — Install and Build ROS Packages (Step 2)
+**Reference:** [Robotis e-Manual — SBC Setup](https://emanual.robotis.com/docs/en/platform/turtlebot3/sbc_setup/)
 
-After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "Install ROS 2 packages"), run **Step 2** of "Install and Build ROS Packages" so everything lives in this repo and changes can be committed.
+### On the Raspberry Pi
 
-### On the Raspberry Pi (SBC)
-
-1. **Clone this repo** on the Pi into the workspace path you want (e.g. `turtlebot3_ws`):
+1. **Clone the TurtleBot3 workspace repo** into `turtlebot3_ws` (this repo contains the packages needed for TurtleBot3 Burger):
 
    ```bash
    cd ~
-   git clone <your-repo-url> turtlebot3_ws
+   git clone https://github.com/SleepyFinale/ans-turtlebot3.git turtlebot3_ws
    cd turtlebot3_ws
    ```
 
-2. **Optional (2GB Pi):** Create swap before building (Robotis recommendation):
+2. **Install dependencies and build** (use wall power; build can take over an hour):
 
    ```bash
-   sudo fallocate -l 2G /swapfile
-   sudo chmod 600 /swapfile
-   sudo mkswap /swapfile
-   sudo swapon /swapfile
-   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-   free -h
+   sudo apt install python3-argcomplete python3-colcon-common-extensions libboost-system-dev build-essential
+   sudo apt install ros-humble-hls-lfcd-lds-driver
+   sudo apt install ros-humble-turtlebot3-msgs
+   sudo apt install ros-humble-dynamixel-sdk
+   sudo apt install ros-humble-xacro
+   sudo apt install libudev-dev
+   cd ~/turtlebot3_ws/
+   echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
+   source ~/.bashrc
+   colcon build --symlink-install --parallel-workers 1
+   echo 'source ~/turtlebot3_ws/install/setup.bash' >> ~/.bashrc
+   source ~/.bashrc
    ```
 
-3. **Run the install script** (use wall power; build can take over an hour):
-
-   ```bash
-   chmod +x scripts/install_ros_packages_step2.sh
-   ./scripts/install_ros_packages_step2.sh
-   ```
-
-   The script will:
-   - Install apt and ROS packages (hls-lfcd-lds-driver, turtlebot3-msgs, dynamixel-sdk, xacro, etc.)
-   - Create `src/` and clone `turtlebot3`, `ld08_driver`, `coin_d4_driver` (Humble)
-   - Remove `turtlebot3_cartographer` and `turtlebot3_navigation2`
-   - Run `colcon build --symlink-install --parallel-workers 1`
-   - **Step 3:** Install USB udev rules for OpenCR (copy `99-turtlebot3-cdc.rules`, reload udev)
-   - Append `source <workspace>/install/setup.bash` and ROS Humble setup to `~/.bashrc`
-
-4. **Source the workspace** (or open a new shell):
+3. **Source the workspace** (or open a new shell):
 
    ```bash
    source ~/turtlebot3_ws/install/setup.bash
    ```
 
-After this, `src/` contains the cloned repos; you can edit them and commit to this repo.
+### USB port settings for OpenCR
 
-**If you already ran the script before Step 3 was added**, run these on the Pi (after sourcing the workspace) to apply USB port settings for OpenCR:
+After the workspace is built, set udev rules so the OpenCR is accessible:
 
 ```bash
-source ~/turtlebot3_ws/install/setup.bash
 sudo cp $(ros2 pkg prefix turtlebot3_bringup)/share/turtlebot3_bringup/script/99-turtlebot3-cdc.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-Next step on the e-manual: **3.2.5 Step 4** (ROS_DOMAIN_ID).
+### ROS_DOMAIN_ID
+
+On each robot, set **ROS_DOMAIN_ID** to the value for that robot (see [Robot fleet reference](#robot-fleet-reference)). The Remote PC that controls or monitors the robot must use the **same** ROS_DOMAIN_ID.
+
+On the robot (SBC):
+
+```bash
+echo 'export ROS_DOMAIN_ID=<ID>' >> ~/.bashrc   # use 30, 31, 32, or 33 for Blinky, Pinky, Inky, Clyde
+source ~/.bashrc
+```
+
+On the Remote PC, set the same value so they can communicate:
+
+```bash
+export ROS_DOMAIN_ID=<ID>
+# or add to ~/.bashrc
+```
+
+**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another robot or PC on the same network, or ROS 2 traffic will conflict.
+
+### LDS configuration
+
+We use **LDS-02**. On the robot (SBC):
+
+```bash
+echo 'export LDS_MODEL=LDS-02' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### OpenCR setup
+
+Connect the OpenCR to the Raspberry Pi via micro USB, then on the robot (SBC) run:
+
+```bash
+sudo dpkg --add-architecture armhf
+sudo apt-get update
+sudo apt-get install libc6:armhf
+export OPENCR_PORT=/dev/ttyACM0
+export OPENCR_MODEL=burger
+rm -rf ./opencr_update.tar.bz2
+wget https://github.com/ROBOTIS-GIT/OpenCR-Binaries/raw/master/turtlebot3/ROS2/latest/opencr_update.tar.bz2
+tar -xvf opencr_update.tar.bz2
+cd ./opencr_update
+./update.sh $OPENCR_PORT $OPENCR_MODEL.opencr
+```
+
+If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release in order. After a successful upload, use the OpenCR test (PUSH SW 1 = move forward, PUSH SW 2 = rotate 180°) to verify assembly.
