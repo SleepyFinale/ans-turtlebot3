@@ -186,6 +186,17 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    source ~/turtlebot3_ws/install/setup.bash
    ```
 
+4. **Clean, rebuild, and source** After the initial build, you can use `scripts/clean_rebuild.sh` on the robot to remove `build/`, `install/`, and `log/`, run a full colcon build, and source the workspace in one step:
+
+   ```bash
+   cd ~/turtlebot3_ws
+   ./scripts/clean_rebuild.sh
+   ```
+
+   Use `./scripts/clean_rebuild.sh --no-clean` to build and source without cleaning (faster for small changes), or `./scripts/clean_rebuild.sh --source` to only source the existing install. The script uses all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running to avoid out-of-memory during build.
+
+   If the script isn’t executable, run: `chmod +x ~/turtlebot3_ws/scripts/clean_rebuild.sh`
+
 ### USB port settings for OpenCR
 
 After the workspace is built, set udev rules so the OpenCR is accessible:

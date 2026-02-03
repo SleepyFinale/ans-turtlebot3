@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Build, source, and prepare turtlebot3_ws for use (ROS 2 Humble).
+# Clean, build, and source turtlebot3_ws (ROS 2 Humble).
+# Default: remove build/install/log, run colcon build, then source install/setup.bash.
 # Usage:
-#   ./scripts/build_and_source.sh          # build then source
-#   ./scripts/build_and_source.sh --source # only source (no build)
-#   ./scripts/build_and_source.sh --clean  # clean, then build, then source
+#   ./scripts/clean_rebuild.sh          # clean, build, then source
+#   ./scripts/clean_rebuild.sh --no-clean  # build then source (no clean)
+#   ./scripts/clean_rebuild.sh --source   # only source (no clean, no build)
 
 set -e
 
@@ -24,15 +25,25 @@ fi
 
 cd "${WS_DIR}"
 
+# Parallel workers: use COLCON_PARALLEL_JOBS if set, else nproc (faster on multi-core).
+# On 2GB Raspberry Pi, set COLCON_PARALLEL_JOBS=1 to avoid OOM.
+PARALLEL_JOBS="${COLCON_PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 1)}"
+
 if [ "${1:-}" = "--source" ]; then
-  echo "Skipping build (--source only)."
+  echo "Skipping clean and build (--source only)."
 else
-  if [ "${1:-}" = "--clean" ]; then
+  if [ "${1:-}" != "--no-clean" ]; then
     echo "Cleaning build, install, log..."
     rm -rf build install log
+    # Clear stale workspace paths so colcon does not warn about missing install dirs
+    unset AMENT_PREFIX_PATH
+    unset CMAKE_PREFIX_PATH
+    source "/opt/ros/${ROS_DISTRO}/setup.bash"
+  else
+    echo "Skipping clean (--no-clean)."
   fi
-  echo "Building workspace (colcon build --symlink-install --parallel-workers 1)..."
-  colcon build --symlink-install --parallel-workers 1
+  echo "Building workspace (colcon build --symlink-install --parallel-workers ${PARALLEL_JOBS})..."
+  colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}"
 fi
 
 if [ -f "${WS_DIR}/install/setup.bash" ]; then
