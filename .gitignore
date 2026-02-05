@@ -2,3 +2,6 @@
 build/
 install/
 log/
+
+# Generated on robot by set_robot_env.sh <robot> <central_ip>
+scripts/.fastdds_initial_peers_robot_generated.xml
