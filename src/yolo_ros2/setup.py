@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'yolo_node = yolo_ros2.yolo_node:main',
         ],
     },
 )
