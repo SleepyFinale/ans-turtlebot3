@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'yolo_ros2'
+package_name = 'turtlebot3_yolo'
 
 setup(
     name=package_name,
@@ -13,7 +13,7 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='pinky',
+    maintainer='blinky',
     maintainer_email='SleepyFinale@proton.me',
     description='TODO: Package description',
     license='TODO: License declaration',
@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'yolo_node = yolo_ros2.yolo_node:main',
+            'yolo_node = turtlebot3_yolo.yolo_node:main',
         ],
     },
 )
