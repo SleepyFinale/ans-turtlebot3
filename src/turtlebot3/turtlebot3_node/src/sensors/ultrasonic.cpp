@@ -22,14 +22,6 @@
 
 using robotis::turtlebot3::sensors::Ultrasonic;
 
-const float _angle_min = -1.57;
-const float _angle_max = 1.57;
-const float _angle_increment = 1.57;
-const float _time_increment = 0.0;
-const float _scan_time = 0.2;
-const float _range_min = 0.3; // 0.3m
-const float _range_max = 4.5; // 4.5m
-
 Ultrasonic::Ultrasonic(
   std::shared_ptr<rclcpp::Node> & nh,
   const std::string & ultrasonic_topic_name)
@@ -53,13 +45,13 @@ void Ultrasonic::publish(
 
   ultrasonic_msg->header.stamp = now;
 
-  ultrasonic_msg->angle_min = _angle_min;
-  ultrasonic_msg->angle_max = _angle_max;
-  ultrasonic_msg->angle_increment = _angle_increment;
-  ultrasonic_msg->time_increment = _time_increment;
-  ultrasonic_msg->scan_time = _scan_time;
-  ultrasonic_msg->range_min = _range_min;
-  ultrasonic_msg->range_max = _range_max;
+  ultrasonic_msg->angle_min = -1.57f;
+  ultrasonic_msg->angle_max = 1.57f;
+  ultrasonic_msg->angle_increment = 1.57f;
+  ultrasonic_msg->time_increment = 0.0f;
+  ultrasonic_msg->scan_time = 0.0f;
+  ultrasonic_msg->range_min = 0.3f;
+  ultrasonic_msg->range_max = 4.5f;
 
   ultrasonic_msg->ranges.resize(3);
   ultrasonic_msg->ranges[0] = dxl_sdk_wrapper->get_data_from_device<float>(
@@ -74,6 +66,9 @@ void Ultrasonic::publish(
     extern_control_table.ultrasonic_r.addr,
     extern_control_table.ultrasonic_r.length);
 
+  RCLCPP_INFO(nh_->get_logger(), "topic roange[0]: %f", dxl_sdk_wrapper->get_data_from_device<float>(
+    extern_control_table.ultrasonic_l.addr,
+    extern_control_table.ultrasonic_l.length));
 
   ultrasonic_pub_->publish(std::move(ultrasonic_msg));
 }
