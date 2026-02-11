@@ -66,9 +66,5 @@ void Ultrasonic::publish(
     extern_control_table.ultrasonic_r.addr,
     extern_control_table.ultrasonic_r.length);
 
-  RCLCPP_INFO(nh_->get_logger(), "topic roange[0]: %f", dxl_sdk_wrapper->get_data_from_device<float>(
-    extern_control_table.ultrasonic_l.addr,
-    extern_control_table.ultrasonic_l.length));
-
   ultrasonic_pub_->publish(std::move(ultrasonic_msg));
 }
