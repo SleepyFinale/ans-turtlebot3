@@ -282,6 +282,73 @@ ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh azure
 
 If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
 
+### Automatic WiFi connection on boot (`scripts/boot_wifi.sh`)
+
+To prevent the robot from being stuck without WiFi when it boots (e.g., if it was connected to the Azure hotspot before shutdown and the hotspot is not nearby), a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
+
+**Behavior:**
+
+- On boot, the robot **first attempts to connect to SNS (lab WiFi)**
+- If SNS is unavailable or connection fails, it **automatically falls back to Azure (hotspot)**
+- This ensures the robot can connect to WiFi even if the hotspot is not nearby when it boots
+
+**Installation (one-time setup per robot):**
+
+```bash
+cd ~/turtlebot3_ws
+sudo ./scripts/install_boot_wifi.sh
+```
+
+This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
+
+- Detects the robot name from the hostname
+- Attempts to connect to SNS first (waits up to 30 seconds)
+- If SNS fails, switches to Azure and waits for connection
+- Logs all connection attempts to the systemd journal
+
+**Checking boot WiFi status:**
+
+```bash
+# Check if the service is running/enabled
+sudo systemctl status boot-wifi.service
+
+# View boot WiFi connection logs
+sudo journalctl -u boot-wifi.service
+
+# View recent logs (last 50 lines)
+sudo journalctl -u boot-wifi.service -n 50
+
+# Follow logs in real-time
+sudo journalctl -u boot-wifi.service -f
+```
+
+**Manual testing:**
+
+You can test the boot WiFi script manually (without rebooting):
+
+```bash
+sudo ./scripts/boot_wifi.sh
+# or specify robot name explicitly:
+sudo ./scripts/boot_wifi.sh pinky
+sudo ./scripts/boot_wifi.sh blinky
+```
+
+**Disabling boot WiFi (if needed):**
+
+If you need to disable automatic WiFi connection on boot:
+
+```bash
+sudo systemctl disable boot-wifi.service
+sudo systemctl stop boot-wifi.service
+```
+
+To re-enable:
+
+```bash
+sudo systemctl enable boot-wifi.service
+sudo systemctl start boot-wifi.service
+```
+
 ### USB port settings for OpenCR
 
 After the workspace is built, set udev rules so the OpenCR is accessible:
