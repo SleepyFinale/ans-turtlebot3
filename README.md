@@ -24,8 +24,8 @@ Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that rob
 
 | Robot  | ROS_DOMAIN_ID | Hostname / SSH target     |
 | ------ | ------------- | ------------------------- |
-| Blinky | 30            | blinky@192.168.50.193     |
-| Pinky  | 31            | pinky@192.168.50.219      |
+| Blinky | 30            | blinky@192.168.0.158      |
+| Pinky  | 31            | pinky@192.168.0.194       |
 | Inky   | 32            | inky@\<IP\>               |
 | Clyde  | 33            | clyde@\<IP\>              |
 
@@ -100,11 +100,11 @@ sudo reboot
 
 ### SSH in from a Remote PC
 
-After reboot, SSH to the SBC. Use the **username@IP** (or hostname) for the robot you’re setting up—see the [Robot fleet reference](#robot-fleet-reference) table. For example, for Pinky: `pinky@192.168.50.219`.
+After reboot, SSH to the SBC. Use the **username@IP** (or hostname) for the robot you’re setting up—see the [Robot fleet reference](#robot-fleet-reference) table. For example, for Pinky on the SNS lab Wi‑Fi: `pinky@192.168.0.194`.
 
 ```bash
 ssh <USERNAME>@<ROBOT_IP>
-# e.g. ssh pinky@192.168.50.219
+# e.g. ssh pinky@192.168.0.194
 ```
 
 If you need to find the IP on the SBC, Robotis suggests installing net-tools:
@@ -197,6 +197,70 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    ```
 
    Both scripts use all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running. If scripts aren’t executable: `chmod +x ~/turtlebot3_ws/scripts/minimal_rebuild.sh ~/turtlebot3_ws/scripts/clean_rebuild.sh`
+
+---
+
+## Wi‑Fi switching and static IPs (`scripts/switch_wifi.sh`)
+
+This repo includes a helper script to switch the robot’s Wi‑Fi network and apply consistent IP settings using **netplan**.
+
+- Script path: `scripts/switch_wifi.sh`
+- Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
+
+### One‑time prerequisite
+
+On each robot, ensure that `wlan0` is **only** configured via this script (to avoid duplicate netplan definitions):
+
+```bash
+sudo nano /etc/netplan/50-cloud-init.yaml
+```
+
+Comment out or remove the `wifis:` / `wlan0:` block from `50-cloud-init.yaml`, leaving any `ethernets:` config intact. Then:
+
+```bash
+sudo netplan apply
+```
+
+From this point on, Wi‑Fi is managed by `scripts/switch_wifi.sh`.
+
+### Static IPs on the SNS lab Wi‑Fi
+
+When connected to the **SNS** lab Wi‑Fi, each robot uses a fixed IP (based on the Linux user account running the script):
+
+- **Blinky** (user `blinky`) → `192.168.0.158`
+- **Pinky** (user `pinky`) → `192.168.0.194`
+
+Gateway for SNS is assumed to be `192.168.0.1` with prefix `/24`.
+
+### Usage
+
+From `~/turtlebot3_ws` on the robot:
+
+```bash
+cd ~/turtlebot3_ws
+
+# Connect to SNS lab Wi‑Fi with static IP (per robot/user)
+sudo ./scripts/switch_wifi.sh lab
+
+# Connect to Azure mobile hotspot (DHCP)
+sudo ./scripts/switch_wifi.sh azure
+
+# Show current Wi‑Fi SSID and wlan0 IP
+./scripts/switch_wifi.sh status
+```
+
+The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly (e.g. when logged in as a different account):
+
+```bash
+sudo ./scripts/switch_wifi.sh lab pinky
+sudo ./scripts/switch_wifi.sh lab blinky
+
+# or
+ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh lab
+ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh lab
+```
+
+If you change the SNS network (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
 
 ### USB port settings for OpenCR
 
