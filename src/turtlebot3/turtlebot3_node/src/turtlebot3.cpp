@@ -68,8 +68,8 @@ void TurtleBot3::init_dynamixel_sdk_wrapper(const std::string & usb_port)
 
   dxl_sdk_wrapper_->init_read_memory(
     extern_control_table.millis.addr,
-    (extern_control_table.profile_acceleration_right.addr - extern_control_table.millis.addr) +
-    extern_control_table.profile_acceleration_right.length
+    (extern_control_table.ultrasonic_r.addr - extern_control_table.millis.addr) +
+    extern_control_table.ultrasonic_r.length
   );
 }
 
@@ -188,6 +188,11 @@ void TurtleBot3::add_sensors()
       "magnetic_field",
       "imu_link"));
 
+  sensors_.push_back(
+    new sensors::Ultrasonic(
+      node_handle_,
+      "ultrasonic"));
+  
   sensors_.push_back(
     new sensors::SensorState(
       node_handle_,

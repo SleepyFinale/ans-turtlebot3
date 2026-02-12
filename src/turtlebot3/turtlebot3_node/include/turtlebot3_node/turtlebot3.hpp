@@ -45,6 +45,7 @@
 #include "turtlebot3_node/odometry.hpp"
 #include "turtlebot3_node/sensors/battery_state.hpp"
 #include "turtlebot3_node/sensors/imu.hpp"
+#include "turtlebot3_node/sensors/ultrasonic.hpp"
 #include "turtlebot3_node/sensors/joint_state.hpp"
 #include "turtlebot3_node/sensors/sensor_state.hpp"
 #include "turtlebot3_node/sensors/sensors.hpp"
