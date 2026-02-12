@@ -49,6 +49,7 @@ add_library(${PROJECT_NAME}_lib
 
   "src/sensors/battery_state.cpp"
   "src/sensors/imu.cpp"
+  "src/sensors/ultrasonic.cpp"
   "src/sensors/joint_state.cpp"
   "src/sensors/sensor_state.cpp"
 )
