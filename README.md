@@ -22,12 +22,12 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that robot (and on any Remote PC talking to it) to the value below. SSH using the hostname or IP for that robot.
 
-| Robot  | ROS_DOMAIN_ID | Hostname / SSH target     |
-| ------ | ------------- | ------------------------- |
-| Blinky | 30            | blinky@192.168.0.158      |
-| Pinky  | 31            | pinky@192.168.0.194       |
-| Inky   | 32            | inky@\<IP\>               |
-| Clyde  | 33            | clyde@\<IP\>              |
+| Robot  | ROS_DOMAIN_ID | Hostname (Lab)       | Hostname (Azure)    |
+| ------ | ------------- | -------------------- | --------------------|
+| Blinky | 30            | blinky@192.168.0.158 | blinky@172.20.10.13 |
+| Pinky  | 31            | pinky@192.168.0.194  | pinky@172.20.10.14  |
+| Inky   | 32            | inky@\<IP\>          | inky@\<IP\>         |
+| Clyde  | 33            | clyde@\<IP\>         | clyde@\<IP\>        |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
@@ -232,6 +232,15 @@ When connected to the **SNS** lab Wi‑Fi, each robot uses a fixed IP (based on 
 
 Gateway for SNS is assumed to be `192.168.0.1` with prefix `/24`.
 
+### Static IPs on the Azure hotspot
+
+When connected to the **Azure** mobile hotspot, each robot also uses a fixed IP:
+
+- **Blinky** (user `blinky`) → `172.20.10.13/28`
+- **Pinky** (user `pinky`) → `172.20.10.14/28`
+
+Gateway for Azure is assumed to be `172.20.10.1` with prefix `/28` (typical iOS hotspot range).
+
 ### Usage
 
 From `~/turtlebot3_ws` on the robot:
@@ -242,7 +251,7 @@ cd ~/turtlebot3_ws
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
 sudo ./scripts/switch_wifi.sh lab
 
-# Connect to Azure mobile hotspot (DHCP)
+# Connect to Azure mobile hotspot with static IP (per robot/user)
 sudo ./scripts/switch_wifi.sh azure
 
 # Show current Wi‑Fi SSID and wlan0 IP
@@ -260,7 +269,18 @@ ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh lab
 ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh lab
 ```
 
-If you change the SNS network (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
+You can use the same override pattern for Azure:
+
+```bash
+sudo ./scripts/switch_wifi.sh azure pinky
+sudo ./scripts/switch_wifi.sh azure blinky
+
+# or
+ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh azure
+ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh azure
+```
+
+If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
 
 ### USB port settings for OpenCR
 
