@@ -1,0 +1,15 @@
+[Unit]
+Description=Boot WiFi Connection (SNS first, Azure fallback)
+After=network-pre.target
+Wants=network-pre.target
+Before=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/pinky/turtlebot3_ws/scripts/boot_wifi.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
