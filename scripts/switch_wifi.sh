@@ -1,7 +1,6 @@
 #!/bin/bash
 #
 # Switch Raspberry Pi WiFi between SNS (lab) and Azure (mobile hotspot).
-# Uses netplan only; no NetworkManager required.
 #
 # Usage:
 #   sudo ./scripts/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
