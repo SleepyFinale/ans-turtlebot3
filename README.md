@@ -169,6 +169,7 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    sudo apt install python3-argcomplete python3-colcon-common-extensions libboost-system-dev build-essential
    sudo apt install ros-humble-hls-lfcd-lds-driver
    sudo apt install ros-humble-turtlebot3-msgs
+   sudo apt install ros-humble-nav2-bringup
    sudo apt install ros-humble-dynamixel-sdk
    sudo apt install ros-humble-xacro
    sudo apt install libudev-dev
