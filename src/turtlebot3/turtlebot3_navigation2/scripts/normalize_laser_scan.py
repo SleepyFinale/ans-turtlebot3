@@ -6,6 +6,7 @@ by interpolating or padding/truncating as needed.
 """
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 
@@ -19,12 +20,15 @@ class LaserScanNormalizer(Node):
         self.declare_parameter('target_readings', 228)
         self.declare_parameter('input_topic', '/scan')
         self.declare_parameter('output_topic', '/scan_normalized')
-        self.declare_parameter('frame_id_prefix', '')
+        # Publish every Nth scan to reduce SLAM Toolbox message filter queue overflow (1 = every scan)
+        # Default 4 = ~2.5 Hz at 10 Hz lidar; prevents "queue is full" drops in SLAM
+        self.declare_parameter('publish_every_n_scans', 1)
         
         target_readings = self.get_parameter('target_readings').value
-        self._frame_id_prefix = self.get_parameter('frame_id_prefix').value
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value
+        self.publish_every_n = self.get_parameter('publish_every_n_scans').value
+        self._scan_counter = 0
         
         # Subscribe to the original scan with sensor QoS (best effort, volatile)
         from rclpy.qos import qos_profile_sensor_data
@@ -45,19 +49,21 @@ class LaserScanNormalizer(Node):
         self.target_readings = target_readings
         self.get_logger().info(
             f'Laser scan normalizer started: {input_topic} -> {output_topic} '
-            f'(normalizing to {target_readings} readings)'
+            f'(normalizing to {target_readings} readings, publishing every {self.publish_every_n} scan(s))'
         )
     
     def scan_callback(self, msg):
+        # Throttle: only process and publish every Nth scan to reduce SLAM message filter queue overflow
+        self._scan_counter += 1
+        if self._scan_counter < self.publish_every_n:
+            return
+        self._scan_counter = 0
+
         actual_readings = len(msg.ranges)
         
         # Create a copy of the message
-        import copy
         normalized_msg = LaserScan()
-        normalized_msg.header = copy.deepcopy(msg.header)
-        if self._frame_id_prefix and msg.header.frame_id:
-            if not msg.header.frame_id.startswith(self._frame_id_prefix + '/'):
-                normalized_msg.header.frame_id = f"{self._frame_id_prefix}/{msg.header.frame_id}"
+        normalized_msg.header = msg.header
         normalized_msg.angle_min = msg.angle_min
         normalized_msg.angle_max = msg.angle_max
         normalized_msg.angle_increment = msg.angle_increment
@@ -179,18 +185,17 @@ class LaserScanNormalizer(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = LaserScanNormalizer()
-    
+
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        node.destroy_node()
+        # Avoid double shutdown: on Ctrl+C the context may already be shutting down
         try:
-            node.destroy_node()
-        except Exception:
-            pass
-        try:
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:
             pass
 
