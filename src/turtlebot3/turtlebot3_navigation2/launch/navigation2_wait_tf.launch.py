@@ -64,8 +64,8 @@ def generate_launch_description():
         'tb3_navigation2.rviz')
 
     # Get workspace path for wait_for_tf.py script
-    workspace_dir = os.path.expanduser('~/turtlebot3_ws')
-    wait_tf_script = os.path.join(workspace_dir, 'wait_for_tf.py')
+    workspace_dir = os.path.expanduser(os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
+    wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
 
     return LaunchDescription([
         DeclareLaunchArgument(

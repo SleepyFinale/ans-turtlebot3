@@ -22,6 +22,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.actions import ExecuteProcess
 from launch.actions import IncludeLaunchDescription
+from launch.actions import TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
@@ -65,8 +66,8 @@ def generate_launch_description():
         'tb3_navigation2.rviz')
 
     # Optional: wait for TF tree before launching Nav2 (prevents costmap activation failures)
-    workspace_dir = os.path.expanduser('~/turtlebot3_ws')
-    wait_tf_script = os.path.join(workspace_dir, 'wait_for_tf.py')
+    workspace_dir = os.path.expanduser(os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
+    wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
     wait_for_tf = LaunchConfiguration('wait_for_tf', default='true')
 
     return LaunchDescription([
@@ -96,14 +97,25 @@ def generate_launch_description():
             condition=IfCondition(wait_for_tf),
         ),
 
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource([nav2_launch_file_dir, '/bringup_launch.py']),
-            launch_arguments={
-                'map': map_dir,
-                'use_sim_time': use_sim_time,
-                'params_file': param_dir,
-                'slam': 'True',  # Enable SLAM instead of AMCL
-                'use_localization': 'True'}.items(),
+        # Delay Nav2 start until TF is ready (wait_for_tf script completes)
+        # This prevents "Timed out waiting for transform" errors during activation
+        # Note: ExecuteProcess blocks, but IncludeLaunchDescription starts immediately,
+        # so we delay Nav2 by a safe amount (typically TF wait takes 1-3 seconds)
+        # Use navigation_launch.py directly to skip both SLAM and AMCL (using external SLAM)
+        # This launches only the navigation stack (planner, controller, BT navigator, etc.)
+        # without map_server or AMCL, since SLAM Toolbox provides the map and map->odom transform
+        TimerAction(
+            period=3.0,  # Delay to allow TF wait script to complete and TF to stabilize
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource([nav2_launch_file_dir, '/navigation_launch.py']),
+                    launch_arguments={
+                        'use_sim_time': use_sim_time,
+                        'params_file': param_dir,
+                        'autostart': 'True'}.items(),
+                ),
+            ],
+            condition=IfCondition(wait_for_tf),
         ),
 
         Node(

@@ -20,6 +20,10 @@ install(
   DIRECTORY launch map param rviz
   DESTINATION share/${PROJECT_NAME}
 )
+install(
+  PROGRAMS scripts/normalize_laser_scan.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ################################################################################
 # Macro for ament package
