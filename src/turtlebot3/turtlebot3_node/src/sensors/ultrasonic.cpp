@@ -24,8 +24,9 @@ using robotis::turtlebot3::sensors::Ultrasonic;
 
 Ultrasonic::Ultrasonic(
   std::shared_ptr<rclcpp::Node> & nh,
-  const std::string & ultrasonic_topic_name)
-: Sensors(nh)
+  const std::string & ultrasonic_topic_name,
+  const std::string & frame_id)
+: Sensors(nh, frame_id)
 {
   ultrasonic_pub_ = nh->create_publisher<sensor_msgs::msg::LaserScan>(ultrasonic_topic_name, this->qos_);
 
@@ -34,6 +35,9 @@ Ultrasonic::Ultrasonic(
     name_space_,
     std::string(""));
 
+  if (name_space_ != "") {
+    frame_id_ = name_space_ + "/" + frame_id_;
+  }
   RCLCPP_INFO(nh_->get_logger(), "Succeeded to create ultrasonic publisher");
 }
 
@@ -43,6 +47,7 @@ void Ultrasonic::publish(
 {
   auto ultrasonic_msg = std::make_unique<sensor_msgs::msg::LaserScan>();
 
+  ultrasonic_msg->header.frame_id = this->frame_id_;
   ultrasonic_msg->header.stamp = now;
 
   ultrasonic_msg->angle_min = -1.57f;
