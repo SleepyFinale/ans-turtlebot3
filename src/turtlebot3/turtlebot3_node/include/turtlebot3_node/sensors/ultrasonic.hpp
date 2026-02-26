@@ -35,7 +35,8 @@ class Ultrasonic : public Sensors
 public:
   explicit Ultrasonic(
     std::shared_ptr<rclcpp::Node> & nh,
-    const std::string & ultrasonic_topic_name = "ultrasonic");
+    const std::string & ultrasonic_topic_name = "ultrasonic",
+    const std::string & frame_id = "ultrasonic_scan_link");
 
   void publish(
     const rclcpp::Time & now,
