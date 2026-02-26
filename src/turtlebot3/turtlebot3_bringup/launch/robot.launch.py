@@ -20,13 +20,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
-from launch.substitutions import ThisLaunchFileDir
-from launch_ros.actions import Node
-from launch_ros.actions import PushRosNamespace
+from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir
+from launch_ros.actions import Node, PushRosNamespace
 
 
 def generate_launch_description():
@@ -75,6 +73,7 @@ def generate_launch_description():
             default=os.path.join(get_package_share_directory('hls_lfcd_lds_driver'), 'launch'))
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    start_slam_with_normalizer = LaunchConfiguration('start_slam_with_normalizer', default='true')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -96,6 +95,11 @@ def generate_launch_description():
             'namespace',
             default_value=namespace,
             description='Namespace for nodes'),
+
+        DeclareLaunchArgument(
+            'start_slam_with_normalizer',
+            default_value=start_slam_with_normalizer,
+            description='If true, also run scripts/start_slam_with_normalizer.sh'),
 
         PushRosNamespace(namespace),
 
@@ -121,4 +125,22 @@ def generate_launch_description():
                 {'namespace': namespace}],
             arguments=['-i', usb_port],
             output='screen'),
+
+        # Optionally start SLAM Toolbox with the laser scan normalizer script
+        ExecuteProcess(
+            condition=IfCondition(start_slam_with_normalizer),
+            cmd=[
+                'bash',
+                os.path.join(
+                    os.path.expanduser('~'),
+                    'turtlebot3_ws',
+                    'scripts',
+                    'start_slam_with_normalizer.sh'
+                )
+            ],
+            output='screen',
+            additional_env={
+                'USE_SIM_TIME': use_sim_time
+            },
+        ),
     ])
