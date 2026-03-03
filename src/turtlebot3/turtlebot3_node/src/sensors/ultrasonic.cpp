@@ -63,17 +63,17 @@ void Ultrasonic::publish(
   ultrasonic_msg->angle_increment = angle_increment;
   ultrasonic_msg->time_increment = 0.0f;
   ultrasonic_msg->scan_time = 0.0f;
-  ultrasonic_msg->range_min = 0.3f;
+  ultrasonic_msg->range_min = 0.03f;
   ultrasonic_msg->range_max = 4.5f;
 
  
-  sdist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
+  sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_l.addr,
     extern_control_table.ultrasonic_l.length) + 0.095;
   sdist[1] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_f.addr,
     extern_control_table.ultrasonic_f.length) + 0.1;
-  sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
+  sdist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_r.addr,
     extern_control_table.ultrasonic_r.length) + 0.095;
   
