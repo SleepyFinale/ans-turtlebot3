@@ -34,6 +34,7 @@ ROS_DISTRO = os.environ.get('ROS_DISTRO')
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    use_rviz = LaunchConfiguration('use_rviz', default='true')
     
     # Don't load a static map - use SLAM's live map instead
     # Pass empty string to disable map_server loading a static file
@@ -91,6 +92,11 @@ def generate_launch_description():
             default_value='true',
             description='Wait for TF tree to be ready before starting Nav2'),
 
+        DeclareLaunchArgument(
+            'use_rviz',
+            default_value='true',
+            description='Launch RViz2 if true'),
+
         ExecuteProcess(
             cmd=['python3', wait_tf_script],
             output='screen',
@@ -124,5 +130,6 @@ def generate_launch_description():
             name='rviz2',
             arguments=['-d', rviz_config_dir],
             parameters=[{'use_sim_time': use_sim_time}],
+            condition=IfCondition(use_rviz),
             output='screen'),
     ])
