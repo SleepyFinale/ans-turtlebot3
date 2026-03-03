@@ -24,8 +24,9 @@ using robotis::turtlebot3::sensors::Ultrasonic;
 
 Ultrasonic::Ultrasonic(
   std::shared_ptr<rclcpp::Node> & nh,
-  const std::string & ultrasonic_topic_name)
-: Sensors(nh)
+  const std::string & ultrasonic_topic_name,
+  const std::string & frame_id)
+: Sensors(nh, frame_id)
 {
   ultrasonic_pub_ = nh->create_publisher<sensor_msgs::msg::LaserScan>(ultrasonic_topic_name, this->qos_);
 
@@ -34,6 +35,9 @@ Ultrasonic::Ultrasonic(
     name_space_,
     std::string(""));
 
+  if (name_space_ != "") {
+    frame_id_ = name_space_ + "/" + frame_id_;
+  }
   RCLCPP_INFO(nh_->get_logger(), "Succeeded to create ultrasonic publisher");
 }
 
@@ -43,28 +47,49 @@ void Ultrasonic::publish(
 {
   auto ultrasonic_msg = std::make_unique<sensor_msgs::msg::LaserScan>();
 
+  const float angle_min = -1.57f - 0.52f;
+  const float angle_max = 1.57f + 0.52f;
+  const float angle_increment = 0.017f;
+  const float coneAngle = 15 * (3.145926/180);
+  int numPoints = (int)(angle_max - angle_min)/angle_increment;
+  float sdist[3];
+  int aIndex, senToUse;
+  ultrasonic_msg->header.frame_id = this->frame_id_;
   ultrasonic_msg->header.stamp = now;
 
-  ultrasonic_msg->angle_min = -1.57f;
-  ultrasonic_msg->angle_max = 1.57f;
-  ultrasonic_msg->angle_increment = 1.57f;
+
+  ultrasonic_msg->angle_min = angle_min;
+  ultrasonic_msg->angle_max = angle_max;
+  ultrasonic_msg->angle_increment = angle_increment;
   ultrasonic_msg->time_increment = 0.0f;
   ultrasonic_msg->scan_time = 0.0f;
-  ultrasonic_msg->range_min = 0.3f;
+  ultrasonic_msg->range_min = 0.03f;
   ultrasonic_msg->range_max = 4.5f;
 
-  ultrasonic_msg->ranges.resize(3);
-  ultrasonic_msg->ranges[0] = dxl_sdk_wrapper->get_data_from_device<float>(
+ 
+  sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_l.addr,
-    extern_control_table.ultrasonic_l.length);
-
-  ultrasonic_msg->ranges[1] = dxl_sdk_wrapper->get_data_from_device<float>(
+    extern_control_table.ultrasonic_l.length) + 0.095;
+  sdist[1] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_f.addr,
-    extern_control_table.ultrasonic_f.length);
-
-  ultrasonic_msg->ranges[2] = dxl_sdk_wrapper->get_data_from_device<float>(
+    extern_control_table.ultrasonic_f.length) + 0.1;
+  sdist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_r.addr,
-    extern_control_table.ultrasonic_r.length);
+    extern_control_table.ultrasonic_r.length) + 0.095;
+  
+  ultrasonic_msg->ranges.resize(numPoints);
+  ultrasonic_msg->ranges[0] = -1;
+  for (aIndex = 1; aIndex < numPoints; aIndex++)
+  {
+    senToUse = ((float)aIndex/numPoints)*3;
+    if ((angle_min + angle_increment * aIndex <= -1.57 + 1.57 * senToUse + coneAngle) && 
+    (angle_min + angle_increment * aIndex >= -1.57 + 1.57 * senToUse - coneAngle)) 
+    {
+      ultrasonic_msg->ranges[aIndex] = sdist[senToUse];
+    } else {
+      ultrasonic_msg->ranges[aIndex] = -1;
+    }
+  }
 
   ultrasonic_pub_->publish(std::move(ultrasonic_msg));
 }
