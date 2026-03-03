@@ -77,6 +77,9 @@ int main(int argc, char ** argv)
     );
 
     while (rclcpp::ok()) {
+
+      rclcpp::spin_some(node);
+      
       if (pkg->IsFrameReady()) {
         pkg->setStamp(node->now());
         pkg->setFrameId(frame_id);
