@@ -50,6 +50,7 @@ void Ultrasonic::publish(
   const float angle_min = -1.57f - 0.52f;
   const float angle_max = 1.57f + 0.52f;
   const float angle_increment = 0.017f;
+  const float coneAngle = 15 * (3.145926/180);
   int numPoints = (int)(angle_max - angle_min)/angle_increment;
   float sdist[3];
   int aIndex, senToUse;
@@ -68,20 +69,26 @@ void Ultrasonic::publish(
  
   sdist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_l.addr,
-    extern_control_table.ultrasonic_l.length);
+    extern_control_table.ultrasonic_l.length) + 0.095;
   sdist[1] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_f.addr,
-    extern_control_table.ultrasonic_f.length);
+    extern_control_table.ultrasonic_f.length) + 0.1;
   sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_r.addr,
-    extern_control_table.ultrasonic_r.length);
+    extern_control_table.ultrasonic_r.length) + 0.095;
   
   ultrasonic_msg->ranges.resize(numPoints);
-  ultrasonic_msg->ranges[0] = sdist[0];
+  ultrasonic_msg->ranges[0] = -1;
   for (aIndex = 1; aIndex < numPoints; aIndex++)
   {
     senToUse = ((float)aIndex/numPoints)*3;
-    ultrasonic_msg->ranges[aIndex] = sdist[senToUse];
+    if ((angle_min + angle_increment * aIndex <= -1.57 + 1.57 * senToUse + coneAngle) && 
+    (angle_min + angle_increment * aIndex >= -1.57 + 1.57 * senToUse - coneAngle)) 
+    {
+      ultrasonic_msg->ranges[aIndex] = sdist[senToUse];
+    } else {
+      ultrasonic_msg->ranges[aIndex] = -1;
+    }
   }
 
   ultrasonic_pub_->publish(std::move(ultrasonic_msg));
