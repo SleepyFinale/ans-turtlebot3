@@ -1,214 +1,156 @@
 #!/bin/bash
 #
-# Switch Raspberry Pi WiFi between SNS (lab), Azure (mobile hotspot), and RPi (RaspAP).
+# Boot-time WiFi connection script: tries SNS (lab) first, then RPi (RaspAP), then Azure (hotspot).
 #
-# Usage:
-#   sudo ./scripts/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
-#   sudo ./scripts/switch_wifi.sh azure     # Azure hotspot with static IP (per robot/user)
-#   ./scripts/switch_wifi.sh status         # show current WiFi (no sudo)
+# This script is called by systemd on boot to ensure the robot connects to WiFi.
+# It attempts to connect to SNS first, then RPi (RaspAP), and only switches to Azure if both are unavailable.
 #
-# Prereq: Remove or comment out the wifis/wlan0 block from
-#   /etc/netplan/50-cloud-init.yaml so this script's 99-wifi-switch.yaml
-#   is the only WiFi config (avoids "Duplicate access point SSID").
-#
-# Static IPs are chosen by current user (pinky vs blinky):
-#   SNS (lab):   pinky -> 192.168.0.194, blinky -> 192.168.0.158
-#   Azure:       pinky -> 172.20.10.14,  blinky -> 172.20.10.13
-# When run with sudo we use SUDO_USER so \"pinky\" user gets the pinky IPs.
-# Override with: $0 lab blinky / $0 azure blinky or ROBOT_NAME=blinky.
+# Usage: sudo ./scripts/boot_wifi.sh [robot]
+#   robot: optional robot name (blinky/pinky). If not provided, detected from hostname.
 #
 
 set -e
-NETPLAN_OVERRIDE="/etc/netplan/99-wifi-switch.yaml"
 
-# Lab WiFi (SNS) static IP config
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SWITCH_WIFI_SCRIPT="${SCRIPT_DIR}/switch_wifi.sh"
+
+# Gateways for connectivity checks
 LAB_GATEWAY="192.168.0.1"
-LAB_PREFIX="24"
-LAB_IP_PINKY="192.168.0.194"
-LAB_IP_BLINKY="192.168.0.158"
-
-# Azure hotspot static IP config
 AZURE_GATEWAY="172.20.10.1"
-AZURE_PREFIX="28"
-AZURE_IP_PINKY="172.20.10.14"
-AZURE_IP_BLINKY="172.20.10.13"
-
-# RPi (RaspAP) static IP config
 RPI_GATEWAY="10.3.141.1"
-RPI_PREFIX="24"
-RPI_IP_PINKY="10.3.141.194"
-RPI_IP_BLINKY="10.3.141.220"
 
-SNS_SSID="SNS"
-SNS_PASSWORD="sn5_rox!"
+# Timeout for WiFi connection attempts (seconds)
+CONNECTION_TIMEOUT=30
+PING_TIMEOUT=3
 
-AZURE_SSID="Azure"
-AZURE_PASSWORD="howdoyouwanttodothis"
-
-RPI_SSID="RaspAP"
-RPI_PASSWORD="sn5_rox!"
-
-# Resolve robot name: current user (when using sudo we use SUDO_USER), or ROBOT_NAME env or second argument
+# Detect robot name from hostname or use provided argument
 get_robot_name() {
-  local name
-  name="${SUDO_USER:-$USER}"
-  [ -n "$name" ] && name=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-  echo "${name:-}"
-}
-
-# Set per-robot static IPs for SNS, Azure, and RPi. Exits if unknown robot.
-set_robot_static_ips() {
-  local robot
-  robot="${1:-$(get_robot_name)}"
-  robot="${robot,,}"
-  case "$robot" in
-    pinky)
-      LAB_STATIC_IP="$LAB_IP_PINKY"
-      AZURE_STATIC_IP="$AZURE_IP_PINKY"
-      RPI_STATIC_IP="$RPI_IP_PINKY"
+  local robot="${1:-}"
+  
+  if [ -n "$robot" ]; then
+    echo "${robot,,}"
+    return
+  fi
+  
+  # Try to detect from hostname
+  local hostname=$(hostname 2>/dev/null || echo "")
+  hostname="${hostname,,}"
+  
+  case "$hostname" in
+    blinky*)
+      echo "blinky"
       ;;
-    blinky)
-      LAB_STATIC_IP="$LAB_IP_BLINKY"
-      AZURE_STATIC_IP="$AZURE_IP_BLINKY"
-      RPI_STATIC_IP="$RPI_IP_BLINKY"
+    pinky*)
+      echo "pinky"
+      ;;
+    inky*)
+      echo "inky"
+      ;;
+    clyde*)
+      echo "clyde"
       ;;
     *)
-      echo "Unknown robot: '$robot'. Current user is: $(get_robot_name)."
-      echo "Use: $0 lab pinky   or   $0 lab blinky   (or set ROBOT_NAME=pinky/blinky)"
-      exit 1
+      # Fallback: try to get from /etc/hostname or use first non-root user
+      if [ -f /etc/hostname ]; then
+        local hname=$(cat /etc/hostname | tr '[:upper:]' '[:lower:]')
+        case "$hname" in
+          blinky*|pinky*|inky*|clyde*)
+            echo "${hname%%[^a-z]*}"
+            return
+            ;;
+        esac
+      fi
+      # Last resort: use first non-root user (if running as root)
+      if [ "$(id -u)" -eq 0 ]; then
+        local first_user=$(getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}')
+        [ -n "$first_user" ] && echo "${first_user,,}" || echo "pinky"
+      else
+        echo "$(whoami | tr '[:upper:]' '[:lower:]')"
+      fi
       ;;
   esac
 }
 
-usage() {
-  echo "Usage: $0 { lab | azure | RPi | status } [robot]"
-  echo "  lab [pinky|blinky]   - connect to SNS (static IP by robot)"
-  echo "  azure [pinky|blinky] - connect to Azure hotspot (static IP by robot)"
-  echo "  RPi [pinky|blinky]   - connect to RaspAP WiFi (static IP by robot)"
-  echo "  status               - show current WiFi (no sudo)"
+# Check if WiFi interface has an IP address
+has_ip() {
+  ip -4 addr show wlan0 2>/dev/null | grep -q "inet "
+}
+
+# Check if we can ping the gateway
+can_ping_gateway() {
+  local gateway="$1"
+  ping -c 1 -W "$PING_TIMEOUT" "$gateway" >/dev/null 2>&1
+}
+
+# Wait for WiFi connection with timeout
+wait_for_connection() {
+  local gateway="$1"
+  local timeout="$2"
+  local elapsed=0
+  local interval=2
+  
+  while [ $elapsed -lt $timeout ]; do
+    if has_ip && can_ping_gateway "$gateway"; then
+      return 0
+    fi
+    sleep $interval
+    elapsed=$((elapsed + interval))
+  done
+  
+  return 1
+}
+
+# Main function
+main() {
+  local robot_name=$(get_robot_name "$1")
+  
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: This script must be run as root (use sudo)"
+    exit 1
+  fi
+  
+  echo "[boot_wifi] Starting WiFi connection for robot: $robot_name"
+  
+  # Step 1: Try to connect to SNS (lab WiFi)
+  echo "[boot_wifi] Attempting to connect to SNS (lab WiFi)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" lab "$robot_name"
+  
+  # Wait for connection to establish
+  if wait_for_connection "$LAB_GATEWAY" "$CONNECTION_TIMEOUT"; then
+    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
+    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
+    echo "[boot_wifi] Successfully connected to SNS (SSID: $current_ssid, IP: $current_ip)"
+    exit 0
+  fi
+  
+  # Step 2: SNS failed, try RPi (RaspAP)
+  echo "[boot_wifi] SNS connection failed, attempting RPi (RaspAP)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" RPi "$robot_name"
+  
+  # Wait for connection to establish
+  if wait_for_connection "$RPI_GATEWAY" "$CONNECTION_TIMEOUT"; then
+    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
+    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
+    echo "[boot_wifi] Successfully connected to RPi (RaspAP) (SSID: $current_ssid, IP: $current_ip)"
+    exit 0
+  fi
+  
+  # Step 3: SNS and RPi failed, try Azure (hotspot)
+  echo "[boot_wifi] SNS and RPi connections failed, attempting Azure (hotspot)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
+  
+  # Wait for connection to establish
+  if wait_for_connection "$AZURE_GATEWAY" "$CONNECTION_TIMEOUT"; then
+    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
+    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
+    echo "[boot_wifi] Successfully connected to Azure (SSID: $current_ssid, IP: $current_ip)"
+    exit 0
+  fi
+  
+  # All failed
+  echo "[boot_wifi] ERROR: Failed to connect to SNS, RPi (RaspAP), or Azure WiFi networks"
   exit 1
 }
 
-# Run netplan apply but hide the harmless Open vSwitch warning
-netplan_apply_quiet() {
-  netplan apply 2> >(grep -v -E 'Open vSwitch|ovsdb-server' >&2)
-}
-
-write_netplan_lab() {
-  cat << EOF
-network:
-  version: 2
-  wifis:
-    wlan0:
-      dhcp4: false
-      addresses:
-        - ${LAB_STATIC_IP}/${LAB_PREFIX}
-      routes:
-        - to: default
-          via: ${LAB_GATEWAY}
-      nameservers:
-        addresses:
-          - ${LAB_GATEWAY}
-          - 8.8.8.8
-      access-points:
-        "${SNS_SSID}":
-          password: "${SNS_PASSWORD}"
-EOF
-}
-
-write_netplan_azure() {
-  cat << EOF
-network:
-  version: 2
-  wifis:
-    wlan0:
-      dhcp4: false
-      addresses:
-        - ${AZURE_STATIC_IP}/${AZURE_PREFIX}
-      routes:
-        - to: default
-          via: ${AZURE_GATEWAY}
-      nameservers:
-        addresses:
-          - ${AZURE_GATEWAY}
-          - 8.8.8.8
-      access-points:
-        "${AZURE_SSID}":
-          password: "${AZURE_PASSWORD}"
-EOF
-}
-
-write_netplan_rpi() {
-  cat << EOF
-network:
-  version: 2
-  wifis:
-    wlan0:
-      dhcp4: false
-      addresses:
-        - ${RPI_STATIC_IP}/${RPI_PREFIX}
-      routes:
-        - to: default
-          via: ${RPI_GATEWAY}
-      nameservers:
-        addresses:
-          - ${RPI_GATEWAY}
-          - 8.8.8.8
-      access-points:
-        "${RPI_SSID}":
-          password: "${RPI_PASSWORD}"
-EOF
-}
-
-case "${1:-}" in
-  lab)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for lab/azure: sudo $0 lab"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_lab > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to SNS (static IP $LAB_STATIC_IP)."
-    ;;
-  azure)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for lab/azure: sudo $0 azure"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_azure > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to Azure (static IP $AZURE_STATIC_IP)."
-    ;;
-  RPi|rpi)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for RPi: sudo $0 RPi"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_rpi > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to RPi WiFi (SSID ${RPI_SSID}, static IP $RPI_STATIC_IP)."
-    ;;
-  status)
-    ssid=""
-    iwgetid -r &>/dev/null && ssid=$(iwgetid -r)
-    [ -z "$ssid" ] && ssid=$(wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/^ssid=//p')
-    if [ -n "$ssid" ]; then
-      echo "SSID: $ssid"
-    else
-      echo "SSID: (unknown or no WiFi)"
-    fi
-    ip4=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    if [ -n "$ip4" ]; then
-      echo "wlan0 IP: $ip4"
-    fi
-    ;;
-  *)
-    usage
-    ;;
-esac
+main "$@"
