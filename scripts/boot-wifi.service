@@ -7,7 +7,7 @@ Before=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/home/pinky/turtlebot3_ws/scripts/boot_wifi.sh
+ExecStart=~/turtlebot3_ws/scripts/boot_wifi.sh
 StandardOutput=journal
 StandardError=journal
 
