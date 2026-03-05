@@ -143,4 +143,31 @@ def generate_launch_description():
                 'USE_SIM_TIME': use_sim_time
             },
         ),
+
+        Node(
+            package='nmea_navsat_driver',
+            executable='nmea_serial_driver',
+            name='gps_driver',
+            output='screen',
+            parameters=[{
+                'port': '/dev/ttyACM0',
+                'baud': 9600,
+                'frame_id': 'gps'
+            }]
+        ),
+        Node(
+            package='robot_localization',
+            executable='ekf_node',
+            name='ekf_filter_node',
+            output='screen',
+            parameters=[tb3_param_dir,{'namespace': namespace}],
+        ),
+        Node(
+            package='robot_localization',
+            executable='navsat_transform_node',
+            name='navsat_transform',
+            output='screen',
+            parameters=[tb3_param_dir,{'namespace': namespace}],
+            remappings=[('/gps/fix', '/fix'), ('/imu/data', '/imu'), ('/odometry/filtered','odom')]
+        ),
     ])
