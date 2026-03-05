@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Switch Raspberry Pi WiFi between SNS (lab), RaspAP (rpi), and Azure (mobile hotspot).
+# Switch Raspberry Pi WiFi between SNS (lab), RaspAP (rpi), and Azure.
 #
 # Usage:
 #   sudo ./scripts/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
@@ -23,19 +23,19 @@
 set -e
 NETPLAN_OVERRIDE="/etc/netplan/99-wifi-switch.yaml"
 
-# Lab WiFi (SNS) static IP config
+# SNS WiFi (lab) static IP config
 LAB_GATEWAY="192.168.0.1"
 LAB_PREFIX="24"
 LAB_IP_BLINKY="192.168.0.158"
 LAB_IP_PINKY="192.168.0.194"
 
-# RPi (RaspAP) static IP config
+# RaspAP WiFi (rpi) static IP config
 RPI_GATEWAY="10.3.141.1"
 RPI_PREFIX="24"
 RPI_IP_BLINKY="10.3.141.220"
 RPI_IP_PINKY="10.3.141.194"
 
-# Azure hotspot static IP config
+# Azure Wifi static IP config
 AZURE_GATEWAY="172.20.10.1"
 AZURE_PREFIX="28"
 AZURE_IP_BLINKY="172.20.10.13"
@@ -171,7 +171,7 @@ case "${1:-}" in
     write_netplan_lab > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to SNS (static IP $LAB_STATIC_IP)."
+    echo "Switched to SNS WiFi (SSID ${SNS_SSID}, static IP ${LAB_STATIC_IP})."
     ;;
   rpi)
     if [ "$(id -u)" -ne 0 ]; then
@@ -182,7 +182,7 @@ case "${1:-}" in
     write_netplan_rpi > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to RaspAP WiFi (SSID ${RASPAP_SSID}, static IP $RPI_STATIC_IP)."
+    echo "Switched to RaspAP WiFi (SSID ${RASPAP_SSID}, static IP ${RPI_STATIC_IP})."
     ;;
   azure)
     if [ "$(id -u)" -ne 0 ]; then
@@ -193,7 +193,7 @@ case "${1:-}" in
     write_netplan_azure > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to Azure (static IP $AZURE_STATIC_IP)."
+    echo "Switched to Azure WiFi (SSID ${AZURE_SSID}, static IP ${AZURE_STATIC_IP})."
     ;;
   status)
     ssid=""

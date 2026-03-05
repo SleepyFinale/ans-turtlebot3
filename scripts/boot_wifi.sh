@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Boot-time WiFi connection script: tries SNS (lab) first, then RPi (RaspAP), then Azure (hotspot).
+# Boot-time WiFi connection script: tries SNS (lab) first, then RaspAP (rpi), then Azure.
 #
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
-# It attempts to connect to SNS first, then RPi (RaspAP), and only switches to Azure if both are unavailable.
+# It attempts to connect to SNS first, then RaspAP, and only switches to Azure if both are unavailable.
 #
 # Usage: sudo ./scripts/boot_wifi.sh [robot]
 #   robot: optional robot name (blinky/pinky). If not provided, detected from hostname.
@@ -17,8 +17,8 @@ SWITCH_WIFI_SCRIPT="${SCRIPT_DIR}/switch_wifi.sh"
 
 # Gateways for connectivity checks
 LAB_GATEWAY="192.168.0.1"
-AZURE_GATEWAY="172.20.10.1"
 RPI_GATEWAY="10.3.141.1"
+AZURE_GATEWAY="172.20.10.1"
 
 # Timeout for WiFi connection attempts (seconds)
 CONNECTION_TIMEOUT=30
@@ -112,8 +112,8 @@ main() {
   
   echo "[boot_wifi] Starting WiFi connection for robot: $robot_name"
   
-  # Step 1: Try to connect to SNS (lab WiFi)
-  echo "[boot_wifi] Attempting to connect to SNS (lab WiFi)..."
+  # Step 1: Try to connect to SNS (lab)
+  echo "[boot_wifi] Attempting to connect to SNS (lab)..."
   ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" lab "$robot_name"
   
   # Wait for connection to establish
@@ -124,15 +124,15 @@ main() {
     exit 0
   fi
   
-  # Step 2: SNS failed, try RPi (RaspAP)
-  echo "[boot_wifi] SNS connection failed, attempting RaspAP (RPi)..."
+  # Step 2: SNS failed, try RaspAP (rpi)
+  echo "[boot_wifi] SNS connection failed, attempting RaspAP (rpi)..."
   ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" rpi "$robot_name"
   
   # Wait for connection to establish
   if wait_for_connection "$RPI_GATEWAY" "$CONNECTION_TIMEOUT"; then
     local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
     local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    echo "[boot_wifi] Successfully connected to RaspAP (RPi) (SSID: $current_ssid, IP: $current_ip)"
+    echo "[boot_wifi] Successfully connected to RaspAP (SSID: $current_ssid, IP: $current_ip)"
     exit 0
   fi
   
@@ -149,7 +149,7 @@ main() {
   fi
   
   # All failed
-  echo "[boot_wifi] ERROR: Failed to connect to Lab (SNS), RaspAP (RPi), or Azure WiFi networks"
+  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab), RaspAP (rpi), or Azure WiFi networks"
   echo "[boot_wifi] ERROR: Please check your WiFi connections and try again."
   exit 1
 }
