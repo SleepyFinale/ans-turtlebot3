@@ -171,7 +171,7 @@ case "${1:-}" in
     write_netplan_lab > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to SNS WiFi (SSID ${SNS_SSID}, static IP ${LAB_STATIC_IP})."
+    echo "Switched to SNS (SSID ${SNS_SSID}, static IP ${LAB_STATIC_IP})."
     ;;
   rpi)
     if [ "$(id -u)" -ne 0 ]; then
@@ -182,7 +182,7 @@ case "${1:-}" in
     write_netplan_rpi > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to RaspAP WiFi (SSID ${RASPAP_SSID}, static IP ${RPI_STATIC_IP})."
+    echo "Switched to RaspAP (SSID ${RASPAP_SSID}, static IP ${RPI_STATIC_IP})."
     ;;
   azure)
     if [ "$(id -u)" -ne 0 ]; then
@@ -193,7 +193,7 @@ case "${1:-}" in
     write_netplan_azure > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to Azure WiFi (SSID ${AZURE_SSID}, static IP ${AZURE_STATIC_IP})."
+    echo "Switched to Azure (SSID ${AZURE_SSID}, static IP ${AZURE_STATIC_IP})."
     ;;
   status)
     ssid=""
