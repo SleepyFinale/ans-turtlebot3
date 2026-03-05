@@ -25,9 +25,9 @@ if [ ! -f "$SLAM_CONFIG" ]; then
     exit 1
 fi
 
-# Start normalizer in background
+# Start normalizer in background (publish_every_n_scans:=2 reduces SLAM message filter queue overflow)
 echo "Starting laser scan normalizer..."
-python3 src/turtlebot3/turtlebot3_navigation2/scripts/normalize_laser_scan.py &
+python3 src/turtlebot3/turtlebot3_navigation2/scripts/normalize_laser_scan.py --ros-args -p publish_every_n_scans:=2 &
 NORMALIZER_PID=$!
 
 # Wait a moment for normalizer to start

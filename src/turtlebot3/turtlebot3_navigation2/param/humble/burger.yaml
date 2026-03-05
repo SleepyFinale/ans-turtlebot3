@@ -167,7 +167,7 @@ controller_server:
       angular_granularity: 0.025
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
       # SLAM Toolbox publishes map->odom at ~20-50Hz, but timing can vary during map updates
-      transform_tolerance: 1.0
+      transform_tolerance: 1.5
       xy_goal_tolerance: 0.05
       # CRITICAL: must be below your typical commanded speeds.
       # Your max_vel_x is 0.22, so 0.25 makes DWB think you're always stopped.
@@ -199,7 +199,7 @@ local_costmap:
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 1.0
+      transform_tolerance: 1.5
       transform_timeout: 0.2
       rolling_window: true
       width: 3
@@ -261,7 +261,7 @@ global_costmap:
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 1.0
+      transform_tolerance: 1.5
       transform_timeout: 0.2
       robot_radius: 0.1
       resolution: 0.05

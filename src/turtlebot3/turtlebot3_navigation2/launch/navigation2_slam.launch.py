@@ -66,10 +66,15 @@ def generate_launch_description():
         'rviz',
         'tb3_navigation2.rviz')
 
-    # Optional: wait for TF tree before launching Nav2 (prevents costmap activation failures)
+    # Optional: wait for TF tree before launching Nav2 (prevents costmap activation failures).
+    # In SLAM mode we need map->odom (from SLAM Toolbox) and odom->base_* (from robot).
+    # Use a longer timeout (60s) so SLAM has time to publish the first map->odom.
     workspace_dir = os.path.expanduser(os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
     wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
     wait_for_tf = LaunchConfiguration('wait_for_tf', default='true')
+    wait_tf_env = dict(os.environ)
+    wait_tf_env['TF_WAIT_TIMEOUT_SEC'] = '60.0'
+    wait_tf_env['TF_WAIT_ODOM_ONLY'] = 'false'  # require map->odom and odom->base_*
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -100,6 +105,7 @@ def generate_launch_description():
         ExecuteProcess(
             cmd=['python3', wait_tf_script],
             output='screen',
+            env=wait_tf_env,
             condition=IfCondition(wait_for_tf),
         ),
 

@@ -380,6 +380,24 @@ export ROS_DOMAIN_ID=<ID>
 
 **Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another robot or PC on the same network, or ROS 2 traffic will conflict.
 
+### Multi-robot mode (central aggregation)
+
+Multi-robot SLAM and navigation are orchestrated by the **central computer** repo. For full workflow, startup order, and diagnostics, see the central README: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+
+**On each robot (this repo), you only need to:**
+
+1. Set **ROS_DOMAIN_ID** for that robot: **30** for Blinky, **31** for Pinky (see [Robot fleet reference](#robot-fleet-reference)).
+2. Run bringup (and optionally SLAM + normalizer) with **no namespace**:
+   ```bash
+   source /opt/ros/humble/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   export ROS_DOMAIN_ID=30   # Blinky; use 31 for Pinky
+   ros2 launch turtlebot3_bringup robot.launch.py
+   ```
+3. Do **not** launch with a namespace on the robot; the central PC runs **domain bridges** that subscribe to each robot's domain and republish namespaced topics (e.g. `/blinky/scan`, `/blinky/tf`) on the central domain.
+
+The central runs domain bridges, TF relay, map merge, and multi-robot SLAM/Nav2/explorer. Startup order (bridges → multirobot_slam → nav2/explorer) and running `diagnose_multirobot_tf.py` when topics or TF are missing are described in the central README.
+
 ### LDS configuration
 
 We use **LDS-02**. On the robot (SBC):
