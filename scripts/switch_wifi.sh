@@ -1,10 +1,11 @@
 #!/bin/bash
 #
-# Switch Raspberry Pi WiFi between SNS (lab), Azure (mobile hotspot), and RPi (RaspAP).
+# Switch Raspberry Pi WiFi between SNS (lab), Azure (mobile hotspot), and RaspAP (rpi).
 #
 # Usage:
 #   sudo ./scripts/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
 #   sudo ./scripts/switch_wifi.sh azure     # Azure hotspot with static IP (per robot/user)
+#   sudo ./scripts/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
 #   ./scripts/switch_wifi.sh status         # show current WiFi (no sudo)
 #
 # Prereq: Remove or comment out the wifis/wlan0 block from
@@ -12,10 +13,11 @@
 #   is the only WiFi config (avoids "Duplicate access point SSID").
 #
 # Static IPs are chosen by current user (pinky vs blinky):
-#   SNS (lab):   pinky -> 192.168.0.194, blinky -> 192.168.0.158
-#   Azure:       pinky -> 172.20.10.14,  blinky -> 172.20.10.13
+#   SNS (lab):   blinky -> 192.168.0.158, pinky -> 192.168.0.194
+#   Azure:       blinky -> 172.20.10.13,  pinky -> 172.20.10.14
+#   RaspAP:      blinky -> 10.3.141.220, pinky -> 10.3.141.194
 # When run with sudo we use SUDO_USER so \"pinky\" user gets the pinky IPs.
-# Override with: $0 lab blinky / $0 azure blinky or ROBOT_NAME=blinky.
+# Override with: $0 lab blinky / $0 azure blinky / $0 rpi blinky or ROBOT_NAME=blinky.
 #
 
 set -e
@@ -24,20 +26,20 @@ NETPLAN_OVERRIDE="/etc/netplan/99-wifi-switch.yaml"
 # Lab WiFi (SNS) static IP config
 LAB_GATEWAY="192.168.0.1"
 LAB_PREFIX="24"
-LAB_IP_PINKY="192.168.0.194"
 LAB_IP_BLINKY="192.168.0.158"
+LAB_IP_PINKY="192.168.0.194"
 
 # Azure hotspot static IP config
 AZURE_GATEWAY="172.20.10.1"
 AZURE_PREFIX="28"
-AZURE_IP_PINKY="172.20.10.14"
 AZURE_IP_BLINKY="172.20.10.13"
+AZURE_IP_PINKY="172.20.10.14"
 
 # RPi (RaspAP) static IP config
 RPI_GATEWAY="10.3.141.1"
 RPI_PREFIX="24"
-RPI_IP_PINKY="10.3.141.194"
 RPI_IP_BLINKY="10.3.141.220"
+RPI_IP_PINKY="10.3.141.194"
 
 SNS_SSID="SNS"
 SNS_PASSWORD="sn5_rox!"
@@ -62,29 +64,28 @@ set_robot_static_ips() {
   robot="${1:-$(get_robot_name)}"
   robot="${robot,,}"
   case "$robot" in
-    pinky)
-      LAB_STATIC_IP="$LAB_IP_PINKY"
-      AZURE_STATIC_IP="$AZURE_IP_PINKY"
-      RPI_STATIC_IP="$RPI_IP_PINKY"
-      ;;
     blinky)
       LAB_STATIC_IP="$LAB_IP_BLINKY"
       AZURE_STATIC_IP="$AZURE_IP_BLINKY"
       RPI_STATIC_IP="$RPI_IP_BLINKY"
       ;;
-    *)
+    pinky)
+      LAB_STATIC_IP="$LAB_IP_PINKY"
+      AZURE_STATIC_IP="$AZURE_IP_PINKY"
+      RPI_STATIC_IP="$RPI_IP_PINKY"
+      ;;
       echo "Unknown robot: '$robot'. Current user is: $(get_robot_name)."
-      echo "Use: $0 lab pinky   or   $0 lab blinky   (or set ROBOT_NAME=pinky/blinky)"
+      echo "Use: $0 lab blinky   or   $0 lab pinky   (or set ROBOT_NAME=blinky/pinky)"
       exit 1
       ;;
   esac
 }
 
 usage() {
-  echo "Usage: $0 { lab | azure | RPi | status } [robot]"
-  echo "  lab [pinky|blinky]   - connect to SNS (static IP by robot)"
-  echo "  azure [pinky|blinky] - connect to Azure hotspot (static IP by robot)"
-  echo "  RPi [pinky|blinky]   - connect to RaspAP WiFi (static IP by robot)"
+  echo "Usage: $0 { lab | azure | rpi | status } [robot]"
+  echo "  lab [blinky|pinky]   - connect to SNS (static IP by robot)"
+  echo "  azure [blinky|pinky] - connect to Azure hotspot (static IP by robot)"
+  echo "  rpi [blinky|pinky]   - connect to RaspAP WiFi (static IP by robot)"
   echo "  status               - show current WiFi (no sudo)"
   exit 1
 }
@@ -183,16 +184,16 @@ case "${1:-}" in
     netplan_apply_quiet
     echo "Switched to Azure (static IP $AZURE_STATIC_IP)."
     ;;
-  RPi|rpi)
+  rpi)
     if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for RPi: sudo $0 RPi"
+      echo "Run with sudo for rpi: sudo $0 rpi"
       exit 1
     fi
     set_robot_static_ips "${2:-$ROBOT_NAME}"
     write_netplan_rpi > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to RPi WiFi (SSID ${RPI_SSID}, static IP $RPI_STATIC_IP)."
+    echo "Switched to rpi WiFi (SSID ${RPI_SSID}, static IP $RPI_STATIC_IP)."
     ;;
   status)
     ssid=""
