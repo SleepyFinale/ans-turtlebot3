@@ -136,7 +136,7 @@ main() {
     exit 0
   fi
   
-  # Step 3: SNS and RPi failed, try Azure (hotspot)
+  # Step 3: SNS and RaspAP failed, try Azure
   echo "[boot_wifi] SNS and RaspAP connections failed, attempting Azure..."
   ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
   
@@ -149,7 +149,7 @@ main() {
   fi
   
   # All failed
-  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab), RaspAP (rpi), or Azure WiFi networks"
+  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab), RaspAP (rpi), or Azure"
   echo "[boot_wifi] ERROR: Please check your WiFi connections and try again."
   exit 1
 }
