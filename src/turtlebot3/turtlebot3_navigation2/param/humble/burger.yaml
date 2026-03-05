@@ -343,6 +343,7 @@ planner_server:
       # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
       plugin: "nav2_smac_planner/SmacPlanner2D"
       tolerance: 0.5
+      # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
       max_on_approach_iterations: 1000

@@ -35,6 +35,8 @@ Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that rob
 
 When following this README, substitute your robot’s hostname/IP and ROS_DOMAIN_ID where indicated.
 
+For **multi-robot SLAM** (e.g. Blinky + Pinky), the central PC uses **ROS_DOMAIN_ID=50** and runs domain bridges, map_merge, tf_relay, and explorer; each robot keeps its own ROS_DOMAIN_ID (30 for Blinky, 31 for Pinky). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
+
 ---
 
 ## SBC Setup
@@ -380,23 +382,29 @@ export ROS_DOMAIN_ID=<ID>
 
 **Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another robot or PC on the same network, or ROS 2 traffic will conflict.
 
-### Multi-robot mode (central aggregation)
+### Multi-robot and central computer
 
-Multi-robot SLAM and navigation are orchestrated by the **central computer** repo. For full workflow, startup order, and diagnostics, see the central README: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** runs domain bridges, map_merge, tf_relay, and the multi-robot explorer; the central uses **ROS_DOMAIN_ID=50**. Each robot keeps its own **ROS_DOMAIN_ID** (30 for Blinky, 31 for Pinky). Full workflow, startup order, and diagnostic commands are in the central repo: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+
+To check TF and connectivity from the central PC, run (from the central workspace):  
+`ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
+(The script lives in the central repo.)
 
 **On each robot (this repo), you only need to:**
 
 1. Set **ROS_DOMAIN_ID** for that robot: **30** for Blinky, **31** for Pinky (see [Robot fleet reference](#robot-fleet-reference)).
 2. Run bringup (and optionally SLAM + normalizer) with **no namespace**:
+
    ```bash
    source /opt/ros/humble/setup.bash
    export TURTLEBOT3_MODEL=burger
    export ROS_DOMAIN_ID=30   # Blinky; use 31 for Pinky
    ros2 launch turtlebot3_bringup robot.launch.py
    ```
+
 3. Do **not** launch with a namespace on the robot; the central PC runs **domain bridges** that subscribe to each robot's domain and republish namespaced topics (e.g. `/blinky/scan`, `/blinky/tf`) on the central domain.
 
-The central runs domain bridges, TF relay, map merge, and multi-robot SLAM/Nav2/explorer. Startup order (bridges → multirobot_slam → nav2/explorer) and running `diagnose_multirobot_tf.py` when topics or TF are missing are described in the central README.
+Startup order on central: bridges → multirobot_slam → nav2/explorer. See the central README for details.
 
 ### LDS configuration
 
@@ -425,3 +433,8 @@ cd ./opencr_update
 ```
 
 If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release in order. After a successful upload, use the OpenCR test (PUSH SW 1 = move forward, PUSH SW 2 = rotate 180°) to verify assembly.
+
+### Troubleshooting (Nav2 + SLAM on robot)
+
+- **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
+- **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
