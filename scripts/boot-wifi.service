@@ -1,5 +1,5 @@
 [Unit]
-Description=Boot WiFi Connection (SNS first, Azure fallback)
+Description=Boot WiFi Connection (SNS first, then RPi/RaspAP, then Azure fallback)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target

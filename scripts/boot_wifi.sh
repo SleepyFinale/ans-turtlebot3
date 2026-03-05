@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Boot-time WiFi connection script: tries SNS (lab) first, falls back to Azure (hotspot).
+# Boot-time WiFi connection script: tries SNS (lab) first, then RPi (RaspAP), then Azure (hotspot).
 #
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
-# It attempts to connect to SNS first, and only switches to Azure if SNS is unavailable.
+# It attempts to connect to SNS first, then RPi (RaspAP), and only switches to Azure if both are unavailable.
 #
 # Usage: sudo ./scripts/boot_wifi.sh [robot]
-#   robot: optional robot name (pinky/blinky). If not provided, detected from hostname.
+#   robot: optional robot name (blinky/pinky). If not provided, detected from hostname.
 #
 
 set -e
@@ -15,9 +15,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SWITCH_WIFI_SCRIPT="${SCRIPT_DIR}/switch_wifi.sh"
 
-# Lab WiFi (SNS) gateway for connectivity check
+# Gateways for connectivity checks
 LAB_GATEWAY="192.168.0.1"
 AZURE_GATEWAY="172.20.10.1"
+RPI_GATEWAY="10.3.141.1"
 
 # Timeout for WiFi connection attempts (seconds)
 CONNECTION_TIMEOUT=30
@@ -37,11 +38,11 @@ get_robot_name() {
   hostname="${hostname,,}"
   
   case "$hostname" in
-    pinky*)
-      echo "pinky"
-      ;;
     blinky*)
       echo "blinky"
+      ;;
+    pinky*)
+      echo "pinky"
       ;;
     inky*)
       echo "inky"
@@ -54,7 +55,7 @@ get_robot_name() {
       if [ -f /etc/hostname ]; then
         local hname=$(cat /etc/hostname | tr '[:upper:]' '[:lower:]')
         case "$hname" in
-          pinky*|blinky*|inky*|clyde*)
+          blinky*|pinky*|inky*|clyde*)
             echo "${hname%%[^a-z]*}"
             return
             ;;
@@ -123,8 +124,20 @@ main() {
     exit 0
   fi
   
-  # Step 2: SNS failed, try Azure (hotspot)
-  echo "[boot_wifi] SNS connection failed, attempting Azure (hotspot)..."
+  # Step 2: SNS failed, try RPi (RaspAP)
+  echo "[boot_wifi] SNS connection failed, attempting RPi (RaspAP)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" RPi "$robot_name"
+  
+  # Wait for connection to establish
+  if wait_for_connection "$RPI_GATEWAY" "$CONNECTION_TIMEOUT"; then
+    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
+    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
+    echo "[boot_wifi] Successfully connected to RPi (RaspAP) (SSID: $current_ssid, IP: $current_ip)"
+    exit 0
+  fi
+  
+  # Step 3: SNS and RPi failed, try Azure (hotspot)
+  echo "[boot_wifi] SNS and RPi connections failed, attempting Azure (hotspot)..."
   ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
   
   # Wait for connection to establish
@@ -135,8 +148,8 @@ main() {
     exit 0
   fi
   
-  # Both failed
-  echo "[boot_wifi] ERROR: Failed to connect to both SNS and Azure WiFi networks"
+  # All failed
+  echo "[boot_wifi] ERROR: Failed to connect to SNS, RPi (RaspAP), or Azure WiFi networks"
   exit 1
 }
 
