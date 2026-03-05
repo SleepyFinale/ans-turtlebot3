@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Switch Raspberry Pi WiFi between SNS (lab) and Azure (mobile hotspot).
+# Switch Raspberry Pi WiFi between SNS (lab), Azure (mobile hotspot), and RPi (RaspAP).
 #
 # Usage:
 #   sudo ./scripts/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
@@ -41,6 +41,9 @@ SNS_PASSWORD="sn5_rox!"
 AZURE_SSID="Azure"
 AZURE_PASSWORD="howdoyouwanttodothis"
 
+RPI_SSID="RaspAP"
+RPI_PASSWORD="sn5_rox!"
+
 # Resolve robot name: current user (when using sudo we use SUDO_USER), or ROBOT_NAME env or second argument
 get_robot_name() {
   local name
@@ -72,9 +75,10 @@ set_robot_static_ips() {
 }
 
 usage() {
-  echo "Usage: $0 { lab | azure | status } [robot]"
+  echo "Usage: $0 { lab | azure | RPi | status } [robot]"
   echo "  lab [pinky|blinky]   - connect to SNS (static IP by robot)"
   echo "  azure [pinky|blinky] - connect to Azure hotspot (static IP by robot)"
+  echo "  RPi                  - connect to RaspAP WiFi (DHCP)"
   echo "  status               - show current WiFi (no sudo)"
   exit 1
 }
@@ -128,6 +132,19 @@ network:
 EOF
 }
 
+write_netplan_rpi() {
+  cat << EOF
+network:
+  version: 2
+  wifis:
+    wlan0:
+      dhcp4: true
+      access-points:
+        "${RPI_SSID}":
+          password: "${RPI_PASSWORD}"
+EOF
+}
+
 case "${1:-}" in
   lab)
     if [ "$(id -u)" -ne 0 ]; then
@@ -150,6 +167,16 @@ case "${1:-}" in
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
     echo "Switched to Azure (static IP $AZURE_STATIC_IP)."
+    ;;
+  RPi|rpi)
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "Run with sudo for RPi: sudo $0 RPi"
+      exit 1
+    fi
+    write_netplan_rpi > "$NETPLAN_OVERRIDE"
+    chmod 600 "$NETPLAN_OVERRIDE"
+    netplan_apply_quiet
+    echo "Switched to RPi WiFi (SSID ${RPI_SSID}, DHCP)."
     ;;
   status)
     ssid=""
