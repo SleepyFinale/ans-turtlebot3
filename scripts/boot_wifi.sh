@@ -64,7 +64,7 @@ get_robot_name() {
       # Last resort: use first non-root user (if running as root)
       if [ "$(id -u)" -eq 0 ]; then
         local first_user=$(getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}')
-        [ -n "$first_user" ] && echo "${first_user,,}" || echo "pinky"
+        [ -n "$first_user" ] && echo "${first_user,,}" || echo "blinky"
       else
         echo "$(whoami | tr '[:upper:]' '[:lower:]')"
       fi
@@ -125,19 +125,19 @@ main() {
   fi
   
   # Step 2: SNS failed, try RPi (RaspAP)
-  echo "[boot_wifi] SNS connection failed, attempting RPi (RaspAP)..."
-  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" RPi "$robot_name"
+  echo "[boot_wifi] SNS connection failed, attempting RaspAP (RPi)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" rpi "$robot_name"
   
   # Wait for connection to establish
   if wait_for_connection "$RPI_GATEWAY" "$CONNECTION_TIMEOUT"; then
     local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
     local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    echo "[boot_wifi] Successfully connected to RPi (RaspAP) (SSID: $current_ssid, IP: $current_ip)"
+    echo "[boot_wifi] Successfully connected to RaspAP (RPi) (SSID: $current_ssid, IP: $current_ip)"
     exit 0
   fi
   
   # Step 3: SNS and RPi failed, try Azure (hotspot)
-  echo "[boot_wifi] SNS and RPi connections failed, attempting Azure (hotspot)..."
+  echo "[boot_wifi] SNS and RaspAP connections failed, attempting Azure..."
   ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
   
   # Wait for connection to establish
@@ -149,7 +149,8 @@ main() {
   fi
   
   # All failed
-  echo "[boot_wifi] ERROR: Failed to connect to SNS, RPi (RaspAP), or Azure WiFi networks"
+  echo "[boot_wifi] ERROR: Failed to connect to Lab (SNS), RaspAP (RPi), or Azure WiFi networks"
+  echo "[boot_wifi] ERROR: Please check your WiFi connections and try again."
   exit 1
 }
 
