@@ -24,8 +24,6 @@ NETPLAN_OVERRIDE="/etc/netplan/99-wifi-switch.yaml"
 # Lab WiFi (SNS) static IP config
 LAB_GATEWAY="192.168.0.1"
 LAB_PREFIX="24"
-
-# Static IP per robot on SNS (username -> IP)
 LAB_IP_PINKY="192.168.0.194"
 LAB_IP_BLINKY="192.168.0.158"
 
@@ -34,6 +32,12 @@ AZURE_GATEWAY="172.20.10.1"
 AZURE_PREFIX="28"
 AZURE_IP_PINKY="172.20.10.14"
 AZURE_IP_BLINKY="172.20.10.13"
+
+# RPi (RaspAP) static IP config
+RPI_GATEWAY="10.3.141.1"
+RPI_PREFIX="24"
+RPI_IP_PINKY="10.3.141.194"
+RPI_IP_BLINKY="10.3.141.220"
 
 SNS_SSID="SNS"
 SNS_PASSWORD="sn5_rox!"
@@ -52,7 +56,7 @@ get_robot_name() {
   echo "${name:-}"
 }
 
-# Set per-robot static IPs for SNS and Azure. Exits if unknown robot.
+# Set per-robot static IPs for SNS, Azure, and RPi. Exits if unknown robot.
 set_robot_static_ips() {
   local robot
   robot="${1:-$(get_robot_name)}"
@@ -61,10 +65,12 @@ set_robot_static_ips() {
     pinky)
       LAB_STATIC_IP="$LAB_IP_PINKY"
       AZURE_STATIC_IP="$AZURE_IP_PINKY"
+      RPI_STATIC_IP="$RPI_IP_PINKY"
       ;;
     blinky)
       LAB_STATIC_IP="$LAB_IP_BLINKY"
       AZURE_STATIC_IP="$AZURE_IP_BLINKY"
+      RPI_STATIC_IP="$RPI_IP_BLINKY"
       ;;
     *)
       echo "Unknown robot: '$robot'. Current user is: $(get_robot_name)."
@@ -78,7 +84,7 @@ usage() {
   echo "Usage: $0 { lab | azure | RPi | status } [robot]"
   echo "  lab [pinky|blinky]   - connect to SNS (static IP by robot)"
   echo "  azure [pinky|blinky] - connect to Azure hotspot (static IP by robot)"
-  echo "  RPi                  - connect to RaspAP WiFi (DHCP)"
+  echo "  RPi [pinky|blinky]   - connect to RaspAP WiFi (static IP by robot)"
   echo "  status               - show current WiFi (no sudo)"
   exit 1
 }
@@ -138,7 +144,16 @@ network:
   version: 2
   wifis:
     wlan0:
-      dhcp4: true
+      dhcp4: false
+      addresses:
+        - ${RPI_STATIC_IP}/${RPI_PREFIX}
+      routes:
+        - to: default
+          via: ${RPI_GATEWAY}
+      nameservers:
+        addresses:
+          - ${RPI_GATEWAY}
+          - 8.8.8.8
       access-points:
         "${RPI_SSID}":
           password: "${RPI_PASSWORD}"
@@ -173,10 +188,11 @@ case "${1:-}" in
       echo "Run with sudo for RPi: sudo $0 RPi"
       exit 1
     fi
+    set_robot_static_ips "${2:-$ROBOT_NAME}"
     write_netplan_rpi > "$NETPLAN_OVERRIDE"
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
-    echo "Switched to RPi WiFi (SSID ${RPI_SSID}, DHCP)."
+    echo "Switched to RPi WiFi (SSID ${RPI_SSID}, static IP $RPI_STATIC_IP)."
     ;;
   status)
     ssid=""
