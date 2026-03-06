@@ -27,7 +27,7 @@ echo "Workspace directory: $WORKSPACE_DIR"
 # Create the service file with the correct workspace path
 cat > "$TARGET_SERVICE" << EOF
 [Unit]
-Description=Boot WiFi Connection (SNS first, Azure fallback)
+Description=Boot WiFi Connection (SNS first, then RaspAP, then Azure fallback)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target

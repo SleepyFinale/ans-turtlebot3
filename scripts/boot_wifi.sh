@@ -6,7 +6,7 @@
 # It attempts to connect to SNS first, then RaspAP, and only switches to Azure if both are unavailable.
 #
 # Usage: sudo ./scripts/boot_wifi.sh [robot]
-#   robot: optional robot name (blinky/pinky). If not provided, detected from hostname.
+#   robot: optional robot name (blinky/pinky/inky). If not provided, detected from hostname.
 #
 
 set -e
