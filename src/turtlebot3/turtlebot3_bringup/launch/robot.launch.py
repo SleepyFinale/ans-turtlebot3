@@ -73,7 +73,7 @@ def generate_launch_description():
             default=os.path.join(get_package_share_directory('hls_lfcd_lds_driver'), 'launch'))
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
-    start_slam_with_normalizer = LaunchConfiguration('start_slam_with_normalizer', default='true')
+    start_slam_with_normalizer = LaunchConfiguration('start_slam_with_normalizer', default='false')
 
     return LaunchDescription([
         DeclareLaunchArgument(

@@ -478,6 +478,8 @@ ros2 launch turtlebot3_navigation2 navigation2_slam_namespaced.launch.py \
 - Starts **SLAM Toolbox** inside the namespace, consuming `scan_normalized`.
 - Starts **Nav2** (via `nav2_bringup`) inside the same namespace so all navigation topics/actions are under `/<robot>/...`.
 
+> **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For multi-robot namespaced operation, use `navigation2_slam_namespaced.launch.py` per robot instead of `start_slam_with_normalizer.sh`.
+
 #### 3. Central computer behavior with namespaces
 
 With this single-domain + namespace setup:

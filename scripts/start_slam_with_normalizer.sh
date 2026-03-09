@@ -1,5 +1,9 @@
 #!/bin/bash
-# Launch SLAM Toolbox with laser scan normalizer to handle variable scan readings
+# Launch SLAM Toolbox with laser scan normalizer to handle variable scan readings.
+# NOTE: This script is intended for **single-robot** setups only.
+# For multi-robot, namespaced operation (Blinky + Pinky + ... in one domain),
+# prefer running SLAM via:
+#   ros2 launch turtlebot3_navigation2 navigation2_slam_namespaced.launch.py
 
 cd ~/turtlebot3_ws
 source /opt/ros/humble/setup.bash

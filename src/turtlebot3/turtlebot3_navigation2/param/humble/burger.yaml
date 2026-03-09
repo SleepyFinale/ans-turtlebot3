@@ -1,7 +1,9 @@
 # Used by nav2 slam_launch when slam=True. Normalized scan avoids SLAM "expected N readings" errors.
 slam_toolbox:
   ros__parameters:
-    scan_topic: /scan_normalized
+    # In namespaced setups, Nav2 runs inside the robot namespace.
+    # Use a relative topic so each instance subscribes to <namespace>/scan_normalized.
+    scan_topic: scan_normalized
 
 amcl:
   ros__parameters:
@@ -217,7 +219,8 @@ local_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: /scan_normalized
+          # Relative topic so this resolves to <namespace>/scan_normalized.
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -233,7 +236,8 @@ local_costmap:
         mark_threshold: 0
         observation_sources: scan
         scan:
-          topic: /scan_normalized
+          # Relative topic so this resolves to <namespace>/scan_normalized.
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
