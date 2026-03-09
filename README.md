@@ -406,6 +406,90 @@ To check TF and connectivity from the central PC, run (from the central workspac
 
 Startup order on central: bridges → multirobot_slam → nav2/explorer. See the central README for details.
 
+### Alternative: single-domain multi-robot with per-robot namespaces (experimental)
+
+If you prefer to run **all robots and the central computer in a single ROS_DOMAIN_ID** and distinguish robots purely by namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`), this workspace provides namespaced launch files you can use instead of per-robot domains + domain bridges.
+
+#### High-level changes
+
+- **Common domain**: Set **ROS_DOMAIN_ID=50** on **all robots and the central PC**.
+- **Per-robot namespace**: Each robot runs bringup and SLAM/Nav2 in its own namespace (e.g. `blinky`, `pinky`, `inky`, `clyde`), so topics and TF frames are unique per robot.
+- **TF frame prefixes**:
+  - The URDF already accepts a `namespace` argument and prefixes all base frames (e.g. `blinky/base_footprint`, `blinky/base_link`).
+  - The laser scan normalizer (`normalize_laser_scan.py`) is launched with a `frame_id_prefix` equal to the robot namespace, so the scan frame becomes `blinky/base_scan`, `pinky/base_scan`, etc.
+
+#### 1. Per-robot bringup with namespaces
+
+Use the namespaced bringup wrapper in `turtlebot3_bringup`:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+
+export TURTLEBOT3_MODEL=burger
+export LDS_MODEL=LDS-02
+export ROS_DOMAIN_ID=50
+
+# Example: Blinky
+ros2 launch turtlebot3_bringup robot_namespaced.launch.py robot_name:=blinky
+
+# Example: Pinky
+ros2 launch turtlebot3_bringup robot_namespaced.launch.py robot_name:=pinky
+```
+
+`robot_namespaced.launch.py` computes an **effective namespace** from:
+
+- `namespace` (if provided explicitly), otherwise
+- `robot_name` (e.g. `blinky`, `pinky`, `inky`, `clyde`).
+
+It then forwards that namespace into the existing `robot.launch.py`, so all bringup nodes (state publisher, lidar driver, `turtlebot3_node`) run under `/blinky`, `/pinky`, etc.
+
+#### 2. Namespaced SLAM + Nav2 on each robot
+
+Instead of running `navigation2_slam.launch.py` directly, use the namespaced variant in `turtlebot3_navigation2`:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+
+export TURTLEBOT3_MODEL=burger
+export ROS_DOMAIN_ID=50
+
+# Example: Blinky
+ros2 launch turtlebot3_navigation2 navigation2_slam_namespaced.launch.py \
+  robot_name:=blinky \
+  use_sim_time:=false \
+  use_rviz:=false
+
+# Example: Pinky
+ros2 launch turtlebot3_navigation2 navigation2_slam_namespaced.launch.py \
+  robot_name:=pinky \
+  use_sim_time:=false \
+  use_rviz:=false
+```
+
+`navigation2_slam_namespaced.launch.py` does the following for each robot:
+
+- Computes an effective namespace from `namespace` / `robot_name` (same rule as bringup).
+- Starts **laser scan normalizer** inside that namespace:
+  - Subscribes to `scan` (resolved as `/<robot>/scan`).
+  - Publishes `scan_normalized` (resolved as `/<robot>/scan_normalized`).
+  - Sets `frame_id_prefix:=<robot>` so scan TF frame is `<robot>/base_scan`.
+- Starts **SLAM Toolbox** inside the namespace, consuming `scan_normalized`.
+- Starts **Nav2** (via `nav2_bringup`) inside the same namespace so all navigation topics/actions are under `/<robot>/...`.
+
+#### 3. Central computer behavior with namespaces
+
+With this single-domain + namespace setup:
+
+- The central computer also uses **ROS_DOMAIN_ID=50**.
+- Multi-robot tools (RViZ, explorers, custom coordination nodes) can subscribe directly to:
+  - `/blinky/scan_normalized`, `/blinky/map`, `/blinky/tf`, `/blinky/cmd_vel`
+  - `/pinky/…`, `/inky/…`, `/clyde/…`
+- You no longer *need* per-robot domains or domain bridges; robots are distinguished by their namespaces instead of `ROS_DOMAIN_ID`.
+
+The existing domain-bridge–based workflow remains supported; this namespaced single-domain mode is an **alternative** configuration for experiments and future multi-robot setups.
+
 ### LDS configuration
 
 We use **LDS-02**. On the robot (SBC):
