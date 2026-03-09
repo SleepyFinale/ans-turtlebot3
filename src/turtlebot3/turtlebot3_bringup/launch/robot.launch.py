@@ -27,6 +27,9 @@ from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonE
 from launch_ros.actions import Node, PushRosNamespace
 
 
+DEFAULT_ROBOT_NAME = os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+
+
 def generate_launch_description():
     TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
     ROS_DISTRO = os.environ.get('ROS_DISTRO')
@@ -98,7 +101,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'robot_name',
-            default_value='',
+            default_value=DEFAULT_ROBOT_NAME,
             description='Robot name used as namespace for multi-robot (e.g. blinky, pinky)'),
 
         DeclareLaunchArgument(

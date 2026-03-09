@@ -47,6 +47,8 @@ from launch_ros.actions import Node, PushRosNamespace
 TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 ROS_DISTRO = os.environ.get('ROS_DISTRO')
 
+DEFAULT_ROBOT_NAME = os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+
 
 def _rewrite_frame(d, key, old_val, new_val):
     """Recursively find parameters matching key=old_val and replace with new_val."""
@@ -167,6 +169,7 @@ def _launch_setup(context):
         PythonLaunchDescriptionSource(
             [nav2_launch_file_dir, '/navigation_launch.py']),
         launch_arguments={
+            'namespace': ns, 
             'use_sim_time': use_sim_time_str,
             'params_file': nav2_params_file,
             'autostart': 'True',
@@ -220,7 +223,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'robot_name', default_value='',
+            'robot_name', default_value=DEFAULT_ROBOT_NAME,
             description='Robot name used as namespace (e.g. blinky, pinky)'),
         DeclareLaunchArgument(
             'namespace', default_value='',
