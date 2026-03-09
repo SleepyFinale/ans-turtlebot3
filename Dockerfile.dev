@@ -1,0 +1,32 @@
+FROM ros:humble-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV COLCON_WS=/root/turtlebot3_ws
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3-argcomplete \
+    python3-colcon-common-extensions \
+    libboost-system-dev \
+    build-essential \
+    libudev-dev \
+    ros-humble-turtlebot3-msgs \
+    ros-humble-nav2-bringup \
+    ros-humble-dynamixel-sdk \
+    ros-humble-xacro \
+    ros-humble-hls-lfcd-lds-driver \
+    ros-humble-urdf \
+    ros-humble-robot-state-publisher \
+    ros-humble-slam-toolbox \
+    ros-humble-navigation2 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
+    echo "[ -f ${COLCON_WS}/install/setup.bash ] && source ${COLCON_WS}/install/setup.bash" >> /root/.bashrc && \
+    echo "export TURTLEBOT3_MODEL=burger" >> /root/.bashrc && \
+    echo "export LDS_MODEL=LDS-02" >> /root/.bashrc && \
+    echo "export ROS_DOMAIN_ID=30" >> /root/.bashrc
+
+WORKDIR ${COLCON_WS}
+
+CMD ["bash"]
