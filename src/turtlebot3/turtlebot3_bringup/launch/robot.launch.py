@@ -23,7 +23,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir
+from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
 
 
@@ -33,7 +33,12 @@ def generate_launch_description():
     LDS_MODEL = os.environ['LDS_MODEL']
     LDS_LAUNCH_FILE = '/hlds_laser.launch.py'
 
+    robot_name = LaunchConfiguration('robot_name')
     namespace = LaunchConfiguration('namespace', default='')
+
+    effective_namespace = PythonExpression(
+        ['"', namespace, '" if "', namespace, '" != "" else "', robot_name, '"']
+    )
 
     usb_port = LaunchConfiguration('usb_port', default='/dev/ttyACM1')
 
@@ -92,29 +97,34 @@ def generate_launch_description():
             description='Full path to turtlebot3 parameter file to load'),
 
         DeclareLaunchArgument(
+            'robot_name',
+            default_value='',
+            description='Robot name used as namespace for multi-robot (e.g. blinky, pinky)'),
+
+        DeclareLaunchArgument(
             'namespace',
-            default_value=namespace,
-            description='Namespace for nodes'),
+            default_value='',
+            description='Explicit namespace (overrides robot_name if set)'),
 
         DeclareLaunchArgument(
             'start_slam_with_normalizer',
             default_value=start_slam_with_normalizer,
             description='If true, also run scripts/start_slam_with_normalizer.sh'),
 
-        PushRosNamespace(namespace),
+        PushRosNamespace(effective_namespace),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 [ThisLaunchFileDir(), '/turtlebot3_state_publisher.launch.py']),
             launch_arguments={'use_sim_time': use_sim_time,
-                              'namespace': namespace}.items(),
+                              'namespace': effective_namespace}.items(),
         ),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([lidar_pkg_dir, LDS_LAUNCH_FILE]),
             launch_arguments={'port': '/dev/ttyUSB0',
                               'frame_id': 'base_scan',
-                              'namespace': namespace}.items(),
+                              'namespace': effective_namespace}.items(),
         ),
 
         Node(
@@ -122,11 +132,11 @@ def generate_launch_description():
             executable='turtlebot3_ros',
             parameters=[
                 tb3_param_dir,
-                {'namespace': namespace}],
+                {'namespace': effective_namespace}],
             arguments=['-i', usb_port],
+            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
             output='screen'),
 
-        # Optionally start SLAM Toolbox with the laser scan normalizer script
         ExecuteProcess(
             condition=IfCondition(start_slam_with_normalizer),
             cmd=[
