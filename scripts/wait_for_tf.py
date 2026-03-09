@@ -13,6 +13,11 @@ This script blocks until those transforms are available (or times out).
 
 Env: TF_WAIT_ODOM_ONLY=true to only wait for odom->base_* (robot). Use when
 the launch starts SLAM itself so map->odom appears after SLAM Toolbox starts.
+
+For namespaced multi-robot setups, set:
+  TF_WAIT_ODOM_FRAME=blinky/odom
+  TF_WAIT_BASE_FRAMES=blinky/base_footprint,blinky/base_link
+  TF_WAIT_NAMESPACE=blinky   (subscribes to /blinky/tf in addition to /tf)
 """
 
 import os
@@ -21,14 +26,39 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from tf2_ros import Buffer, TransformListener
+from tf2_msgs.msg import TFMessage
+
+
+TF_STATIC_QOS = QoSProfile(
+    depth=10,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    reliability=ReliabilityPolicy.RELIABLE,
+)
 
 
 class TfWaiter(Node):
-    def __init__(self) -> None:
+    def __init__(self, namespace='') -> None:
         super().__init__("wait_for_tf")
         self._buffer = Buffer()
         self._listener = TransformListener(self._buffer, self)
+
+        if namespace:
+            self.create_subscription(
+                TFMessage, f'/{namespace}/tf',
+                lambda msg: self._relay_tf(msg, static=False), 100)
+            self.create_subscription(
+                TFMessage, f'/{namespace}/tf_static',
+                lambda msg: self._relay_tf(msg, static=True), TF_STATIC_QOS)
+
+    def _relay_tf(self, msg, static=False):
+        """Forward namespaced TF into the local buffer so lookups succeed."""
+        for t in msg.transforms:
+            if static:
+                self._buffer.set_transform_static(t, 'wait_for_tf_relay')
+            else:
+                self._buffer.set_transform(t, 'wait_for_tf_relay')
 
     def wait_for(self, target: str, source: str, timeout_sec: float) -> bool:
         start = time.time()
@@ -40,16 +70,15 @@ class TfWaiter(Node):
 
 
 def main() -> int:
-    # Defaults chosen for TB3 + SLAM Toolbox exploration workflow
     map_frame = os.environ.get("TF_WAIT_MAP_FRAME", "map")
     odom_frame = os.environ.get("TF_WAIT_ODOM_FRAME", "odom")
     base_candidates = os.environ.get("TF_WAIT_BASE_FRAMES", "base_footprint,base_link").split(",")
     timeout = float(os.environ.get("TF_WAIT_TIMEOUT_SEC", "30.0"))
-    # When true, only wait for odom->base_* (robot). Use when this launch starts SLAM itself.
     odom_only = os.environ.get("TF_WAIT_ODOM_ONLY", "false").lower() in ("1", "true", "yes")
+    namespace = os.environ.get("TF_WAIT_NAMESPACE", "")
 
     rclpy.init()
-    node = TfWaiter()
+    node = TfWaiter(namespace=namespace)
 
     try:
         if odom_only:
@@ -96,4 +125,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

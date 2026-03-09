@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+#
 # Copyright 2019 Open Source Robotics Foundation, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,130 +14,231 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Modified version for SLAM - doesn't load static map file
-# Use this when running with SLAM Toolbox to avoid double maps
+# Namespacing-aware SLAM + Nav2 launch for TurtleBot3.
+#
+# Single-robot (no namespace):
+#   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+#       use_sim_time:=False use_rviz:=False
+#
+# Multi-robot (with namespace):
+#   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+#       robot_name:=blinky use_sim_time:=False use_rviz:=False
 
 import os
+import tempfile
+
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.actions import ExecuteProcess
-from launch.actions import IncludeLaunchDescription
-from launch.actions import TimerAction
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    GroupAction,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+    TimerAction,
+)
 from launch.conditions import IfCondition
-from launch_ros.actions import Node
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node, PushRosNamespace
 
 TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 ROS_DISTRO = os.environ.get('ROS_DISTRO')
 
 
-def generate_launch_description():
-    use_sim_time = LaunchConfiguration('use_sim_time', default='false')
-    use_rviz = LaunchConfiguration('use_rviz', default='true')
-    
-    # Don't load a static map - use SLAM's live map instead
-    # Pass empty string to disable map_server loading a static file
-    map_dir = LaunchConfiguration('map', default='')
+def _rewrite_frame(d, key, old_val, new_val):
+    """Recursively find parameters matching key=old_val and replace with new_val."""
+    for k, v in list(d.items()):
+        if k == key and v == old_val:
+            d[k] = new_val
+        elif isinstance(v, dict):
+            _rewrite_frame(v, key, old_val, new_val)
 
-    # SLAM/exploration is the default workflow in this workspace.
-    # Use the standard param file to avoid maintaining 2 divergent configs.
-    param_file_name = TURTLEBOT3_MODEL + '.yaml'
-    if ROS_DISTRO == 'humble':
-        param_dir = LaunchConfiguration(
-            'params_file',
-            default=os.path.join(
-                get_package_share_directory('turtlebot3_navigation2'),
-                'param',
-                ROS_DISTRO,
-                param_file_name))
-    else:
-        param_dir = LaunchConfiguration(
-            'params_file',
-            default=os.path.join(
-                get_package_share_directory('turtlebot3_navigation2'),
-                'param',
-                param_file_name))
 
-    nav2_launch_file_dir = os.path.join(get_package_share_directory('nav2_bringup'), 'launch')
+def _generate_nav2_params(source_file, namespace):
+    """Generate a modified Nav2 params file with namespace-prefixed frame names."""
+    with open(source_file) as f:
+        params = yaml.safe_load(f)
+
+    if namespace:
+        _rewrite_frame(params, 'robot_base_frame', 'base_footprint',
+                        f'{namespace}/base_footprint')
+        _rewrite_frame(params, 'base_frame_id', 'base_footprint',
+                        f'{namespace}/base_footprint')
+        _rewrite_frame(params, 'base_frame', 'base_footprint',
+                        f'{namespace}/base_footprint')
+        _rewrite_frame(params, 'global_frame', 'odom', f'{namespace}/odom')
+        _rewrite_frame(params, 'odom_frame_id', 'odom', f'{namespace}/odom')
+        _rewrite_frame(params, 'odom_frame', 'odom', f'{namespace}/odom')
+        _rewrite_frame(params, 'odom_topic', '/odom', 'odom')
+        _rewrite_frame(params, 'topic', '/scan_normalized', 'scan_normalized')
+
+    fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
+    with os.fdopen(fd, 'w') as f:
+        yaml.dump(params, f, default_flow_style=False)
+    return path
+
+
+def _launch_setup(context):
+    """OpaqueFunction that resolves substitutions and builds the launch actions."""
+    ns = LaunchConfiguration('effective_namespace').perform(context)
+    use_sim_time_str = LaunchConfiguration('use_sim_time').perform(context)
+    use_rviz_str = LaunchConfiguration('use_rviz').perform(context)
+    params_file = LaunchConfiguration('params_file').perform(context)
+    wait_for_tf_str = LaunchConfiguration('wait_for_tf').perform(context)
+
+    nav2_launch_file_dir = os.path.join(
+        get_package_share_directory('nav2_bringup'), 'launch')
+
+    slam_params = os.path.join(
+        get_package_share_directory('turtlebot3_navigation2'),
+        'param', 'humble', 'mapper_params_online_async_fast.yaml')
+
+    workspace_dir = os.path.expanduser(
+        os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
+    wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
 
     rviz_config_dir = os.path.join(
         get_package_share_directory('turtlebot3_navigation2'),
-        'rviz',
-        'tb3_navigation2.rviz')
+        'rviz', 'tb3_navigation2.rviz')
 
-    # Optional: wait for TF tree before launching Nav2 (prevents costmap activation failures).
-    # In SLAM mode we need map->odom (from SLAM Toolbox) and odom->base_* (from robot).
-    # Use a longer timeout (60s) so SLAM has time to publish the first map->odom.
-    workspace_dir = os.path.expanduser(os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
-    wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
-    wait_for_tf = LaunchConfiguration('wait_for_tf', default='true')
+    tf_remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
+
+    actions = []
+
+    # --- Laser scan normalizer ---
+    normalizer_params = {
+        'input_topic': 'scan',
+        'output_topic': 'scan_normalized',
+    }
+    if ns:
+        normalizer_params['frame_id_prefix'] = ns
+
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='normalize_laser_scan.py',
+        name='laser_scan_normalizer',
+        namespace=ns if ns else None,
+        parameters=[normalizer_params],
+        remappings=tf_remappings,
+        output='screen',
+    ))
+
+    # --- SLAM Toolbox ---
+    slam_overrides = {
+        'use_sim_time': use_sim_time_str.lower() == 'true',
+    }
+    if ns:
+        slam_overrides['odom_frame'] = f'{ns}/odom'
+        slam_overrides['base_frame'] = f'{ns}/base_footprint'
+        slam_overrides['map_frame'] = 'map'
+
+    actions.append(Node(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        name='slam_toolbox',
+        namespace=ns if ns else None,
+        output='screen',
+        parameters=[slam_params, slam_overrides],
+        remappings=tf_remappings + [('/scan', 'scan_normalized')],
+    ))
+
+    # --- Wait for TF ---
     wait_tf_env = dict(os.environ)
-    wait_tf_env['TF_WAIT_TIMEOUT_SEC'] = '60.0'
-    wait_tf_env['TF_WAIT_ODOM_ONLY'] = 'false'  # require map->odom and odom->base_*
+    wait_tf_env['TF_WAIT_ODOM_ONLY'] = 'true'
+    if ns:
+        wait_tf_env['TF_WAIT_ODOM_FRAME'] = f'{ns}/odom'
+        wait_tf_env['TF_WAIT_BASE_FRAMES'] = f'{ns}/base_footprint,{ns}/base_link'
+        wait_tf_env['TF_WAIT_NAMESPACE'] = ns
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            'map',
-            default_value='',
-            description='Map file to load (empty string = use SLAM live map)'),
-
-        DeclareLaunchArgument(
-            'params_file',
-            default_value=param_dir,
-            description='Full path to param file to load'),
-
-        DeclareLaunchArgument(
-            'use_sim_time',
-            default_value='false',
-            description='Use simulation (Gazebo) clock if true'),
-
-        DeclareLaunchArgument(
-            'wait_for_tf',
-            default_value='true',
-            description='Wait for TF tree to be ready before starting Nav2'),
-
-        DeclareLaunchArgument(
-            'use_rviz',
-            default_value='true',
-            description='Launch RViz2 if true'),
-
-        ExecuteProcess(
+    if wait_for_tf_str.lower() == 'true':
+        actions.append(ExecuteProcess(
             cmd=['python3', wait_tf_script],
             output='screen',
             env=wait_tf_env,
-            condition=IfCondition(wait_for_tf),
-        ),
+        ))
 
-        # Delay Nav2 start until TF is ready (wait_for_tf script completes)
-        # This prevents "Timed out waiting for transform" errors during activation
-        # Note: ExecuteProcess blocks, but IncludeLaunchDescription starts immediately,
-        # so we delay Nav2 by a safe amount (typically TF wait takes 1-3 seconds)
-        # Use navigation_launch.py directly to skip both SLAM and AMCL (using external SLAM)
-        # This launches only the navigation stack (planner, controller, BT navigator, etc.)
-        # without map_server or AMCL, since SLAM Toolbox provides the map and map->odom transform
-        TimerAction(
-            period=3.0,  # Delay to allow TF wait script to complete and TF to stabilize
-            actions=[
-                IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource([nav2_launch_file_dir, '/navigation_launch.py']),
-                    launch_arguments={
-                        'use_sim_time': use_sim_time,
-                        'params_file': param_dir,
-                        'autostart': 'True'}.items(),
-                ),
-            ],
-            condition=IfCondition(wait_for_tf),
-        ),
+    # --- Nav2 with frame-rewritten params ---
+    nav2_params_file = _generate_nav2_params(params_file, ns)
 
-        Node(
+    nav2_include = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [nav2_launch_file_dir, '/navigation_launch.py']),
+        launch_arguments={
+            'use_sim_time': use_sim_time_str,
+            'params_file': nav2_params_file,
+            'autostart': 'True',
+        }.items(),
+    )
+
+    if ns:
+        nav2_group = GroupAction([
+            PushRosNamespace(ns),
+            nav2_include,
+        ])
+    else:
+        nav2_group = nav2_include
+
+    if wait_for_tf_str.lower() == 'true':
+        actions.append(TimerAction(period=3.0, actions=[nav2_group]))
+    else:
+        actions.append(nav2_group)
+
+    # --- RViz (optional) ---
+    if use_rviz_str.lower() == 'true':
+        actions.append(Node(
             package='rviz2',
             executable='rviz2',
             name='rviz2',
             arguments=['-d', rviz_config_dir],
-            parameters=[{'use_sim_time': use_sim_time}],
-            condition=IfCondition(use_rviz),
-            output='screen'),
+            parameters=[{'use_sim_time': use_sim_time_str.lower() == 'true'}],
+            output='screen',
+        ))
+
+    return actions
+
+
+def generate_launch_description():
+    param_file_name = TURTLEBOT3_MODEL + '.yaml'
+    if ROS_DISTRO == 'humble':
+        default_param_file = os.path.join(
+            get_package_share_directory('turtlebot3_navigation2'),
+            'param', ROS_DISTRO, param_file_name)
+    else:
+        default_param_file = os.path.join(
+            get_package_share_directory('turtlebot3_navigation2'),
+            'param', param_file_name)
+
+    robot_name = LaunchConfiguration('robot_name')
+    namespace = LaunchConfiguration('namespace')
+
+    effective_namespace = PythonExpression(
+        ['"', namespace, '" if "', namespace, '" != "" else "', robot_name, '"']
+    )
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'robot_name', default_value='',
+            description='Robot name used as namespace (e.g. blinky, pinky)'),
+        DeclareLaunchArgument(
+            'namespace', default_value='',
+            description='Explicit namespace (overrides robot_name if set)'),
+        DeclareLaunchArgument(
+            'params_file', default_value=default_param_file,
+            description='Full path to Nav2 params YAML file'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='Use simulation (Gazebo) clock if true'),
+        DeclareLaunchArgument(
+            'use_rviz', default_value='true',
+            description='Launch RViz2 if true'),
+        DeclareLaunchArgument(
+            'wait_for_tf', default_value='true',
+            description='Wait for TF tree before starting Nav2'),
+        DeclareLaunchArgument(
+            'effective_namespace', default_value=effective_namespace,
+            description='(internal) resolved namespace'),
+        OpaqueFunction(function=_launch_setup),
     ])
