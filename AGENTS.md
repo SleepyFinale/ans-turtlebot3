@@ -46,11 +46,28 @@ sudo docker run --rm \
   bash -c "source /opt/ros/humble/setup.bash && cd /root/turtlebot3_ws && colcon build --symlink-install && colcon test && colcon test-result --verbose"
 ```
 
+### Multi-Robot Namespacing (Single Domain)
+
+All robots and the central computer run on **ROS_DOMAIN_ID=50**. Each robot uses `robot_name:=<name>` to namespace its topics and TF frames.
+
+**Per-robot bringup:**
+```bash
+export ROS_DOMAIN_ID=50
+ros2 launch turtlebot3_bringup robot.launch.py robot_name:=blinky
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py robot_name:=blinky use_sim_time:=False use_rviz:=False
+```
+
+This produces namespaced topics (`/blinky/scan`, `/blinky/tf`, `/blinky/map`) and prefixed TF frames (`blinky/odom`, `blinky/base_footprint`). The central computer's TF relay merges per-robot `/blinky/tf` into the global `/tf` tree.
+
+**How namespacing works:**
+- `robot.launch.py` uses `PushRosNamespace` + TF remappings (`/tf` → `tf`) so all topics including TF are under `/<robot>/`.
+- `navigation2_slam.launch.py` uses `OpaqueFunction` to rewrite Nav2 param frame names (e.g. `base_footprint` → `blinky/base_footprint`) and sets SLAM Toolbox frames at launch time.
+- The `burger.yaml` Nav2 params use **relative** topic names (`scan_normalized`, `odom`) so they resolve correctly in any namespace.
+
 ### Key Gotchas
 
 - **No physical hardware**: The Cloud VM has no TurtleBot3 robot, OpenCR, or LiDAR. Nodes like `turtlebot3_ros` and lidar drivers will fail at runtime if they try to open serial ports (`/dev/ttyACM0`, `/dev/ttyUSB0`). Use `robot_state_publisher` for URDF/TF verification.
 - **`ros2 topic pub --once` blocks** if no subscriber exists for the target topic. Use `--times N` instead, or skip the command if no subscriber node is running.
-- **`turtlebot3_state_publisher.launch.py`** requires a `namespace` launch argument when called standalone (it's normally invoked through `robot.launch.py` which declares the default). Pass `namespace:=myns` or launch via `robot.launch.py` instead.
 - **Build artifacts are ephemeral** in `--rm` containers. For interactive testing, use a named container (`--name tb3-dev`) or build + test in a single `bash -c` invocation.
 - **Rebuild scripts** (`scripts/clean_rebuild.sh`, `scripts/minimal_rebuild.sh`) reference `~` as `~/turtlebot3_ws`. Inside Docker, the workspace is at `/root/turtlebot3_ws`, which matches.
 - The packages have no formal ament_lint or test suites registered; `colcon test` completes with 0 tests. Lint checks are limited to `python3 -m py_compile` and `bash -n` syntax checks.
