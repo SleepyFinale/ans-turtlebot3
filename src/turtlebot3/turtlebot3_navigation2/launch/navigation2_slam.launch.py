@@ -25,9 +25,8 @@
 #       robot_name:=blinky use_sim_time:=False use_rviz:=False
 
 import os
+import re
 import tempfile
-
-import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -48,36 +47,39 @@ TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 ROS_DISTRO = os.environ.get('ROS_DISTRO')
 
 
-def _rewrite_frame(d, key, old_val, new_val):
-    """Recursively find parameters matching key=old_val and replace with new_val."""
-    for k, v in list(d.items()):
-        if k == key and v == old_val:
-            d[k] = new_val
-        elif isinstance(v, dict):
-            _rewrite_frame(v, key, old_val, new_val)
+def _yaml_replace(content, key, old_val, new_val):
+    """Replace 'key: old_val' with 'key: new_val' in YAML text (preserves formatting)."""
+    pattern = r'(\b' + re.escape(key) + r':\s*)' + re.escape(old_val) + r'(\s*(?:#.*)?$)'
+    return re.sub(pattern, r'\g<1>' + new_val + r'\2', content, flags=re.MULTILINE)
 
 
 def _generate_nav2_params(source_file, namespace):
-    """Generate a modified Nav2 params file with namespace-prefixed frame names."""
+    """Generate a modified Nav2 params file with namespace-prefixed frame names.
+
+    Uses text-based replacement to preserve the exact YAML formatting that
+    Nav2 expects (yaml.dump can alter list styles, quoting, and key order
+    which breaks DWB critic loading).
+    """
     with open(source_file) as f:
-        params = yaml.safe_load(f)
+        content = f.read()
 
     if namespace:
-        _rewrite_frame(params, 'robot_base_frame', 'base_footprint',
-                        f'{namespace}/base_footprint')
-        _rewrite_frame(params, 'base_frame_id', 'base_footprint',
-                        f'{namespace}/base_footprint')
-        _rewrite_frame(params, 'base_frame', 'base_footprint',
-                        f'{namespace}/base_footprint')
-        _rewrite_frame(params, 'global_frame', 'odom', f'{namespace}/odom')
-        _rewrite_frame(params, 'odom_frame_id', 'odom', f'{namespace}/odom')
-        _rewrite_frame(params, 'odom_frame', 'odom', f'{namespace}/odom')
-        _rewrite_frame(params, 'odom_topic', '/odom', 'odom')
-        _rewrite_frame(params, 'topic', '/scan_normalized', 'scan_normalized')
+        p = namespace
+        content = _yaml_replace(content, 'robot_base_frame', 'base_footprint',
+                                f'{p}/base_footprint')
+        content = _yaml_replace(content, 'base_frame_id', '"base_footprint"',
+                                f'"{p}/base_footprint"')
+        content = _yaml_replace(content, 'base_frame', 'base_footprint',
+                                f'{p}/base_footprint')
+        content = _yaml_replace(content, 'global_frame', 'odom', f'{p}/odom')
+        content = _yaml_replace(content, 'odom_frame_id', '"odom"', f'"{p}/odom"')
+        content = _yaml_replace(content, 'odom_frame', 'odom', f'{p}/odom')
+        content = _yaml_replace(content, 'odom_topic', '/odom', 'odom')
+        content = _yaml_replace(content, 'odom_topic', 'odom', 'odom')
 
     fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
     with os.fdopen(fd, 'w') as f:
-        yaml.dump(params, f, default_flow_style=False)
+        f.write(content)
     return path
 
 
