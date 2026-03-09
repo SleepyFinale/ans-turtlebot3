@@ -13,7 +13,9 @@ slam_toolbox:
     odom_frame: odom
     map_frame: map
     base_frame: base_footprint
-    scan_topic: /scan_normalized  # Use normalized scan to ensure consistent reading counts
+    # In namespaced setups, slam_toolbox runs inside the robot namespace.
+    # Use a relative topic so each instance subscribes to <namespace>/scan_normalized.
+    scan_topic: scan_normalized  # Use normalized scan to ensure consistent reading counts
     use_map_saver: true
     mode: mapping #localization
 

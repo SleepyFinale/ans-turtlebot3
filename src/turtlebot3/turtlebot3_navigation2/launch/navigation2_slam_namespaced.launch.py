@@ -15,11 +15,11 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, TimerAction, ExecuteProcess, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace
 
 
 TURTLEBOT3_MODEL = os.environ["TURTLEBOT3_MODEL"]
@@ -130,21 +130,24 @@ def generate_launch_description():
         condition=IfCondition(wait_for_tf),
     )
 
-    # Nav2 stack: launch inside the same namespace so actions, topics, and services
-    # are all under /<robot>/...
+    # Nav2 stack: include nav2_bringup's navigation_launch.py inside the same namespace
+    # so actions, topics, and services are all under /<robot>/...
+    nav2_include = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([nav2_launch_file_dir, "/navigation_launch.py"]),
+        launch_arguments={
+            "use_sim_time": use_sim_time,
+            "params_file": params_file,
+            "autostart": "True",
+        }.items(),
+    )
     nav2_launch = TimerAction(
         period=3.0,
         actions=[
-            Node(
-                package="nav2_bringup",
-                executable="bringup_launch.py",
-                name="nav2_bringup",
-                namespace=effective_namespace,
-                output="screen",
-                parameters=[
-                    params_file,
-                    {"use_sim_time": use_sim_time},
-                ],
+            GroupAction(
+                [
+                    PushRosNamespace(effective_namespace),
+                    nav2_include,
+                ]
             )
         ],
         condition=IfCondition(wait_for_tf),

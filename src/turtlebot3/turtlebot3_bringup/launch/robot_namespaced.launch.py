@@ -27,6 +27,11 @@ def generate_launch_description():
     namespace = LaunchConfiguration("namespace")
     # robot_name: logical robot identifier (e.g. blinky, pinky, inky, clyde)
     robot_name = LaunchConfiguration("robot_name")
+    # robot.launch.py optionally auto-starts a legacy, non-namespaced SLAM + normalizer.
+    # Default this wrapper to *not* start it (namespaced SLAM should be started separately).
+    start_slam_with_normalizer = LaunchConfiguration(
+        "start_slam_with_normalizer", default="false"
+    )
 
     # Use namespace if non-empty, otherwise fall back to robot_name.
     # This keeps the interface flexible while ensuring a single effective
@@ -56,10 +61,19 @@ def generate_launch_description():
                     "this value takes precedence over robot_name."
                 ),
             ),
+            DeclareLaunchArgument(
+                "start_slam_with_normalizer",
+                default_value="false",
+                description=(
+                    "If true, robot.launch.py will run scripts/start_slam_with_normalizer.sh "
+                    "(legacy single-robot, non-namespaced). Default false for multi-robot namespaces."
+                ),
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(robot_launch),
                 launch_arguments={
                     "namespace": effective_namespace,
+                    "start_slam_with_normalizer": start_slam_with_normalizer,
                 }.items(),
             ),
         ]
