@@ -15,7 +15,8 @@ from geometry_msgs.msg import Twist
 # -----------------------------
 # Config
 # -----------------------------
-PI4_LAN_IP = "192.168.0.194"
+#PI4_LAN_IP = "192.168.0.194"
+PI4_LAN_IP = "10.3.141.194"
 LOGSTASH_IP = "192.168.0.76"
 LOGSTASH_PORT = 5045
 
@@ -134,33 +135,11 @@ class LogstashPublisher(Node):
             "lin_vel": [t.x, t.y, t.z],
             "ang_vel": [r.x, r.y, r.z]
         })
+
     def cmd_vel_cb(self, msg):
-
-        now = time.time()
-
-        if self.last_cmd_time is None:
-            self.last_cmd_time = now
-            return
-
-        dt = now - self.last_cmd_time
-        self.last_cmd_time = now
-
-        v = msg.linear.x
-        w = msg.angular.z
-
-        # Dead reckoning integration
-        self.cmd_x += v * math.cos(self.cmd_theta) * dt
-        self.cmd_y += v * math.sin(self.cmd_theta) * dt
-        self.cmd_theta += w * dt
-
         self.enqueue("/cmd_vel", {
             "linear": [msg.linear.x, msg.linear.y, msg.linear.z],
-            "angular": [msg.angular.x, msg.angular.y, msg.angular.z],
-            "predicted_pose": [
-                self.cmd_x,
-                self.cmd_y,
-                self.cmd_theta
-            ]
+            "angular": [msg.angular.x, msg.angular.y, msg.angular.z]
         })
 
 # -----------------------------
@@ -178,5 +157,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
