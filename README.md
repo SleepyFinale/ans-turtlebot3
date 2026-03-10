@@ -1,6 +1,6 @@
 # TurtleBot3 Burger Setup Notes
 
-This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot; you choose the correct **ROS_DOMAIN_ID** and connect using that robot’s hostname or IP.
+This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot to connect to them.
 
 ## References (authoritative)
 
@@ -20,22 +20,22 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 ## Robot fleet reference
 
-Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that robot (and on any Remote PC talking to it) to the value below. SSH using the hostname or IP for that robot.
+Use this table when configuring a given robot. SSH using the hostname or IP for that robot. All robots and any Remote PCs or central computers talking to them should share **ROS_DOMAIN_ID=50**.
 
-| Robot  | ROS_DOMAIN_ID | Hostname (Lab)       | Hostname (Azure)    |
-| ------ | ------------- | -------------------- | --------------------|
-| Blinky | 30            | blinky@192.168.0.158 | blinky@172.20.10.13 |
-| Pinky  | 31            | pinky@192.168.0.194  | pinky@172.20.10.14  |
-| Inky   | 32            | inky@\<IP\>          | inky@\<IP\>         |
-| Clyde  | 33            | clyde@\<IP\>         | clyde@\<IP\>        |
+| Robot  | Lab (SSID: SNS)       | RaspAP (rpi)        | Azure (SSID: Azure) |
+| ------ | --------------------- | ------------------- | --------------------|
+| Blinky | blinky@192.168.0.158  | blinky@10.3.141.220 | blinky@172.20.10.13 |
+| Pinky  | pinky@192.168.0.194   | pinky@10.3.141.194  | pinky@172.20.10.14  |
+| Inky   | inky@192.168.0.139    | inky@10.3.141.139   | inky@172.20.10.15   |
+| Clyde  | `clyde@<IP>`          | `clyde@<IP>`        | `clyde@<IP>`        |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
 - **ROS distro**: Humble Hawksbill (Ubuntu 22.04 / Jammy)
 
-When following this README, substitute your robot’s hostname/IP and ROS_DOMAIN_ID where indicated.
+When following this README, substitute your robot’s hostname/IP where indicated.
 
-For **multi-robot SLAM** (e.g. Blinky + Pinky), the central PC uses **ROS_DOMAIN_ID=50** and runs domain bridges, map_merge, tf_relay, and explorer; each robot keeps its own ROS_DOMAIN_ID (30 for Blinky, 31 for Pinky). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
+For **multi-robot SLAM** (e.g. Blinky + Pinky), the central PC and all robots share are distinguished by per-robot namespaces (e.g. `/blinky`, `/pinky`). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
 
 ---
 
@@ -364,59 +364,26 @@ sudo udevadm trigger
 
 ### ROS_DOMAIN_ID
 
-On each robot, set **ROS_DOMAIN_ID** to the value for that robot (see [Robot fleet reference](#robot-fleet-reference)). The Remote PC that controls or monitors the robot must use the **same** ROS_DOMAIN_ID.
+In this fleet, **all robots and all Remote PCs/central computers share a single ROS domain: `ROS_DOMAIN_ID=50`**. Every machine that needs to talk to the robots should use this same value.
 
 On the robot (SBC):
 
 ```bash
-echo 'export ROS_DOMAIN_ID=<ID>' >> ~/.bashrc   # use 30, 31, 32, or 33 for Blinky, Pinky, Inky, Clyde
+echo 'export ROS_DOMAIN_ID=50' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-On the Remote PC, set the same value so they can communicate:
-
-```bash
-export ROS_DOMAIN_ID=<ID>
-# or add to ~/.bashrc
-```
-
-**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another robot or PC on the same network, or ROS 2 traffic will conflict.
+**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another unrelated robot or PC on the same network, or ROS 2 traffic will conflict. Within this fleet we intentionally standardize on **50** across all machines.
 
 ### Multi-robot and central computer
 
-For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** runs domain bridges, map_merge, tf_relay, and the multi-robot explorer; the central uses **ROS_DOMAIN_ID=50**. Each robot keeps its own **ROS_DOMAIN_ID** (30 for Blinky, 31 for Pinky). Full workflow, startup order, and diagnostic commands are in the central repo: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** and all robots are distinguished by their namespaces (e.g. `/blinky`, `/pinky`). Domain bridges are no longer required in the standard setup; see the central repo for the multi-robot SLAM workflow and diagnostic commands: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
 
 To check TF and connectivity from the central PC, run (from the central workspace):  
 `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
 (The script lives in the central repo.)
 
-**On each robot (this repo), you only need to:**
-
-1. Set **ROS_DOMAIN_ID** for that robot: **30** for Blinky, **31** for Pinky (see [Robot fleet reference](#robot-fleet-reference)).
-2. Run bringup (and optionally SLAM + normalizer) with **no namespace**:
-
-   ```bash
-   source /opt/ros/humble/setup.bash
-   export TURTLEBOT3_MODEL=burger
-   export ROS_DOMAIN_ID=30   # Blinky; use 31 for Pinky
-   ros2 launch turtlebot3_bringup robot.launch.py
-   ```
-
-3. Do **not** launch with a namespace on the robot; the central PC runs **domain bridges** that subscribe to each robot's domain and republish namespaced topics (e.g. `/blinky/scan`, `/blinky/tf`) on the central domain.
-
-Startup order on central: bridges → multirobot_slam → nav2/explorer. See the central README for details.
-
-### Alternative: single-domain multi-robot with per-robot namespaces (experimental)
-
-If you prefer to run **all robots and the central computer in a single ROS_DOMAIN_ID** and distinguish robots purely by namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`), this workspace provides namespaced launch files you can use instead of per-robot domains + domain bridges.
-
 #### High-level changes
-
-- **Common domain**: Set **ROS_DOMAIN_ID=50** on **all robots and the central PC**.
-- **Per-robot namespace**: Each robot runs bringup and SLAM/Nav2 in its own namespace (e.g. `blinky`, `pinky`, `inky`, `clyde`), so topics and TF frames are unique per robot.
-- **TF frame prefixes**:
-  - The URDF already accepts a `namespace` argument and prefixes all base frames (e.g. `blinky/base_footprint`, `blinky/base_link`).
-  - The laser scan normalizer (`normalize_laser_scan.py`) is launched with a `frame_id_prefix` equal to the robot namespace, so the scan frame becomes `blinky/base_scan`, `pinky/base_scan`, etc.
 
 #### 1. Per-robot bringup with namespaces
 
