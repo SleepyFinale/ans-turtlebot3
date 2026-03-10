@@ -307,6 +307,10 @@ global_costmap:
           obstacle_min_range: 0.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
+        # Force subscription to the global /map topic so Nav2's
+        # static layer receives maps from slam_toolbox even when
+        # Nav2 is running inside a namespace (e.g. /pinky).
+        map_topic: "/map"
         map_subscribe_transient_local: True
         subscribe_to_updates: True  # Enable incremental map updates for faster map updates
         use_maximum: false  # Use overwrite to preserve unknown space for frontier detection
