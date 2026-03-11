@@ -203,11 +203,11 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
 
 ---
 
-## Wi‑Fi switching and static IPs (`scripts/switch_wifi.sh`)
+## Wi‑Fi switching and static IPs (`scripts/wifi/switch_wifi.sh`)
 
 This repo includes a helper script to switch the robot’s Wi‑Fi network and apply consistent IP settings using **netplan**.
 
-- Script path: `scripts/switch_wifi.sh`
+- Script path: `scripts/wifi/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
 
 ### One‑time prerequisite
@@ -224,7 +224,7 @@ Comment out or remove the `wifis:` / `wlan0:` block from `50-cloud-init.yaml`, l
 sudo netplan apply
 ```
 
-From this point on, Wi‑Fi is managed by `scripts/switch_wifi.sh`.
+From this point on, Wi‑Fi is managed by `scripts/wifi/switch_wifi.sh`.
 
 ### Static IPs on the SNS lab Wi‑Fi
 
@@ -252,40 +252,40 @@ From `~/turtlebot3_ws` on the robot:
 cd ~/turtlebot3_ws
 
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
-sudo ./scripts/switch_wifi.sh lab
+sudo ./scripts/wifi/switch_wifi.sh lab
 
 # Connect to Azure mobile hotspot with static IP (per robot/user)
-sudo ./scripts/switch_wifi.sh azure
+sudo ./scripts/wifi/switch_wifi.sh azure
 
 # Show current Wi‑Fi SSID and wlan0 IP
-./scripts/switch_wifi.sh status
+./scripts/wifi/switch_wifi.sh status
 ```
 
 The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly (e.g. when logged in as a different account):
 
 ```bash
-sudo ./scripts/switch_wifi.sh lab pinky
-sudo ./scripts/switch_wifi.sh lab blinky
+sudo ./scripts/wifi/switch_wifi.sh lab pinky
+sudo ./scripts/wifi/switch_wifi.sh lab blinky
 
 # or
-ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh lab
-ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh lab
+ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh lab
 ```
 
 You can use the same override pattern for Azure:
 
 ```bash
-sudo ./scripts/switch_wifi.sh azure pinky
-sudo ./scripts/switch_wifi.sh azure blinky
+sudo ./scripts/wifi/switch_wifi.sh azure pinky
+sudo ./scripts/wifi/switch_wifi.sh azure blinky
 
 # or
-ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh azure
-ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh azure
+ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh azure
+ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh azure
 ```
 
-If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
+If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
 
-### Automatic WiFi connection on boot (`scripts/boot_wifi.sh`)
+### Automatic WiFi connection on boot (`scripts/wifi/boot_wifi.sh`)
 
 To prevent the robot from being stuck without WiFi when it boots (e.g., if it was connected to the Azure hotspot before shutdown and the hotspot is not nearby), a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
 
@@ -299,7 +299,7 @@ To prevent the robot from being stuck without WiFi when it boots (e.g., if it wa
 
 ```bash
 cd ~/turtlebot3_ws
-sudo ./scripts/install_boot_wifi.sh
+sudo ./scripts/wifi/install_boot_wifi.sh
 ```
 
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
@@ -330,10 +330,10 @@ sudo journalctl -u boot-wifi.service -f
 You can test the boot WiFi script manually (without rebooting):
 
 ```bash
-sudo ./scripts/boot_wifi.sh
+sudo ./scripts/wifi/boot_wifi.sh
 # or specify robot name explicitly:
-sudo ./scripts/boot_wifi.sh pinky
-sudo ./scripts/boot_wifi.sh blinky
+sudo ./scripts/wifi/boot_wifi.sh pinky
+sudo ./scripts/wifi/boot_wifi.sh blinky
 ```
 
 **Disabling boot WiFi (if needed):**
