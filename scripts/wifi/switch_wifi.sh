@@ -3,10 +3,10 @@
 # Switch Raspberry Pi WiFi between SNS (lab), RaspAP (rpi), and Azure.
 #
 # Usage:
-#   sudo ./scripts/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
-#   sudo ./scripts/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
-#   sudo ./scripts/switch_wifi.sh azure     # Azure hotspot with static IP (per robot/user)
-#   ./scripts/switch_wifi.sh status         # show current WiFi (no sudo)
+#   sudo ./scripts/wifi/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
+#   sudo ./scripts/wifi/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
+#   sudo ./scripts/wifi/switch_wifi.sh azure     # Azure hotspot with static IP (per robot/user)
+#   ./scripts/wifi/switch_wifi.sh status         # show current WiFi (no sudo)
 #
 # Prereq: Remove or comment out the wifis/wlan0 block from
 #   /etc/netplan/50-cloud-init.yaml so this script's 99-wifi-switch.yaml

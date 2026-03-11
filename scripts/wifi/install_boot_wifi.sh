@@ -3,7 +3,7 @@
 # Install boot WiFi service for automatic WiFi connection on boot.
 # This script sets up the systemd service to run boot_wifi.sh on startup.
 #
-# Usage: sudo ./scripts/install_boot_wifi.sh
+# Usage: sudo ./scripts/wifi/install_boot_wifi.sh
 #
 
 set -e
@@ -13,9 +13,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# Get the workspace directory (where this script is located)
+# Get the workspace directory (two levels up from this script: workspace/scripts/wifi)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 SERVICE_NAME="boot-wifi.service"
 SERVICE_FILE="$SCRIPT_DIR/$SERVICE_NAME"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -35,7 +35,7 @@ Before=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=$WORKSPACE_DIR/scripts/boot_wifi.sh
+ExecStart=$WORKSPACE_DIR/scripts/wifi/boot_wifi.sh
 StandardOutput=journal
 StandardError=journal
 
