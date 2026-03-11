@@ -387,77 +387,44 @@ To check TF and connectivity from the central PC, run (from the central workspac
 
 #### 1. Per-robot bringup with namespaces
 
-Use the namespaced bringup wrapper in `turtlebot3_bringup`:
+Use the standard bringup launch file in `turtlebot3_bringup`, which now **automatically determines the robot name and applies a matching namespace** (e.g. `/blinky`, `/pinky`):
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/turtlebot3_ws/install/setup.bash
-
 export TURTLEBOT3_MODEL=burger
 export LDS_MODEL=LDS-02
-export ROS_DOMAIN_ID=50
 
-# Example: Blinky
-ros2 launch turtlebot3_bringup robot_namespaced.launch.py robot_name:=blinky
-
-# Example: Pinky
-ros2 launch turtlebot3_bringup robot_namespaced.launch.py robot_name:=pinky
+# Bring up the robot (runs under /<robot_name>, e.g. /blinky)
+ros2 launch turtlebot3_bringup robot.launch.py
 ```
-
-`robot_namespaced.launch.py` computes an **effective namespace** from:
-
-- `namespace` (if provided explicitly), otherwise
-- `robot_name` (e.g. `blinky`, `pinky`, `inky`, `clyde`).
-
-It then forwards that namespace into the existing `robot.launch.py`, so all bringup nodes (state publisher, lidar driver, `turtlebot3_node`) run under `/blinky`, `/pinky`, etc.
 
 #### 2. Namespaced SLAM + Nav2 on each robot
 
-Instead of running `navigation2_slam.launch.py` directly, use the namespaced variant in `turtlebot3_navigation2`:
+Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name:
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/turtlebot3_ws/install/setup.bash
-
 export TURTLEBOT3_MODEL=burger
-export ROS_DOMAIN_ID=50
 
-# Example: Blinky
-ros2 launch turtlebot3_navigation2 navigation2_slam_namespaced.launch.py \
-  robot_name:=blinky \
-  use_sim_time:=false \
-  use_rviz:=false
-
-# Example: Pinky
-ros2 launch turtlebot3_navigation2 navigation2_slam_namespaced.launch.py \
-  robot_name:=pinky \
-  use_sim_time:=false \
-  use_rviz:=false
+# Run SLAM + Nav2 on the robot (topics under /<robot_name>)
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
 ```
 
-`navigation2_slam_namespaced.launch.py` does the following for each robot:
+**Map topics:** In multi-robot mode each robot publishes its own map topics (e.g. `/pinky/map`, `/pinky/map_metadata`, `/pinky/map_updates`). Nav2 is configured to subscribe to that same per-robot map (not the global `/map`, and not `/pinky/global_costmap/map`), so multiple robots can run SLAM + Nav2 in a single ROS domain without overwriting each other’s maps.
 
-- Computes an effective namespace from `namespace` / `robot_name` (same rule as bringup).
-- Starts **laser scan normalizer** inside that namespace:
-  - Subscribes to `scan` (resolved as `/<robot>/scan`).
-  - Publishes `scan_normalized` (resolved as `/<robot>/scan_normalized`).
-  - Sets `frame_id_prefix:=<robot>` so scan TF frame is `<robot>/base_scan`.
-- Starts **SLAM Toolbox** inside the namespace, consuming `scan_normalized`.
-- Starts **Nav2** (via `nav2_bringup`) inside the same namespace so all navigation topics/actions are under `/<robot>/...`.
-
-> **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For multi-robot namespaced operation, use `navigation2_slam_namespaced.launch.py` per robot instead of `start_slam_with_normalizer.sh`.
+> **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
 
 #### 3. Central computer behavior with namespaces
 
-With this single-domain + namespace setup:
+With this single-domain + namespace setup (standard `robot.launch.py` and `navigation2_slam.launch.py` creating per-robot namespaces automatically):
 
 - The central computer also uses **ROS_DOMAIN_ID=50**.
 - Multi-robot tools (RViZ, explorers, custom coordination nodes) can subscribe directly to:
   - `/blinky/scan_normalized`, `/blinky/map`, `/blinky/tf`, `/blinky/cmd_vel`
   - `/pinky/…`, `/inky/…`, `/clyde/…`
 - You no longer *need* per-robot domains or domain bridges; robots are distinguished by their namespaces instead of `ROS_DOMAIN_ID`.
-
-The existing domain-bridge–based workflow remains supported; this namespaced single-domain mode is an **alternative** configuration for experiments and future multi-robot setups.
 
 ### LDS configuration
 

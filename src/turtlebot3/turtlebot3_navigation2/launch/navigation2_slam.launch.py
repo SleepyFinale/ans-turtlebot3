@@ -65,6 +65,7 @@ def _generate_nav2_params(source_file, namespace):
         params = yaml.safe_load(f)
 
     if namespace:
+        # Rewrite common frame / topic params to be namespace-aware.
         _rewrite_frame(params, 'robot_base_frame', 'base_footprint',
                         f'{namespace}/base_footprint')
         _rewrite_frame(params, 'base_frame_id', 'base_footprint',
@@ -76,6 +77,11 @@ def _generate_nav2_params(source_file, namespace):
         _rewrite_frame(params, 'odom_frame', 'odom', f'{namespace}/odom')
         _rewrite_frame(params, 'odom_topic', '/odom', 'odom')
         _rewrite_frame(params, 'topic', '/scan_normalized', 'scan_normalized')
+        # Ensure the global costmap static layer subscribes to the
+        # per-robot map topic (e.g. /pinky/map) instead of a local
+        # /<namespace>/global_costmap/map topic.
+        _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
+        _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
 
     fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
     with os.fdopen(fd, 'w') as f:
@@ -144,7 +150,12 @@ def _launch_setup(context):
         namespace=ns if ns else None,
         output='screen',
         parameters=[slam_params, slam_overrides],
-        remappings=tf_remappings + [('/scan', 'scan_normalized')],
+        remappings=tf_remappings + [
+            ('/scan', 'scan_normalized'),
+            ('/map', 'map'),
+            ('/map_metadata', 'map_metadata'),
+            ('/map_updates', 'map_updates'),
+        ],
     ))
 
     # --- Wait for TF ---
