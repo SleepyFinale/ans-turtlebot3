@@ -24,6 +24,14 @@ TARGET_SERVICE="$SYSTEMD_DIR/$SERVICE_NAME"
 echo "Installing boot WiFi service..."
 echo "Workspace directory: $WORKSPACE_DIR"
 
+# Basic sanity check: ensure the target script exists at the expected (post-move) path.
+BOOT_WIFI_SCRIPT="$WORKSPACE_DIR/scripts/wifi/boot_wifi.sh"
+if [ ! -f "$BOOT_WIFI_SCRIPT" ]; then
+  echo "Error: Expected boot WiFi script not found at: $BOOT_WIFI_SCRIPT"
+  echo "Please ensure you are running this from a valid turtlebot3_ws checkout."
+  exit 1
+fi
+
 # Create the service file with the correct workspace path
 cat > "$TARGET_SERVICE" << EOF
 [Unit]
@@ -35,7 +43,7 @@ Before=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=$WORKSPACE_DIR/scripts/wifi/boot_wifi.sh
+ExecStart=$BOOT_WIFI_SCRIPT
 StandardOutput=journal
 StandardError=journal
 
@@ -56,3 +64,9 @@ echo ""
 echo "To check status: sudo systemctl status $SERVICE_NAME"
 echo "To view logs: sudo journalctl -u $SERVICE_NAME"
 echo "To test now: sudo systemctl start $SERVICE_NAME"
+
+# If the service is already running (or previously failed), restarting here makes the install
+# immediately effective without requiring a reboot.
+if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+  systemctl restart "$SERVICE_NAME" || true
+fi
