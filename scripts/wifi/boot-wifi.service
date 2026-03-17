@@ -7,6 +7,14 @@ Before=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+#
+# NOTE:
+# - This file is primarily a *template/reference* copy kept in the repo.
+# - The recommended installation method is:
+#     sudo ./scripts/wifi/install_boot_wifi.sh
+#   which writes an authoritative unit to /etc/systemd/system/boot-wifi.service
+#   with the correct absolute workspace path.
+#
 ExecStart=%h/turtlebot3_ws/scripts/wifi/boot_wifi.sh
 StandardOutput=journal
 StandardError=journal
