@@ -207,13 +207,17 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.1
+      # Slightly larger than physical radius so local plans keep a comfortable
+      # distance from walls while still fitting through standard doorways.
+      robot_radius: 0.11
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Reduced to avoid "Collision Ahead" and "Starting point in lethal space" when near walls
-        inflation_radius: 0.45
-        cost_scaling_factor: 4.0
+        # Keep a modest safety halo around obstacles so the robot doesn't hug
+        # walls or doorframes, but avoid marking narrow corridors as fully
+        # blocked.
+        inflation_radius: 0.50
+        cost_scaling_factor: 4.5
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -267,10 +271,14 @@ global_costmap:
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
       transform_tolerance: 1.5
       transform_timeout: 0.2
-      robot_radius: 0.1
+      # Slightly conservative radius so the global plan prefers the center of
+      # free space but still passes through normal doorways.
+      robot_radius: 0.10
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
+      width: 20
+      height: 20
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -316,7 +324,9 @@ global_costmap:
         use_maximum: false  # Use overwrite to preserve unknown space for frontier detection
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Tighter inflation so "Starting point in lethal space" is less likely near walls/corners
+        # Balanced inflation: keep global plans off walls and corners without
+        # frequently considering the robot to start in lethal space in tight
+        # lab corridors.
         inflation_radius: 0.32
         cost_scaling_factor: 5.0
       always_send_full_costmap: True
@@ -350,7 +360,7 @@ planner_server:
       # NavFn can produce: "Failed to create a plan from potential when a legal potential was found"
       # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
       plugin: "nav2_smac_planner/SmacPlanner2D"
-      tolerance: 0.7  # was 0.5
+      tolerance: 0.8  # was 0.5
       # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
