@@ -120,7 +120,7 @@ controller_server:
     # doesn't interfere with controller logic / progress checks.
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.5  # was 0.3
+    failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     # Explicitly set which goal checker to use (silences "No goal checker was specified" warning)
@@ -177,13 +177,13 @@ controller_server:
       short_circuit_trajectory_evaluation: True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
+      BaseObstacle.scale: 0.25
+      PathAlign.scale: 20.0
       PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
+      GoalAlign.scale: 14.0
       GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
+      PathDist.scale: 24.0
+      GoalDist.scale: 18.0
       RotateToGoal.scale: 32.0
       RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
@@ -195,8 +195,8 @@ controller_server_rclcpp_node:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 10.0    # was 5.0
-      publish_frequency: 5.0    # was 2.0
+      update_frequency: 5.0
+      publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_footprint
       use_sim_time: False
@@ -216,8 +216,8 @@ local_costmap:
         # Keep a modest safety halo around obstacles so the robot doesn't hug
         # walls or doorframes, but avoid marking narrow corridors as fully
         # blocked.
-        inflation_radius: 0.50
-        cost_scaling_factor: 4.5
+        inflation_radius: 0.55
+        cost_scaling_factor: 3.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -273,7 +273,7 @@ global_costmap:
       transform_timeout: 0.2
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways.
-      robot_radius: 0.10
+      robot_radius: 0.1
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
@@ -360,7 +360,7 @@ planner_server:
       # NavFn can produce: "Failed to create a plan from potential when a legal potential was found"
       # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
       plugin: "nav2_smac_planner/SmacPlanner2D"
-      tolerance: 0.8  # was 0.5
+      tolerance: 0.5
       # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
