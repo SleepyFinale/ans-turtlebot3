@@ -5,8 +5,8 @@
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
 # It attempts to connect to SNS first, then RaspAP, and only switches to Azure if both are unavailable.
 #
-# Usage: sudo ./scripts/boot_wifi.sh [robot]
-#   robot: optional robot name (blinky/pinky). If not provided, detected from hostname.
+# Usage: sudo ./scripts/wifi/boot_wifi.sh [robot]
+#   robot: optional robot name (blinky/pinky/inky). If not provided, detected from hostname.
 #
 
 set -e

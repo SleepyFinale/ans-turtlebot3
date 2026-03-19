@@ -1,7 +1,9 @@
 # Used by nav2 slam_launch when slam=True. Normalized scan avoids SLAM "expected N readings" errors.
 slam_toolbox:
   ros__parameters:
-    scan_topic: /scan_normalized
+    # In namespaced setups, Nav2 runs inside the robot namespace.
+    # Use a relative topic so each instance subscribes to <namespace>/scan_normalized.
+    scan_topic: scan_normalized
 
 amcl:
   ros__parameters:
@@ -65,7 +67,7 @@ bt_navigator:
     use_sim_time: False
     global_frame: map
     robot_base_frame: base_footprint
-    odom_topic: /odom
+    odom_topic: odom
     default_bt_xml_filename: "navigate_w_replanning_and_recovery.xml"
     bt_loop_duration: 20
     default_server_timeout: 20
@@ -118,7 +120,7 @@ controller_server:
     # doesn't interfere with controller logic / progress checks.
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    failure_tolerance: 0.5  # was 0.3
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     # Explicitly set which goal checker to use (silences "No goal checker was specified" warning)
@@ -135,7 +137,7 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.10
       yaw_goal_tolerance: 0.25
 
     # DWB parameters
@@ -167,7 +169,7 @@ controller_server:
       angular_granularity: 0.025
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
       # SLAM Toolbox publishes map->odom at ~20-50Hz, but timing can vary during map updates
-      transform_tolerance: 1.0
+      transform_tolerance: 1.5
       xy_goal_tolerance: 0.05
       # CRITICAL: must be below your typical commanded speeds.
       # Your max_vel_x is 0.22, so 0.25 makes DWB think you're always stopped.
@@ -193,31 +195,36 @@ controller_server_rclcpp_node:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 10.0    # was 5.0
+      publish_frequency: 5.0    # was 2.0
       global_frame: odom
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 1.0
+      transform_tolerance: 1.5
       transform_timeout: 0.2
       rolling_window: true
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.1
+      # Slightly larger than physical radius so local plans keep a comfortable
+      # distance from walls while still fitting through standard doorways.
+      robot_radius: 0.11
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Reduced to avoid "Collision Ahead" and "Starting point in lethal space" when near walls
-        inflation_radius: 0.45
-        cost_scaling_factor: 4.0
+        # Keep a modest safety halo around obstacles so the robot doesn't hug
+        # walls or doorframes, but avoid marking narrow corridors as fully
+        # blocked.
+        inflation_radius: 0.50
+        cost_scaling_factor: 4.5
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
         observation_sources: scan
         scan:
-          topic: /scan_normalized
+          # Relative topic so this resolves to <namespace>/scan_normalized.
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -233,7 +240,8 @@ local_costmap:
         mark_threshold: 0
         observation_sources: scan
         scan:
-          topic: /scan_normalized
+          # Relative topic so this resolves to <namespace>/scan_normalized.
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -261,18 +269,22 @@ global_costmap:
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 1.0
+      transform_tolerance: 1.5
       transform_timeout: 0.2
-      robot_radius: 0.1
+      # Slightly conservative radius so the global plan prefers the center of
+      # free space but still passes through normal doorways.
+      robot_radius: 0.10
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
+      width: 20
+      height: 20
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
         observation_sources: scan
         scan:
-          topic: /scan_normalized
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -292,7 +304,7 @@ global_costmap:
         mark_threshold: 0
         observation_sources: scan
         scan:
-          topic: /scan_normalized
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
@@ -303,12 +315,18 @@ global_costmap:
           obstacle_min_range: 0.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
+        # Default to the global /map topic in the base params; the
+        # navigation2_slam.launch.py helper will rewrite this to
+        # /<namespace>/map when running under a robot namespace.
+        map_topic: "/map"
         map_subscribe_transient_local: True
         subscribe_to_updates: True  # Enable incremental map updates for faster map updates
         use_maximum: false  # Use overwrite to preserve unknown space for frontier detection
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Tighter inflation so "Starting point in lethal space" is less likely near walls/corners
+        # Balanced inflation: keep global plans off walls and corners without
+        # frequently considering the robot to start in lethal space in tight
+        # lab corridors.
         inflation_radius: 0.32
         cost_scaling_factor: 5.0
       always_send_full_costmap: True
@@ -342,7 +360,8 @@ planner_server:
       # NavFn can produce: "Failed to create a plan from potential when a legal potential was found"
       # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
       plugin: "nav2_smac_planner/SmacPlanner2D"
-      tolerance: 0.5
+      tolerance: 0.8  # was 0.5
+      # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
       max_on_approach_iterations: 1000
@@ -373,6 +392,14 @@ recoveries_server:
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4
     rotational_acc_lim: 3.2
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: False
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 1.5
+    transform_timeout: 0.3
 
 robot_state_publisher:
   ros__parameters:

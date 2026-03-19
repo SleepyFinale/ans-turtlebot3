@@ -1,6 +1,6 @@
 # TurtleBot3 Burger Setup Notes
 
-This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot; you choose the correct **ROS_DOMAIN_ID** and connect using that robot’s hostname or IP.
+This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot to connect to them.
 
 ## References (authoritative)
 
@@ -20,20 +20,22 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 ## Robot fleet reference
 
-Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that robot (and on any Remote PC talking to it) to the value below. SSH using the hostname or IP for that robot.
+Use this table when configuring a given robot. SSH using the hostname or IP for that robot. All robots and any Remote PCs or central computers talking to them should share **ROS_DOMAIN_ID=50**.
 
-| Robot  | ROS_DOMAIN_ID | Hostname (Lab)       | Hostname (Azure)    |
-| ------ | ------------- | -------------------- | --------------------|
-| Blinky | 30            | blinky@192.168.0.158 | blinky@172.20.10.13 |
-| Pinky  | 31            | pinky@192.168.0.194  | pinky@172.20.10.14  |
-| Inky   | 32            | inky@\<IP\>          | inky@\<IP\>         |
-| Clyde  | 33            | clyde@\<IP\>         | clyde@\<IP\>        |
+| Robot  | Lab (SSID: SNS)       | RaspAP (rpi)        | Azure (SSID: Azure) |
+| ------ | --------------------- | ------------------- | --------------------|
+| Blinky | blinky@192.168.0.158  | blinky@10.3.141.220 | blinky@172.20.10.13 |
+| Pinky  | pinky@192.168.0.194   | pinky@10.3.141.194  | pinky@172.20.10.14  |
+| Inky   | inky@192.168.0.139    | inky@10.3.141.139   | inky@172.20.10.15   |
+| Clyde  | `clyde@<IP>`          | `clyde@<IP>`        | `clyde@<IP>`        |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
 - **ROS distro**: Humble Hawksbill (Ubuntu 22.04 / Jammy)
 
-When following this README, substitute your robot’s hostname/IP and ROS_DOMAIN_ID where indicated.
+When following this README, substitute your robot’s hostname/IP where indicated.
+
+For **multi-robot SLAM** (e.g. Blinky + Pinky), the central PC and all robots share are distinguished by per-robot namespaces (e.g. `/blinky`, `/pinky`). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
 
 ---
 
@@ -201,11 +203,11 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
 
 ---
 
-## Wi‑Fi switching and static IPs (`scripts/switch_wifi.sh`)
+## Wi‑Fi switching and static IPs (`scripts/wifi/switch_wifi.sh`)
 
 This repo includes a helper script to switch the robot’s Wi‑Fi network and apply consistent IP settings using **netplan**.
 
-- Script path: `scripts/switch_wifi.sh`
+- Script path: `scripts/wifi/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
 
 ### One‑time prerequisite
@@ -222,7 +224,7 @@ Comment out or remove the `wifis:` / `wlan0:` block from `50-cloud-init.yaml`, l
 sudo netplan apply
 ```
 
-From this point on, Wi‑Fi is managed by `scripts/switch_wifi.sh`.
+From this point on, Wi‑Fi is managed by `scripts/wifi/switch_wifi.sh`.
 
 ### Static IPs on the SNS lab Wi‑Fi
 
@@ -250,40 +252,40 @@ From `~/turtlebot3_ws` on the robot:
 cd ~/turtlebot3_ws
 
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
-sudo ./scripts/switch_wifi.sh lab
+sudo ./scripts/wifi/switch_wifi.sh lab
 
 # Connect to Azure mobile hotspot with static IP (per robot/user)
-sudo ./scripts/switch_wifi.sh azure
+sudo ./scripts/wifi/switch_wifi.sh azure
 
 # Show current Wi‑Fi SSID and wlan0 IP
-./scripts/switch_wifi.sh status
+./scripts/wifi/switch_wifi.sh status
 ```
 
 The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly (e.g. when logged in as a different account):
 
 ```bash
-sudo ./scripts/switch_wifi.sh lab pinky
-sudo ./scripts/switch_wifi.sh lab blinky
+sudo ./scripts/wifi/switch_wifi.sh lab pinky
+sudo ./scripts/wifi/switch_wifi.sh lab blinky
 
 # or
-ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh lab
-ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh lab
+ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh lab
 ```
 
 You can use the same override pattern for Azure:
 
 ```bash
-sudo ./scripts/switch_wifi.sh azure pinky
-sudo ./scripts/switch_wifi.sh azure blinky
+sudo ./scripts/wifi/switch_wifi.sh azure pinky
+sudo ./scripts/wifi/switch_wifi.sh azure blinky
 
 # or
-ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh azure
-ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh azure
+ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh azure
+ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh azure
 ```
 
-If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
+If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
 
-### Automatic WiFi connection on boot (`scripts/boot_wifi.sh`)
+### Automatic WiFi connection on boot (`scripts/wifi/boot_wifi.sh`)
 
 To prevent the robot from being stuck without WiFi when it boots (e.g., if it was connected to the Azure hotspot before shutdown and the hotspot is not nearby), a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
 
@@ -297,7 +299,7 @@ To prevent the robot from being stuck without WiFi when it boots (e.g., if it wa
 
 ```bash
 cd ~/turtlebot3_ws
-sudo ./scripts/install_boot_wifi.sh
+sudo ./scripts/wifi/install_boot_wifi.sh
 ```
 
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
@@ -328,10 +330,10 @@ sudo journalctl -u boot-wifi.service -f
 You can test the boot WiFi script manually (without rebooting):
 
 ```bash
-sudo ./scripts/boot_wifi.sh
+sudo ./scripts/wifi/boot_wifi.sh
 # or specify robot name explicitly:
-sudo ./scripts/boot_wifi.sh pinky
-sudo ./scripts/boot_wifi.sh blinky
+sudo ./scripts/wifi/boot_wifi.sh pinky
+sudo ./scripts/wifi/boot_wifi.sh blinky
 ```
 
 **Disabling boot WiFi (if needed):**
@@ -362,23 +364,67 @@ sudo udevadm trigger
 
 ### ROS_DOMAIN_ID
 
-On each robot, set **ROS_DOMAIN_ID** to the value for that robot (see [Robot fleet reference](#robot-fleet-reference)). The Remote PC that controls or monitors the robot must use the **same** ROS_DOMAIN_ID.
+In this fleet, **all robots and all Remote PCs/central computers share a single ROS domain: `ROS_DOMAIN_ID=50`**. Every machine that needs to talk to the robots should use this same value.
 
 On the robot (SBC):
 
 ```bash
-echo 'export ROS_DOMAIN_ID=<ID>' >> ~/.bashrc   # use 30, 31, 32, or 33 for Blinky, Pinky, Inky, Clyde
+echo 'export ROS_DOMAIN_ID=50' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-On the Remote PC, set the same value so they can communicate:
+**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another unrelated robot or PC on the same network, or ROS 2 traffic will conflict. Within this fleet we intentionally standardize on **50** across all machines.
+
+### Multi-robot and central computer
+
+For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** and all robots are distinguished by their namespaces (e.g. `/blinky`, `/pinky`). Domain bridges are no longer required in the standard setup; see the central repo for the multi-robot SLAM workflow and diagnostic commands: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+
+To check TF and connectivity from the central PC, run (from the central workspace):  
+`ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
+(The script lives in the central repo.)
+
+#### High-level changes
+
+#### 1. Per-robot bringup with namespaces
+
+Use the standard bringup launch file in `turtlebot3_bringup`, which now **automatically determines the robot name and applies a matching namespace** (e.g. `/blinky`, `/pinky`):
 
 ```bash
-export ROS_DOMAIN_ID=<ID>
-# or add to ~/.bashrc
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+export LDS_MODEL=LDS-02
+
+# Bring up the robot (runs under /<robot_name>, e.g. /blinky)
+ros2 launch turtlebot3_bringup robot.launch.py
 ```
 
-**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another robot or PC on the same network, or ROS 2 traffic will conflict.
+#### 2. Namespaced SLAM + Nav2 on each robot
+
+Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+
+# Run SLAM + Nav2 on the robot (topics under /<robot_name>)
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
+```
+
+**Map topics:** In multi-robot mode each robot publishes its own map topics (e.g. `/pinky/map`, `/pinky/map_metadata`, `/pinky/map_updates`). Nav2 is configured to subscribe to that same per-robot map (not the global `/map`, and not `/pinky/global_costmap/map`), so multiple robots can run SLAM + Nav2 in a single ROS domain without overwriting each other’s maps.
+
+> **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
+
+#### 3. Central computer behavior with namespaces
+
+With this single-domain + namespace setup (standard `robot.launch.py` and `navigation2_slam.launch.py` creating per-robot namespaces automatically):
+
+- The central computer also uses **ROS_DOMAIN_ID=50**.
+- Multi-robot tools (RViZ, explorers, custom coordination nodes) can subscribe directly to:
+  - `/blinky/scan_normalized`, `/blinky/map`, `/blinky/tf`, `/blinky/cmd_vel`
+  - `/pinky/…`, `/inky/…`, `/clyde/…`
+- You no longer *need* per-robot domains or domain bridges; robots are distinguished by their namespaces instead of `ROS_DOMAIN_ID`.
 
 ### LDS configuration
 
@@ -407,3 +453,8 @@ cd ./opencr_update
 ```
 
 If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release in order. After a successful upload, use the OpenCR test (PUSH SW 1 = move forward, PUSH SW 2 = rotate 180°) to verify assembly.
+
+### Troubleshooting (Nav2 + SLAM on robot)
+
+- **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
+- **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
