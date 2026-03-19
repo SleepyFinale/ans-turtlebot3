@@ -52,7 +52,7 @@
       world_frame: odom
 
       # Wheel odometry
-      odom0: /odom
+      odom0: odom
       odom0_config: [true,  true,  false,
                     false, false, true,
                     true,  false, false,
@@ -63,7 +63,7 @@
       odom0_relative: false
 
       # IMU
-      imu0: /imu
+      imu0: imu
       imu0_config: [false, false, false,
                     true,  true,  true,
                     false, false, false,
@@ -76,7 +76,7 @@
 /**:
   navsat_transform_node:
     ros__parameters:
-      gps_topic: /fix
-      imu_topic: /imu
+      gps_topic: fix
+      imu_topic: imu
       frequency: 30.0
       zero_altitude: true

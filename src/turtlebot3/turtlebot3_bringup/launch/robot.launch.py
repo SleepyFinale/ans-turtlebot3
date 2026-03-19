@@ -181,6 +181,5 @@ def generate_launch_description():
             name='navsat_transform',
             output='screen',
             parameters=[tb3_param_dir,{'namespace': namespace}],
-            remappings=[('/gps/fix', '/fix'), ('/imu/data', '/imu'), ('/odometry/filtered','odom')]
         ),
     ])
