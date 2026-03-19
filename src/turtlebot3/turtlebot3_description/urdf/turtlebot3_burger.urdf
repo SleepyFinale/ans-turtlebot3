@@ -196,11 +196,11 @@
     </inertial>
   </link>
 
-  <link name="ultrasonic_scan_link"/>
+  <link name="${namespace}ultrasonic_scan_link"/>
 
-  <joint name="ultrasonic_scan_joint" type="fixed">
-    <parent link="base_link"/>
-    <child link="ultrasonic_scan_link"/>
+  <joint name="${namespace}ultrasonic_scan_joint" type="fixed">
+    <parent link="${namespace}base_link"/>
+    <child link="${namespace}ultrasonic_scan_link"/>
     <origin xyz="-0.032 0 0.01" rpy="0 0 0"/>
   </joint>
 
