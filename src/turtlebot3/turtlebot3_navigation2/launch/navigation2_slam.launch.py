@@ -143,13 +143,32 @@ def _launch_setup(context):
         slam_overrides['base_frame'] = f'{ns}/base_footprint'
         slam_overrides['map_frame'] = 'map'
 
+    # slam_toolbox reads parameters from YAML based on the node's fully
+    # qualified name when running under a namespace. Without rewriting the
+    # YAML top-level key, it can silently fall back to defaults (notably
+    # `map_update_interval`), making the map publish/update very slowly.
+    slam_params_file = slam_params
+    if ns:
+        with open(slam_params) as f:
+            slam_params_dict = yaml.safe_load(f)
+
+        # Example: for namespace "pinky" and node name "slam_toolbox",
+        # rewrite `slam_toolbox:` -> `pinky/slam_toolbox:`.
+        if 'slam_toolbox' in slam_params_dict:
+            slam_params_dict[f'{ns}/slam_toolbox'] = slam_params_dict.pop('slam_toolbox')
+
+        fd, path = tempfile.mkstemp(suffix='.yaml', prefix='slam_params_')
+        with os.fdopen(fd, 'w') as f:
+            yaml.dump(slam_params_dict, f, default_flow_style=False)
+        slam_params_file = path
+
     actions.append(Node(
         package='slam_toolbox',
         executable='async_slam_toolbox_node',
         name='slam_toolbox',
         namespace=ns if ns else None,
         output='screen',
-        parameters=[slam_params, slam_overrides],
+        parameters=[slam_params_file, slam_overrides],
         remappings=tf_remappings + [
             ('/scan', 'scan_normalized'),
             ('/map', 'map'),
@@ -202,12 +221,23 @@ def _launch_setup(context):
 
     # --- RViz (optional) ---
     if use_rviz_str.lower() == 'true':
+        # RViz config uses absolute topic names like `/map` and `/map_updates`.
+        # When running SLAM/Nav2 under a namespace (e.g. `/pinky`), remap those
+        # topics so the displayed map matches the robot's published map.
+        rviz_remappings = []
+        if ns:
+            rviz_remappings = [
+                ('/map', f'/{ns}/map'),
+                ('/map_updates', f'/{ns}/map_updates'),
+            ]
+
         actions.append(Node(
             package='rviz2',
             executable='rviz2',
             name='rviz2',
             arguments=['-d', rviz_config_dir],
             parameters=[{'use_sim_time': use_sim_time_str.lower() == 'true'}],
+            remappings=rviz_remappings,
             output='screen',
         ))
 

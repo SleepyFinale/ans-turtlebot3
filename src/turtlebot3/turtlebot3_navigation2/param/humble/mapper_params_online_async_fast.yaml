@@ -58,7 +58,7 @@ slam_toolbox:
     loop_search_maximum_distance: 8.0
     # Loop closure: can cause pose oscillation when robot is stationary
     # (ROS Answers #369118). Reduces jumps in doorways/hallways; map may drift in large loops.
-    do_loop_closing: true
+    do_loop_closing: true # true for original, false for no loop closing
     loop_match_minimum_chain_size: 10           
     loop_match_maximum_variance_coarse: 3.0  
     # Stricter loop closure to avoid false matches in symmetric areas (doorways, halls)
