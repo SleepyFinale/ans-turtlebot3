@@ -15,8 +15,8 @@ from geometry_msgs.msg import Twist
 # -----------------------------
 # Config
 # -----------------------------
-#PI4_LAN_IP = "192.168.0.194"
-PI4_LAN_IP = "10.3.141.194"
+PI4_LAN_IP = "192.168.0.194"
+#PI4_LAN_IP = "10.3.141.194"
 LOGSTASH_IP = "192.168.0.76"
 LOGSTASH_PORT = 5045
 
