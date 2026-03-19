@@ -35,7 +35,8 @@ class Ultrasonic : public Sensors
 public:
   explicit Ultrasonic(
     std::shared_ptr<rclcpp::Node> & nh,
-    const std::string & ultrasonic_topic_name = "ultrasonic");
+    const std::string & ultrasonic_topic_name = "ultrasonic",
+    const std::string & frame_id = "ultrasonic_scan_link");
 
   void publish(
     const rclcpp::Time & now,
@@ -43,13 +44,6 @@ public:
 
 private:
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr ultrasonic_pub_;
-  float _angle_min;
-  float _angle_max;
-  float _angle_increment;
-  float _time_increment;
-  float _scan_time;
-  float _range_min;
-  float _range_max;
 
   std::string name_space_;
 };
