@@ -3,7 +3,7 @@
 # Install boot WiFi service for automatic WiFi connection on boot.
 # This script sets up the systemd service to run boot_wifi.sh on startup.
 #
-# Usage: sudo ./scripts/install_boot_wifi.sh
+# Usage: sudo ./scripts/wifi/install_boot_wifi.sh
 #
 
 set -e
@@ -13,9 +13,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# Get the workspace directory (where this script is located)
+# Get the workspace directory (two levels up from this script: workspace/scripts/wifi)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 SERVICE_NAME="boot-wifi.service"
 SERVICE_FILE="$SCRIPT_DIR/$SERVICE_NAME"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -24,10 +24,18 @@ TARGET_SERVICE="$SYSTEMD_DIR/$SERVICE_NAME"
 echo "Installing boot WiFi service..."
 echo "Workspace directory: $WORKSPACE_DIR"
 
+# Basic sanity check: ensure the target script exists at the expected (post-move) path.
+BOOT_WIFI_SCRIPT="$WORKSPACE_DIR/scripts/wifi/boot_wifi.sh"
+if [ ! -f "$BOOT_WIFI_SCRIPT" ]; then
+  echo "Error: Expected boot WiFi script not found at: $BOOT_WIFI_SCRIPT"
+  echo "Please ensure you are running this from a valid turtlebot3_ws checkout."
+  exit 1
+fi
+
 # Create the service file with the correct workspace path
 cat > "$TARGET_SERVICE" << EOF
 [Unit]
-Description=Boot WiFi Connection (SNS first, Azure fallback)
+Description=Boot WiFi Connection (SNS first, then RaspAP, then Azure fallback)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target
@@ -35,7 +43,7 @@ Before=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=$WORKSPACE_DIR/scripts/boot_wifi.sh
+ExecStart=$BOOT_WIFI_SCRIPT
 StandardOutput=journal
 StandardError=journal
 
@@ -56,3 +64,9 @@ echo ""
 echo "To check status: sudo systemctl status $SERVICE_NAME"
 echo "To view logs: sudo journalctl -u $SERVICE_NAME"
 echo "To test now: sudo systemctl start $SERVICE_NAME"
+
+# If the service is already running (or previously failed), restarting here makes the install
+# immediately effective without requiring a reboot.
+if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+  systemctl restart "$SERVICE_NAME" || true
+fi

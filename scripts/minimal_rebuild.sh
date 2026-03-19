@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Rebuild only the packages needed for: ros2 launch turtlebot3_bringup robot.launch.py
-# (turtlebot3_bringup, turtlebot3_node, turtlebot3_description, ld08_driver for LDS-02).
-# No clean step; uses parallel workers. Much faster than clean_rebuild.sh.
+# Rebuild only the workspace packages needed for:
+#   - ros2 launch turtlebot3_bringup robot.launch.py
+#   - ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=False use_rviz:=False
+# This targets only TurtleBot3 + lidar driver packages for speed (no clean step).
 # Usage: ./scripts/minimal_rebuild.sh
 
 set -e
@@ -26,20 +27,31 @@ cd "${WS_DIR}"
 # Parallel workers: use COLCON_PARALLEL_JOBS if set, else 1 (override with COLCON_PARALLEL_JOBS=N for more).
 PARALLEL_JOBS="${COLCON_PARALLEL_JOBS:-1}"
 
-echo "Building minimal set for robot.launch.py (turtlebot3_description, turtlebot3_node, ld08_driver, turtlebot3_bringup)..."
+echo "Building minimal set for TurtleBot3 bringup + Navigation2 SLAM..."
+echo "Packages: turtlebot3_description, turtlebot3_node, turtlebot3_bringup, turtlebot3_navigation2, ld08_driver, coin_d4_driver"
 colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}" \
-  --packages-select turtlebot3_description turtlebot3_node ld08_driver turtlebot3_bringup \
-  --allow-overriding turtlebot3_bringup turtlebot3_description turtlebot3_node
+  --packages-select \
+    turtlebot3_description \
+    turtlebot3_node \
+    turtlebot3_bringup \
+    turtlebot3_navigation2 \
+    ld08_driver \
+    coin_d4_driver \
+  --allow-overriding \
+    turtlebot3_description \
+    turtlebot3_node \
+    turtlebot3_bringup \
+    turtlebot3_navigation2
 
-if [ -f "${WS_DIR}/install/setup.bash" ]; then
-  echo "Sourcing ${WS_DIR}/install/setup.bash"
-  source "${WS_DIR}/install/setup.bash"
-else
-  echo "Error: install/setup.bash not found. Build may have failed." >&2
-  exit 1
-fi
-
+export TURTLEBOT3_WS="${WS_DIR}"
+export WS_DIR="${WS_DIR}"
 export TURTLEBOT3_MODEL="${TURTLEBOT3_MODEL}"
+
+echo "Loading ROS 2 + workspace environment via scripts/ros_robot_env.bash..."
+source "${SCRIPT_DIR}/ros_robot_env.bash"
+
 echo "TURTLEBOT3_MODEL=${TURTLEBOT3_MODEL}"
-echo "Done. Run: ros2 launch turtlebot3_bringup robot.launch.py"
-echo "Use 'source ${WS_DIR}/install/setup.bash' in new shells."
+echo "Done. You can now run:"
+echo "  ros2 launch turtlebot3_bringup robot.launch.py"
+echo "  ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=False use_rviz:=False"
+echo "Use 'source ${WS_DIR}/install/setup.bash' (or scripts/ros_robot_env.bash) in new shells."

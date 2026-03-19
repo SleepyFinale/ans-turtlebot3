@@ -13,7 +13,9 @@ slam_toolbox:
     odom_frame: odom
     map_frame: map
     base_frame: base_footprint
-    scan_topic: /scan_normalized  # Use normalized scan to ensure consistent reading counts
+    # In namespaced setups, slam_toolbox runs inside the robot namespace.
+    # Use a relative topic so each instance subscribes to <namespace>/scan_normalized.
+    scan_topic: scan_normalized  # Use normalized scan to ensure consistent reading counts
     use_map_saver: true
     mode: mapping #localization
 
@@ -29,14 +31,13 @@ slam_toolbox:
     # Process every scan (1 = no throttle)
     throttle_scans: 1
     transform_publish_period: 0.02  # 50 Hz; if 0 never publishes map->odom
-    # Slower updates reduce oscillation (scan matcher bouncing between poses)
-    map_update_interval: 0.35
+    # Slightly faster map updates so the map grows more continuously as the robot moves
+    map_update_interval: 0.2
     resolution: 0.05
     min_laser_range: 0.0 #for rastering images
     max_laser_range: 20.0 #for rastering images
-    # Increased minimum time interval to reduce queue overflow
-    # Increased from 0.2 to 0.25 to give SLAM more time to process each scan
-    minimum_time_interval: 0.30
+    # Balance CPU load with responsiveness; allow more frequent processing when the robot is moving
+    minimum_time_interval: 0.20
     transform_timeout: 0.25  # Increased timeout to handle TF delays better
     tf_buffer_duration: 30.
     stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
@@ -45,10 +46,9 @@ slam_toolbox:
     # General Parameters
     use_scan_matching: true
     use_scan_barycenter: true
-    # Higher thresholds = less frequent matching = less oscillation in ambiguous areas (doorways, halls)
-    # Slightly lower (0.15) for more frequent pose updates to reduce drift accumulation
-    minimum_travel_distance: 0.15
-    minimum_travel_heading: 0.15
+    # Thresholds chosen to keep pose updates reasonably frequent even with small motions
+    minimum_travel_distance: 0.10
+    minimum_travel_heading: 0.10
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0
     # Require stronger scan match to reduce oscillation between ambiguous poses
