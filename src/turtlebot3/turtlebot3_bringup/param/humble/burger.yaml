@@ -75,8 +75,8 @@
       imu0_remove_gravitational_acceleration: true
 /**:
   navsat_transform_node:
-  ros__parameters:
-    gps_topic: /fix
-    imu_topic: /imu
-    frequency: 30.0
-    zero_altitude: true
+    ros__parameters:
+      gps_topic: /fix
+      imu_topic: /imu
+      frequency: 30.0
+      zero_altitude: true
