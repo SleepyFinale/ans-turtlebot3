@@ -482,7 +482,7 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
      use_sim_time:=false \
      use_rviz:=false \
      enable_debug_logging:=true \
-     debug_log_dir:=~/.ros/nav2_debug \
+     debug_log_dir:=~/turtlebot3_ws/logs \
      debug_log_rate_hz:=5.0
    ```
 
@@ -497,8 +497,8 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 
 #### Files produced
 
-- JSONL timeline: `~/.ros/nav2_debug/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
-- rosbag2 capture: `~/.ros/nav2_debug/<robot>/bag-YYYYmmdd-HHMMSS/`
+- JSONL timeline: `~/turtlebot3_ws/logs/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
+- rosbag2 capture: `~/turtlebot3_ws/logs/<robot>/bag-YYYYmmdd-HHMMSS/`
 
 #### What gets recorded
 

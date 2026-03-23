@@ -10,7 +10,7 @@ source install/setup.bash 2>/dev/null || true
 
 ROBOT_NAME="${1:-${ROBOT_NAME:-${USER:-robot}}}"
 SESSION_TS="$(date +%Y%m%d-%H%M%S)"
-BASE_OUT="${HOME}/.ros/nav2_debug/${ROBOT_NAME}"
+BASE_OUT="${WORKSPACE_DIR}/logs/${ROBOT_NAME}"
 BAG_OUT="${BASE_OUT}/bag-${SESSION_TS}"
 JSONL_HINT="${BASE_OUT}/session-*.jsonl"
 
@@ -25,7 +25,7 @@ echo " JSONL output : ${JSONL_HINT}"
 echo ""
 echo "Make sure navigation2_slam.launch.py is started with:"
 echo "  enable_debug_logging:=true"
-echo "  debug_log_dir:=${HOME}/.ros/nav2_debug"
+echo "  debug_log_dir:=${WORKSPACE_DIR}/logs"
 echo ""
 echo "Press Ctrl+C to stop recording."
 echo "=========================================="

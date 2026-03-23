@@ -116,7 +116,7 @@ bt_navigator_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: False
-    controller_frequency: 10.0
+    controller_frequency: 15.0
     min_x_velocity_threshold: 0.001
     # TurtleBot3 is differential drive (no y velocity). Keep this low so it
     # doesn't interfere with controller logic / progress checks.
@@ -149,18 +149,18 @@ controller_server:
       debug_trajectory_details: False
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.22
+      max_vel_x: 0.16
       max_vel_y: 0.0
       max_vel_theta: 1.0
       min_speed_xy: 0.0
-      max_speed_xy: 0.22
-      min_speed_theta: 0.0
+      max_speed_xy: 0.16
+      min_speed_theta: 0.15
       # Add high threshold velocity for turtlebot 3 issue.
       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
-      acc_lim_x: 2.5
+      acc_lim_x: 1.2
       acc_lim_y: 0.0
       acc_lim_theta: 3.2
-      decel_lim_x: -2.5
+      decel_lim_x: -1.2
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
       # Lower sample count to reduce DWB compute per cycle on Pi.
@@ -180,15 +180,14 @@ controller_server:
       short_circuit_trajectory_evaluation: True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      # Strongly prioritize obstacle costs so local control does not cut into
-      # inflated/lethal regions when tracking global plans in tight spaces.
-      BaseObstacle.scale: 1.5
-      PathAlign.scale: 12.0
+      # Prioritize obstacle avoidance over strict path hugging.
+      BaseObstacle.scale: 6.0
+      PathAlign.scale: 10.0
       PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 14.0
+      GoalAlign.scale: 12.0
       GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 16.0
-      GoalDist.scale: 18.0
+      PathDist.scale: 12.0
+      GoalDist.scale: 14.0
       RotateToGoal.scale: 32.0
       RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
@@ -200,8 +199,8 @@ controller_server_rclcpp_node:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 2.0
-      publish_frequency: 2.0
+      update_frequency: 4.0
+      publish_frequency: 4.0
       global_frame: odom
       robot_base_frame: base_footprint
       use_sim_time: False
@@ -214,13 +213,13 @@ local_costmap:
       resolution: 0.05
       # Slightly larger than physical radius so local plans keep a comfortable
       # distance from walls while still fitting through standard doorways.
-      robot_radius: 0.1
+      robot_radius: 0.11
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Keep a safety halo while reducing over-inflation that can trap the
         # robot in "starting point in lethal space" states near walls/corners.
-        inflation_radius: 0.45
+        inflation_radius: 0.40
         cost_scaling_factor: 4.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -251,8 +250,8 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 2.0
-      publish_frequency: 2.0  # Increased from 1.0 to 2.0 Hz to publish updates more frequently
+      update_frequency: 4.0
+      publish_frequency: 4.0
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: False
@@ -261,7 +260,7 @@ global_costmap:
       transform_timeout: 0.2
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways.
-      robot_radius: 0.1
+      robot_radius: 0.11
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
@@ -296,7 +295,7 @@ global_costmap:
         # Balanced inflation: keep global plans off walls and corners without
         # frequently considering the robot to start in lethal space in tight
         # lab corridors.
-        inflation_radius: 0.32
+        inflation_radius: 0.30
         cost_scaling_factor: 5.0
       always_send_full_costmap: True
   global_costmap_client:

@@ -125,7 +125,15 @@ def _launch_setup(context):
 
     workspace_dir = os.path.expanduser(
         os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
+    repo_logs_dir = os.path.join(workspace_dir, 'logs')
     wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
+    expanded_debug_log_dir = os.path.expanduser(debug_log_dir)
+    legacy_debug_root = os.path.expanduser('~/.ros/nav2_debug')
+    if expanded_debug_log_dir == legacy_debug_root:
+        resolved_debug_log_dir = repo_logs_dir
+    else:
+        resolved_debug_log_dir = expanded_debug_log_dir
+
 
     rviz_config_dir = os.path.join(
         get_package_share_directory('turtlebot3_navigation2'),
@@ -246,7 +254,7 @@ def _launch_setup(context):
         namespace=ns if ns else None,
         parameters=[{
             'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
-            'output_dir': debug_log_dir,
+            'output_dir': resolved_debug_log_dir,
             'log_rate_hz': float(debug_log_rate_hz),
             'map_frame': 'map',
             'base_frame_candidates': (
@@ -325,7 +333,7 @@ def generate_launch_description():
             'enable_debug_logging', default_value='false',
             description='Enable structured Nav2 motion debug logger'),
         DeclareLaunchArgument(
-            'debug_log_dir', default_value='~/.ros/nav2_debug',
+            'debug_log_dir', default_value='~/turtlebot3_ws/logs',
             description='Directory for nav2_motion_debug_logger JSONL output'),
         DeclareLaunchArgument(
             'debug_log_rate_hz', default_value='5.0',
