@@ -9,9 +9,10 @@ status) into JSONL for postmortem analysis.
 import json
 import math
 import os
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
 import rclpy
 from action_msgs.msg import GoalStatusArray
@@ -45,7 +46,9 @@ class Nav2MotionDebugLogger(Node):
         self.declare_parameter('robot_name', '')
         self.declare_parameter('output_dir', '~/.ros/nav2_debug')
         self.declare_parameter('log_rate_hz', 5.0)
+        self.declare_parameter('map_frame', 'map')
         self.declare_parameter('base_frame_candidates', 'base_footprint,base_link')
+        self.declare_parameter('topic_stale_after_s', 2.0)
 
         output_dir = os.path.expanduser(self.get_parameter('output_dir').value)
         robot_name = self.get_parameter('robot_name').value or (
@@ -53,10 +56,12 @@ class Nav2MotionDebugLogger(Node):
         )
         self._rate_hz = float(self.get_parameter('log_rate_hz').value)
         self._rate_hz = max(0.5, min(self._rate_hz, 20.0))
+        self._map_frame = str(self.get_parameter('map_frame').value or 'map').strip() or 'map'
         self._base_frame_candidates = [
             s.strip() for s in self.get_parameter('base_frame_candidates').value.split(',')
             if s.strip()
         ] or ['base_footprint', 'base_link']
+        self._topic_stale_after_s = max(0.5, float(self.get_parameter('topic_stale_after_s').value))
 
         self._session_dir = Path(output_dir) / robot_name
         self._session_dir.mkdir(parents=True, exist_ok=True)
@@ -82,10 +87,18 @@ class Nav2MotionDebugLogger(Node):
         self._last_cmd_vel: Optional[Twist] = None
         self._last_cmd_vel_nav: Optional[Twist] = None
         self._last_action_status: Optional[GoalStatusArray] = None
+        self._last_goal_id: Optional[str] = None
+        self._goal_change_times_s: Deque[float] = deque(maxlen=64)
         self._last_warn_key = ''
+        self._last_tf_pose_time_s: Optional[float] = None
+        self._last_map_time_s: Optional[float] = None
+        self._last_costmap_time_s: Optional[float] = None
+        self._last_plan_time_s: Optional[float] = None
+        self._last_odom_time_s: Optional[float] = None
 
         self.create_subscription(OccupancyGrid, 'map', self._on_map, qos_map)
         self.create_subscription(Costmap, 'global_costmap/costmap', self._on_costmap, qos_map)
+        self.create_subscription(Costmap, 'global_costmap/costmap_raw', self._on_costmap, qos_map)
         self.create_subscription(NavPath, 'plan', self._on_plan, qos_default)
         self.create_subscription(Odometry, 'odom', self._on_odom, qos_default)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, qos_default)
@@ -104,15 +117,19 @@ class Nav2MotionDebugLogger(Node):
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         self._latest_map = msg
+        self._last_map_time_s = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_costmap(self, msg: Costmap) -> None:
         self._latest_costmap = msg
+        self._last_costmap_time_s = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_plan(self, msg: NavPath) -> None:
         self._latest_plan = msg
+        self._last_plan_time_s = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_odom(self, msg: Odometry) -> None:
         self._latest_odom = msg
+        self._last_odom_time_s = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         self._last_cmd_vel = msg
@@ -122,6 +139,13 @@ class Nav2MotionDebugLogger(Node):
 
     def _on_action_status(self, msg: GoalStatusArray) -> None:
         self._last_action_status = msg
+        if not msg.status_list:
+            return
+        latest = msg.status_list[-1]
+        goal_id = ''.join(f'{b:02x}' for b in latest.goal_info.goal_id.uuid)
+        if self._last_goal_id and goal_id != self._last_goal_id:
+            self._goal_change_times_s.append(self.get_clock().now().nanoseconds * 1e-9)
+        self._last_goal_id = goal_id
 
     def _on_goal_pose(self, msg: PoseStamped) -> None:
         self._last_goal_pose = msg
@@ -138,11 +162,20 @@ class Nav2MotionDebugLogger(Node):
     def _lookup_robot_pose_in_map(self) -> Optional[Tuple[float, float]]:
         for frame in self._base_frame_candidates:
             try:
-                t = self._tf_buffer.lookup_transform('map', frame, rclpy.time.Time())
+                t = self._tf_buffer.lookup_transform(self._map_frame, frame, rclpy.time.Time())
+                self._last_tf_pose_time_s = self.get_clock().now().nanoseconds * 1e-9
                 return (float(t.transform.translation.x), float(t.transform.translation.y))
             except Exception:
                 continue
         return None
+
+    def _age_s(self, now_s: float, ts_s: Optional[float]) -> Optional[float]:
+        if ts_s is None:
+            return None
+        return max(0.0, now_s - ts_s)
+
+    def _is_fresh(self, age_s: Optional[float]) -> bool:
+        return age_s is not None and age_s <= self._topic_stale_after_s
 
     def _cost_at(self, cm: Costmap, x: float, y: float) -> Optional[int]:
         info = cm.metadata
@@ -240,7 +273,23 @@ class Nav2MotionDebugLogger(Node):
             'nav2_latest_goal_id': ''.join(f'{b:02x}' for b in latest.goal_info.goal_id.uuid),
         }
 
+    def _cmd_source_hint(self) -> str:
+        if self._last_cmd_vel is None:
+            return 'none'
+        if self._last_cmd_vel_nav is None:
+            return 'unknown'
+        nav_lin = float(self._last_cmd_vel_nav.linear.x)
+        nav_ang = float(self._last_cmd_vel_nav.angular.z)
+        cmd_lin = float(self._last_cmd_vel.linear.x)
+        cmd_ang = float(self._last_cmd_vel.angular.z)
+        if abs(cmd_lin - nav_lin) < 0.02 and abs(cmd_ang - nav_ang) < 0.10:
+            return 'nav2_or_smoother'
+        if abs(cmd_lin) > 0.02 or abs(cmd_ang) > 0.15:
+            return 'non_nav2_override'
+        return 'indeterminate'
+
     def _on_tick(self) -> None:
+        now_s = self.get_clock().now().nanoseconds * 1e-9
         pose_map = self._lookup_robot_pose_in_map()
         plan_metrics = self._plan_metrics(self._latest_plan, self._latest_costmap)
         action_status = self._extract_action_status()
@@ -267,8 +316,28 @@ class Nav2MotionDebugLogger(Node):
 
         cmd_vel = self._last_cmd_vel
         cmd_vel_nav = self._last_cmd_vel_nav
+        cmd_source_hint = self._cmd_source_hint()
+
+        age_map_s = self._age_s(now_s, self._last_map_time_s)
+        age_costmap_s = self._age_s(now_s, self._last_costmap_time_s)
+        age_plan_s = self._age_s(now_s, self._last_plan_time_s)
+        age_odom_s = self._age_s(now_s, self._last_odom_time_s)
+        age_tf_pose_s = self._age_s(now_s, self._last_tf_pose_time_s)
+
+        goal_changes_10s = 0
+        for ts in self._goal_change_times_s:
+            if now_s - ts <= 10.0:
+                goal_changes_10s += 1
 
         anomalies: List[str] = []
+        if pose_map is None:
+            anomalies.append('missing_tf_pose_map_to_base')
+        if not self._is_fresh(age_costmap_s):
+            anomalies.append('global_costmap_unavailable_or_stale')
+        if cmd_source_hint == 'non_nav2_override':
+            anomalies.append('cmd_vel_mismatch_vs_cmd_vel_nav')
+        if goal_changes_10s >= 5:
+            anomalies.append('high_goal_preemption_rate')
         if robot_cost is not None and robot_cost >= LETHAL_COST:
             anomalies.append('robot_in_lethal_cost')
         elif robot_cost is not None and robot_cost >= HIGH_COST:
@@ -312,12 +381,23 @@ class Nav2MotionDebugLogger(Node):
                 'ang_z': float(self._latest_odom.twist.twist.angular.z) if self._latest_odom else None,
             },
             'topic_alive': {
-                'map': self._latest_map is not None,
-                'global_costmap': self._latest_costmap is not None,
-                'plan': self._latest_plan is not None,
-                'odom': self._latest_odom is not None,
+                'map': self._is_fresh(age_map_s),
+                'global_costmap': self._is_fresh(age_costmap_s),
+                'plan': self._is_fresh(age_plan_s),
+                'odom': self._is_fresh(age_odom_s),
                 'goal_pose': self._last_goal_pose is not None,
             },
+            'topic_age_s': {
+                'map': age_map_s,
+                'global_costmap': age_costmap_s,
+                'plan': age_plan_s,
+                'odom': age_odom_s,
+                'tf_pose': age_tf_pose_s,
+            },
+            'map_frame': self._map_frame,
+            'base_frames': self._base_frame_candidates,
+            'cmd_source_hint': cmd_source_hint,
+            'goal_changes_10s': goal_changes_10s,
             **action_status,
             'anomalies': anomalies,
         }
