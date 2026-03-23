@@ -458,3 +458,64 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
+
+### Nav2 motion debug capture (robot side)
+
+Use this when a robot appears to drive into obstacles even when the assigned goal and global plan look safe.
+
+1. Start robot bringup in terminal 1:
+
+   ```bash
+   source /opt/ros/humble/setup.bash
+   source ~/turtlebot3_ws/install/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   ros2 launch turtlebot3_bringup robot.launch.py
+   ```
+
+2. Start SLAM + Nav2 with structured debug logging in terminal 2:
+
+   ```bash
+   source /opt/ros/humble/setup.bash
+   source ~/turtlebot3_ws/install/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+     use_sim_time:=false \
+     use_rviz:=false \
+     enable_debug_logging:=true \
+     debug_log_dir:=~/.ros/nav2_debug \
+     debug_log_rate_hz:=5.0
+   ```
+
+3. Start rosbag capture in terminal 3:
+
+   ```bash
+   cd ~/turtlebot3_ws
+   ./scripts/start_nav2_debug_capture.sh
+   # Optional explicit robot name:
+   # ./scripts/start_nav2_debug_capture.sh pinky
+   ```
+
+#### Files produced
+
+- JSONL timeline: `~/.ros/nav2_debug/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
+- rosbag2 capture: `~/.ros/nav2_debug/<robot>/bag-YYYYmmdd-HHMMSS/`
+
+#### What gets recorded
+
+- Raw topics (bag): map, map updates, global costmap, global costmap updates, plan, cmd_vel, cmd_vel_nav, odom, tf, action status/feedback/result.
+- Derived JSONL metrics (at `debug_log_rate_hz`):
+  - robot pose in map frame
+  - robot costmap cell value at current pose
+  - goal and robot-to-goal distance
+  - plan length, plan endpoint, and plan points outside global costmap bounds
+  - cmd_vel vs cmd_vel_nav vs odom twist
+  - latest NavigateToPose action status
+  - anomaly flags
+
+#### Quick triage checklist
+
+- `robot_in_lethal_cost` or `robot_in_high_cost`: robot position entered high-cost/lethal cells.
+- `plan_has_out_of_global_costmap_points`: global plan includes points outside current global costmap bounds.
+- `robot_in_high_cost_while_plan_low_cost`: local execution diverged from what the global plan/costmap suggested.
+- `forward_cmd_in_high_cost`: motion command remained forward while the robot was already in high-cost area.
+- Compare `cmd_vel_nav` vs `cmd_vel` vs `odom_twist` to separate planner/controller intent from robot motion response.

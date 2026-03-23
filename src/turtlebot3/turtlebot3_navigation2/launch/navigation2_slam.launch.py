@@ -96,6 +96,9 @@ def _launch_setup(context):
     use_rviz_str = LaunchConfiguration('use_rviz').perform(context)
     params_file = LaunchConfiguration('params_file').perform(context)
     wait_for_tf_str = LaunchConfiguration('wait_for_tf').perform(context)
+    enable_debug_logging_str = LaunchConfiguration('enable_debug_logging').perform(context)
+    debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
+    debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
 
     nav2_launch_file_dir = os.path.join(
         get_package_share_directory('nav2_bringup'), 'launch')
@@ -219,6 +222,22 @@ def _launch_setup(context):
     else:
         actions.append(nav2_group)
 
+    # --- Structured Nav2 debug logger (optional) ---
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='nav2_motion_debug_logger.py',
+        name='nav2_motion_debug_logger',
+        namespace=ns if ns else None,
+        parameters=[{
+            'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
+            'output_dir': debug_log_dir,
+            'log_rate_hz': float(debug_log_rate_hz),
+        }],
+        remappings=tf_remappings,
+        output='screen',
+        condition=IfCondition(enable_debug_logging_str),
+    ))
+
     # --- RViz (optional) ---
     if use_rviz_str.lower() == 'true':
         # RViz config uses absolute topic names like `/map` and `/map_updates`.
@@ -281,6 +300,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'wait_for_tf', default_value='true',
             description='Wait for TF tree before starting Nav2'),
+        DeclareLaunchArgument(
+            'enable_debug_logging', default_value='false',
+            description='Enable structured Nav2 motion debug logger'),
+        DeclareLaunchArgument(
+            'debug_log_dir', default_value='~/.ros/nav2_debug',
+            description='Directory for nav2_motion_debug_logger JSONL output'),
+        DeclareLaunchArgument(
+            'debug_log_rate_hz', default_value='5.0',
+            description='Debug logger sampling rate in Hz'),
         DeclareLaunchArgument(
             'effective_namespace', default_value=effective_namespace,
             description='(internal) resolved namespace'),

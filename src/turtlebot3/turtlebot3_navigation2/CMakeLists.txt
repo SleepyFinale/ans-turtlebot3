@@ -21,7 +21,9 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 install(
-  PROGRAMS scripts/normalize_laser_scan.py
+  PROGRAMS
+    scripts/normalize_laser_scan.py
+    scripts/nav2_motion_debug_logger.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
