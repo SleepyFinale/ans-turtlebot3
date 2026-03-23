@@ -69,8 +69,10 @@ bt_navigator:
     robot_base_frame: base_footprint
     odom_topic: odom
     default_bt_xml_filename: "navigate_w_replanning_and_recovery.xml"
-    bt_loop_duration: 20
-    default_server_timeout: 20
+    # Reduce BT tick pressure on SBC CPU (20ms => 50ms).
+    bt_loop_duration: 50
+    # Allow slower action/service acknowledgements under load.
+    default_server_timeout: 100
     enable_groot_monitoring: True
     groot_zmq_publisher_port: 1666
     groot_zmq_server_port: 1667
@@ -161,9 +163,10 @@ controller_server:
       decel_lim_x: -2.5
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
-      vx_samples: 20
+      # Lower sample count to reduce DWB compute per cycle on Pi.
+      vx_samples: 15
       vy_samples: 0
-      vtheta_samples: 40
+      vtheta_samples: 30
       sim_time: 1.5
       linear_granularity: 0.05
       angular_granularity: 0.025
@@ -177,12 +180,14 @@ controller_server:
       short_circuit_trajectory_evaluation: True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.25
-      PathAlign.scale: 20.0
+      # Strongly prioritize obstacle costs so local control does not cut into
+      # inflated/lethal regions when tracking global plans in tight spaces.
+      BaseObstacle.scale: 1.5
+      PathAlign.scale: 12.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 14.0
       GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 24.0
+      PathDist.scale: 16.0
       GoalDist.scale: 18.0
       RotateToGoal.scale: 32.0
       RotateToGoal.slowing_factor: 5.0
@@ -195,7 +200,7 @@ controller_server_rclcpp_node:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
+      update_frequency: 2.0
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_footprint
@@ -213,11 +218,10 @@ local_costmap:
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Keep a modest safety halo around obstacles so the robot doesn't hug
-        # walls or doorframes, but avoid marking narrow corridors as fully
-        # blocked.
-        inflation_radius: 0.55
-        cost_scaling_factor: 3.0
+        # Keep a safety halo while reducing over-inflation that can trap the
+        # robot in "starting point in lethal space" states near walls/corners.
+        inflation_radius: 0.45
+        cost_scaling_factor: 4.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -263,7 +267,7 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 5.0  # Increased from 1.0 to 5.0 Hz for faster map updates during exploration
+      update_frequency: 2.0
       publish_frequency: 2.0  # Increased from 1.0 to 2.0 Hz to publish updates more frequently
       global_frame: map
       robot_base_frame: base_footprint
@@ -353,7 +357,7 @@ map_saver:
 planner_server:
   ros__parameters:
     # NavFn at 20Hz often can't keep up on TB3 + large SLAM maps.
-    expected_planner_frequency: 5.0
+    expected_planner_frequency: 3.0
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
