@@ -26,7 +26,7 @@
 #
 # With central PC (start_central.sh: map_merge + tf_relay + explorer), enable
 # global TF + merged map so Nav2 goals in frame `map` match the central stack:
-#   use_central_tf_map:=true
+#   fleet_mode:=true
 
 import os
 import tempfile
@@ -63,8 +63,13 @@ def _rewrite_frame(d, key, old_val, new_val):
             _rewrite_frame(v, key, old_val, new_val)
 
 
-def _generate_nav2_params(source_file, namespace):
-    """Generate a modified Nav2 params file with namespace-prefixed frame names."""
+def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
+    """Generate a modified Nav2 params file with namespace-prefixed frame names.
+
+    When namespace is set and fleet_mode is False (robot alone), SLAM uses
+    frame {namespace}/map; Nav2 global frames and map_topic follow that.
+    When fleet_mode is True, Nav2 uses world frame ``map`` and merged ``/map``.
+    """
     with open(source_file) as f:
         params = yaml.safe_load(f)
 
@@ -81,11 +86,15 @@ def _generate_nav2_params(source_file, namespace):
         _rewrite_frame(params, 'odom_frame', 'odom', f'{namespace}/odom')
         _rewrite_frame(params, 'odom_topic', '/odom', 'odom')
         _rewrite_frame(params, 'topic', '/scan_normalized', 'scan_normalized')
-        # Ensure the global costmap static layer subscribes to the
-        # per-robot map topic (e.g. /pinky/map) instead of a local
-        # /<namespace>/global_costmap/map topic.
-        _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
-        _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
+        if not fleet_mode:
+            # Standalone namespaced robot: SLAM map frame is {ns}/map.
+            _rewrite_frame(params, 'global_frame', 'map',
+                            f'{namespace}/map')
+            _rewrite_frame(params, 'global_frame_id', 'map',
+                            f'{namespace}/map')
+            # Global costmap static layer uses this robot's SLAM map topic.
+            _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
+            _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
 
     # Force BT navigator to use local no-backup behavior trees so disabling
     # the backup behavior plugin does not break lifecycle activation.
@@ -119,8 +128,13 @@ def _launch_setup(context):
     enable_debug_logging_str = LaunchConfiguration('enable_debug_logging').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
+    fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
     use_central_tf_map_str = LaunchConfiguration('use_central_tf_map').perform(
         context)
+
+    fleet_active = fleet_mode_str.lower() in ('1', 'true', 'yes')
+    if use_central_tf_map_str.lower() in ('1', 'true', 'yes'):
+        fleet_active = True
 
     nav2_bringup_launch_dir = os.path.join(
         get_package_share_directory('nav2_bringup'), 'launch')
@@ -169,6 +183,24 @@ def _launch_setup(context):
         output='screen',
     ))
 
+    # Standalone namespaced robot: SLAM uses {ns}/map but goals / BT often use
+    # world frame "map". Publish map -> {ns}/map on /{ns}/tf_static (Python
+    # broadcaster + periodic refresh; tf2_ros CLI under launch was unreliable).
+    # With fleet_mode:=true, Nav2 uses global /tf — run start_central.sh (or set
+    # fleet_mode:=false when testing the robot alone).
+    if ns and not fleet_active:
+        # tf2_ros.StaticTransformBroadcaster uses absolute "/tf_static". Same
+        # remapping as Nav2/slam so the bridge publishes on /<ns>/tf_static.
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='standalone_world_map_tf.py',
+            name='standalone_world_map_tf',
+            namespace=ns,
+            parameters=[{'child_frame': f'{ns}/map'}],
+            remappings=tf_remappings,
+            output='screen',
+        ))
+
     # --- SLAM Toolbox ---
     slam_overrides = {
         'use_sim_time': use_sim_time_str.lower() == 'true',
@@ -176,7 +208,7 @@ def _launch_setup(context):
     if ns:
         slam_overrides['odom_frame'] = f'{ns}/odom'
         slam_overrides['base_frame'] = f'{ns}/base_footprint'
-        slam_overrides['map_frame'] = 'map'
+        slam_overrides['map_frame'] = f'{ns}/map'
 
     # slam_toolbox reads parameters from YAML based on the node's fully
     # qualified name when running under a namespace. Without rewriting the
@@ -219,6 +251,7 @@ def _launch_setup(context):
         wait_tf_env['TF_WAIT_ODOM_FRAME'] = f'{ns}/odom'
         wait_tf_env['TF_WAIT_BASE_FRAMES'] = f'{ns}/base_footprint,{ns}/base_link'
         wait_tf_env['TF_WAIT_NAMESPACE'] = ns
+        wait_tf_env['TF_WAIT_MAP_FRAME'] = f'{ns}/map'
 
     if wait_for_tf_str.lower() == 'true':
         actions.append(ExecuteProcess(
@@ -228,10 +261,9 @@ def _launch_setup(context):
         ))
 
     # --- Nav2 with frame-rewritten params ---
-    nav2_params_file = _generate_nav2_params(params_file, ns)
+    nav2_params_file = _generate_nav2_params(params_file, ns, fleet_active)
 
-    use_multirobot_nav_launch = (
-        use_central_tf_map_str.lower() in ('1', 'true', 'yes'))
+    use_multirobot_nav_launch = fleet_active
     if use_multirobot_nav_launch:
         nav2_launch_source = PythonLaunchDescriptionSource(
             os.path.join(
@@ -273,7 +305,8 @@ def _launch_setup(context):
             'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
             'output_dir': resolved_debug_log_dir,
             'log_rate_hz': float(debug_log_rate_hz),
-            'map_frame': 'map',
+            'map_frame': (
+                'map' if fleet_active or not ns else f'{ns}/map'),
             'base_frame_candidates': (
                 f'{ns}/base_footprint,{ns}/base_link,base_footprint,base_link'
                 if ns else 'base_footprint,base_link'
@@ -356,9 +389,12 @@ def generate_launch_description():
             'debug_log_rate_hz', default_value='5.0',
             description='Debug logger sampling rate in Hz'),
         DeclareLaunchArgument(
+            'fleet_mode', default_value='false',
+            description='If true, Nav2 uses global /tf, /tf_static, /map (required with '
+                        'start_central.sh: tf relay, map merge, explorer).'),
+        DeclareLaunchArgument(
             'use_central_tf_map', default_value='false',
-            description='If true, Nav2 remaps tf/tf_static and map to global /tf, '
-                        '/map (required with start_central.sh + map_merge + explorer).'),
+            description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
         DeclareLaunchArgument(
             'effective_namespace', default_value=effective_namespace,
             description='(internal) resolved namespace'),

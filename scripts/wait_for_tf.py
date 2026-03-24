@@ -14,10 +14,11 @@ This script blocks until those transforms are available (or times out).
 Env: TF_WAIT_ODOM_ONLY=true to only wait for odom->base_* (robot). Use when
 the launch starts SLAM itself so map->odom appears after SLAM Toolbox starts.
 
-For namespaced multi-robot setups, set:
+For namespaced setups, set:
   TF_WAIT_ODOM_FRAME=blinky/odom
   TF_WAIT_BASE_FRAMES=blinky/base_footprint,blinky/base_link
   TF_WAIT_NAMESPACE=blinky   (subscribes to /blinky/tf in addition to /tf)
+  TF_WAIT_MAP_FRAME=blinky/map   (only used when TF_WAIT_ODOM_ONLY is false)
 """
 
 import os
