@@ -180,6 +180,7 @@ def generate_launch_description():
             executable='ekf_node',
             name='ekf_filter_node',
             output='screen',
+            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
             parameters=[ekf_param_dir,{'namespace': namespace}],
         ),
         Node(
