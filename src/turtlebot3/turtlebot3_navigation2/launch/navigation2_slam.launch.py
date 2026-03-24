@@ -23,6 +23,10 @@
 # Multi-robot (with namespace):
 #   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
 #       robot_name:=blinky use_sim_time:=False use_rviz:=False
+#
+# With central PC (start_central.sh: map_merge + tf_relay + explorer), enable
+# global TF + merged map so Nav2 goals in frame `map` match the central stack:
+#   use_central_tf_map:=true
 
 import os
 import tempfile
@@ -115,9 +119,13 @@ def _launch_setup(context):
     enable_debug_logging_str = LaunchConfiguration('enable_debug_logging').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
+    use_central_tf_map_str = LaunchConfiguration('use_central_tf_map').perform(
+        context)
 
-    nav2_launch_file_dir = os.path.join(
+    nav2_bringup_launch_dir = os.path.join(
         get_package_share_directory('nav2_bringup'), 'launch')
+    turtlebot3_nav2_launch_dir = os.path.join(
+        get_package_share_directory('turtlebot3_navigation2'), 'launch')
 
     slam_params = os.path.join(
         get_package_share_directory('turtlebot3_navigation2'),
@@ -222,11 +230,20 @@ def _launch_setup(context):
     # --- Nav2 with frame-rewritten params ---
     nav2_params_file = _generate_nav2_params(params_file, ns)
 
+    use_multirobot_nav_launch = (
+        use_central_tf_map_str.lower() in ('1', 'true', 'yes'))
+    if use_multirobot_nav_launch:
+        nav2_launch_source = PythonLaunchDescriptionSource(
+            os.path.join(
+                turtlebot3_nav2_launch_dir, 'navigation_launch_multirobot.py'))
+    else:
+        nav2_launch_source = PythonLaunchDescriptionSource(
+            [nav2_bringup_launch_dir, '/navigation_launch.py'])
+
     nav2_include = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            [nav2_launch_file_dir, '/navigation_launch.py']),
+        nav2_launch_source,
         launch_arguments={
-            'namespace': ns, 
+            'namespace': ns,
             'use_sim_time': use_sim_time_str,
             'params_file': nav2_params_file,
             'autostart': 'True',
@@ -338,6 +355,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'debug_log_rate_hz', default_value='5.0',
             description='Debug logger sampling rate in Hz'),
+        DeclareLaunchArgument(
+            'use_central_tf_map', default_value='false',
+            description='If true, Nav2 remaps tf/tf_static and map to global /tf, '
+                        '/map (required with start_central.sh + map_merge + explorer).'),
         DeclareLaunchArgument(
             'effective_namespace', default_value=effective_namespace,
             description='(internal) resolved namespace'),
