@@ -167,6 +167,14 @@
 
   <link name="${namespace}imu_link"/>
 
+  <joint name="${namespace}gps_joint" type="fixed">
+    <parent link="${namespace}base_link"/>
+    <child link="${namespace}gps_link"/>
+    <origin xyz="-0.032 0 0.068" rpy="0 0 0"/>
+  </joint>
+
+  <link name="${namespace}gps_link"/>
+
   <joint name="${namespace}scan_joint" type="fixed">
     <parent link="${namespace}base_link"/>
     <child link="${namespace}base_scan"/>
