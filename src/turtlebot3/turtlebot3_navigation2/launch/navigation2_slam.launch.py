@@ -85,7 +85,15 @@ def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
         _rewrite_frame(params, 'odom_frame_id', 'odom', f'{namespace}/odom')
         _rewrite_frame(params, 'odom_frame', 'odom', f'{namespace}/odom')
         _rewrite_frame(params, 'odom_topic', '/odom', 'odom')
-        _rewrite_frame(params, 'topic', '/scan_normalized', 'scan_normalized')
+        # Costmap nodes are nested (e.g. /pinky/local_costmap/local_costmap). A
+        # relative laser topic "scan_normalized" would wrongly resolve to
+        # /pinky/local_costmap/scan_normalized (no publisher). Normalizer and
+        # SLAM publish at /pinky/scan_normalized — use an absolute topic.
+        scan_abs = f'/{namespace}/scan_normalized'
+        _rewrite_frame(params, 'topic', '/scan_normalized', scan_abs)
+        _rewrite_frame(params, 'topic', 'scan_normalized', scan_abs)
+        _rewrite_frame(params, 'scan_topic', '/scan_normalized', scan_abs)
+        _rewrite_frame(params, 'scan_topic', 'scan_normalized', scan_abs)
         if not fleet_mode:
             # Standalone namespaced robot: SLAM map frame is {ns}/map.
             _rewrite_frame(params, 'global_frame', 'map',
@@ -179,7 +187,6 @@ def _launch_setup(context):
         name='laser_scan_normalizer',
         namespace=ns if ns else None,
         parameters=[normalizer_params],
-        remappings=tf_remappings,
         output='screen',
     ))
 
