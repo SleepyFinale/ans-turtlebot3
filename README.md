@@ -381,7 +381,7 @@ For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** and all robot
 
 To check TF and connectivity from the central PC, run (from the central workspace):  
 `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
-(The script lives in the central repo.)
+(The script lives in the central repo.) After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
 
 #### High-level changes
 
@@ -412,18 +412,18 @@ export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
 ```
 
-**Central PC + map merge + explorer (`start_central.sh`):** Exploration goals are sent in the merged world frame `map`, while `map_merge` publishes `map` → `<robot>/map` on the global `/tf` topic. Namespaced Nav2 defaults to `/<robot>/tf`, which does not include that link, so the robot can plan and drive in the wrong place relative to the path you see in RViz. **Use:**
+**Central PC + map merge + explorer (`start_central.sh`):** SLAM uses TF frame `<robot>/map` (not a bare `map` on the robot). Exploration goals are still in the world frame `map` on the global TF tree: `map_merge` publishes `map` → `<robot>/map` (multi-robot), and the central script publishes the same link as a static identity when only one robot runs. Namespaced Nav2 defaults to `/<robot>/tf`, which does not include `map` → `<robot>/map`, so the robot can plan in the wrong place unless you enable fleet mode. **Use:**
 
 ```bash
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
   use_sim_time:=false \
   use_rviz:=false \
-  use_central_tf_map:=true
+  fleet_mode:=true
 ```
 
-This switches Nav2 to `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged map as the central stack. Omit `use_central_tf_map` (default `false`) when testing the robot **alone** without the central stack, so Nav2 keeps subscribing to `/<robot>/tf` only.
+This switches Nav2 to `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged map as the central stack. Omit `fleet_mode` (default `false`) when testing the robot **alone** without the central stack so Nav2 keeps subscribing to `/<robot>/tf` and uses frame `<robot>/map` for the global costmap. The deprecated alias `use_central_tf_map:=true` still enables the same behavior.
 
-**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `use_central_tf_map:=true`, Nav2’s costmaps also use the merged `/map` from the central PC so goals, plans, and obstacles stay aligned. With `use_central_tf_map:=false`, the global costmap static layer uses the per-robot map topic only (see `burger.yaml`).
+**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `fleet_mode:=true`, Nav2’s costmaps use the merged `/map` from the central PC. With `fleet_mode:=false`, the global costmap static layer uses `/<robot>/map` only (see `burger.yaml`). On the robot, `navigation2_slam.launch.py` also starts a namespaced static TF `map` → `<robot>/map` (identity) so Nav2 and default goals that use frame `map` match SLAM’s `<robot>/map` frame.
 
 > **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
 
@@ -467,7 +467,10 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 
 ### Troubleshooting (Nav2 + SLAM on robot)
 
-- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`use_central_tf_map:=true`** when `start_central.sh` (tf relay + map merge) is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
+- **Planner: `source_frame` / frame `map` does not exist / "Could not transform the start or goal pose in the costmap frame":**
+  - **Robot only** (no central PC): launch with **`fleet_mode:=false`** (default) and rebuild/install so `standalone_world_map_tf.py` runs. Check logs for `standalone_world_map_tf: Publishing static TF map -> <robot>/map`.
+  - **If you use `fleet_mode:=true`:** Nav2 listens on **global** `/tf` and **`map` must come from the central stack** (`start_central.sh`). Running `fleet_mode:=true` on the robot **without** the central relay/bridge will keep failing with missing `map`.
+- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
 
