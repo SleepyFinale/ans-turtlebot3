@@ -217,8 +217,8 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Keep a safety halo while reducing over-inflation that can trap the
         # robot in "starting point in lethal space" states near walls/corners.
-        inflation_radius: 0.35
-        cost_scaling_factor: 5.0
+        inflation_radius: 0.30
+        cost_scaling_factor: 4.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -320,8 +320,8 @@ global_costmap:
         # Balanced inflation: keep global plans off walls and corners without
         # frequently considering the robot to start in lethal space in tight
         # lab corridors.
-        inflation_radius: 0.25
-        cost_scaling_factor: 5.0
+        inflation_radius: 0.20
+        cost_scaling_factor: 4.0
       always_send_full_costmap: True
   global_costmap_client:
     ros__parameters:
