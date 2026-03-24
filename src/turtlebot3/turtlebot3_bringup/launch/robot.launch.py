@@ -53,6 +53,13 @@ def generate_launch_description():
                 'param',
                 ROS_DISTRO,
                 TURTLEBOT3_MODEL + '.yaml'))
+        ekf_param_dir = LaunchConfiguration(
+            'ekf_param_dir',
+            default=os.path.join(
+                get_package_share_directory('turtlebot3_bringup'),
+                'param',
+                ROS_DISTRO,
+                "ekf" + '.yaml'))
     else:
         tb3_param_dir = LaunchConfiguration(
             'tb3_param_dir',
@@ -157,29 +164,30 @@ def generate_launch_description():
             },
         ),
 
-        Node(
-            package='nmea_navsat_driver',
-            executable='nmea_serial_driver',
-            name='gps_driver',
-            output='screen',
-            parameters=[{
-                'port': '/dev/ttyACM0',
-                'baud': 9600,
-                'frame_id': 'gps'
-            }]
-        ),
+        # Node(
+        #     package='nmea_navsat_driver',
+        #     executable='nmea_serial_driver',
+        #     name='gps_driver',
+        #     output='screen',
+        #     parameters=[{
+        #         'port': '/dev/ttyACM0',
+        #         'baud': 9600,
+        #         'frame_id': 'gps'
+        #     }]
+        # ),
         Node(
             package='robot_localization',
             executable='ekf_node',
             name='ekf_filter_node',
             output='screen',
-            parameters=[tb3_param_dir,{'namespace': namespace}],
+            parameters=[ekf_param_dir,{'namespace': namespace}],
         ),
         Node(
             package='robot_localization',
             executable='navsat_transform_node',
             name='navsat_transform',
             output='screen',
-            parameters=[tb3_param_dir,{'namespace': namespace}],
+            remappings=[('gps/fix','fix'), ('/tf', 'tf'), ('/tf_static', 'tf_static')],
+            parameters=[ekf_param_dir,{'namespace': namespace}],
         ),
     ])

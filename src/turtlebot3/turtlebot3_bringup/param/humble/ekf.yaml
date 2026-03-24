@@ -4,22 +4,27 @@
       frequency: 30.0
       sensor_timeout: 0.1
       two_d_mode: true
+      transform_time_offset: 0.0
+      transform_timeout: 0.0
+
+      print_diagnostics: true
+      debug: true
 
       publish_tf: true
       publish_acceleration: false
 
-      map_frame: map
-      odom_frame: odom
-      base_link_frame: base_link
-      world_frame: odom
+      map_frame: blinky/map
+      odom_frame: blinky/odom
+      base_link_frame: blinky/base_footprint
+      world_frame: blinky/odom
 
       # Wheel odometry input
       odom0: odom
       odom0_config: [true,  true,  false,
-                     false, false, true,
-                     true,  false, false,
-                     false, false, true,
-                     false, false, false]
+                      false, false, false,
+                      true,  false, false,
+                      false, false, true,
+                      false, false, false]
       odom0_differential: false
       odom0_relative: false
 
@@ -33,3 +38,20 @@
       imu0_differential: false
       imu0_relative: false
       imu0_remove_gravitational_acceleration: true
+
+/**:
+  navsat_transform_node:
+    ros__parameters:
+      debug: true
+      gps_topic: fix
+      imu_topic: imu
+
+      map_frame: blinky/map
+      odom_frame: blinky/odom
+      base_link_frame: blinky/base_footprint   # or base_link
+
+      world_frame: blinky/odom   # match EKF
+      publish_filtered_gps: true
+      wait_for_datum: false
+      frequency: 1.0
+      zero_altitude: true
