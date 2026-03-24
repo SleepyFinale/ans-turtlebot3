@@ -42,7 +42,7 @@
 /**:
   navsat_transform_node:
     ros__parameters:
-      debug: true
+      debug: false
       gps_topic: fix
       imu_topic: imu
 
