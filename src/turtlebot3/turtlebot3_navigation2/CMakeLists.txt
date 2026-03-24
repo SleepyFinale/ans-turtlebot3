@@ -17,11 +17,14 @@ find_package(ament_cmake REQUIRED)
 # Install
 ################################################################################
 install(
-  DIRECTORY launch map param rviz
+  DIRECTORY behavior_trees launch map param rviz
   DESTINATION share/${PROJECT_NAME}
 )
 install(
-  PROGRAMS scripts/normalize_laser_scan.py
+  PROGRAMS
+    scripts/normalize_laser_scan.py
+    scripts/nav2_motion_debug_logger.py
+    scripts/standalone_world_map_tf.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

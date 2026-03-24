@@ -1,3 +1,4 @@
+
 from rclpy.node import Node
 import rclpy
 import socket
@@ -23,10 +24,13 @@ ROBOT_NAME = "pinky"
 
 QUEUE_SIZE = 5000
 
+SURICATA_EVE_FILE = "/var/log/suricata/eve.json"
+
 THROTTLE = {
-    "/pinky/odom": 0.1,
-    "/pinky/battery_state": 5.0,
-    "/pinky/cmd_vel": 0.1,
+    "/odom": 0.1,
+    "/battery_state": 5.0,
+    "/cmd_vel": 0.1,
+    "/suricata_alert": 0.0,  # no throttle for alerts
 }
 
 # -----------------------------
@@ -49,14 +53,10 @@ class LogstashPublisher(Node):
     def __init__(self):
         super().__init__('ros2_logstash_bridge')
 
-        # ✅ UDP socket
+        # UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-        # Allow reuse (safe for ROS2 coexistence)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # Bind to LAN interface only (prevents DDS issues)
-        self.sock.bind((PI4_LAN_IP, 0))  # 0 = OS chooses source port
+        self.sock.bind((PI4_LAN_IP, 0))
 
         self.get_logger().info(
             f"UDP socket bound to {PI4_LAN_IP}, sending to {LOGSTASH_IP}:{LOGSTASH_PORT}"
@@ -65,22 +65,30 @@ class LogstashPublisher(Node):
         self.queue = queue.Queue(maxsize=QUEUE_SIZE)
         self.last_sent = {}
 
+        # Sender thread
         self.sender_thread = threading.Thread(
             target=self.sender_loop,
             daemon=True
         )
         self.sender_thread.start()
 
-        # Subscriptions
-        self.create_subscription(BatteryState, '/pinky/battery_state', self.battery_cb, 10)
-        self.create_subscription(Odometry, '/pinky/odom', self.odom_cb, 10)
-        self.create_subscription(Twist, '/pinky/cmd_vel', self.cmd_vel_cb, 10)
+        # Suricata thread
+        self.suricata_thread = threading.Thread(
+            target=self.suricata_loop,
+            daemon=True
+        )
+        self.suricata_thread.start()
+
+        # ROS2 subscriptions
+        self.create_subscription(BatteryState, '/battery_state', self.battery_cb, 10)
+        self.create_subscription(Odometry, '/odom', self.odom_cb, 10)
+        self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_cb, 10)
 
     # -----------------------------
     def allowed(self, topic):
         now = time.time()
         last = self.last_sent.get(topic, 0)
-        if now - last >= THROTTLE[topic]:
+        if now - last >= THROTTLE.get(topic, 0):
             self.last_sent[topic] = now
             return True
         return False
@@ -89,11 +97,10 @@ class LogstashPublisher(Node):
         if not self.allowed(topic):
             return
 
-        clean_topic = topic.replace(f"/{ROBOT_NAME}", "", 1)
         event = {
             "@timestamp": datetime.utcnow().isoformat() + "Z",
             "robot": ROBOT_NAME,
-            "topic": clean_topic,
+            "topic": topic,
             "data": data
         }
 
@@ -107,15 +114,50 @@ class LogstashPublisher(Node):
             event = self.queue.get()
             try:
                 payload = (json.dumps(event) + "\n").encode()
-                print("SENDING:", event)
                 self.sock.sendto(payload, (LOGSTASH_IP, LOGSTASH_PORT))
             except Exception as e:
                 self.get_logger().error(f"UDP send failed: {e}")
 
     # -----------------------------
-    # Callbacks
+    # Suricata integration
+    def suricata_loop(self):
+        try:
+            with open(SURICATA_EVE_FILE, "r") as f:
+                f.seek(0, 2)  # move to end of file
+
+                while True:
+                    line = f.readline()
+                    if not line:
+                        time.sleep(0.1)
+                        continue
+
+                    try:
+                        event = json.loads(line)
+
+                        if event.get("event_type") == "alert":
+                            alert = event.get("alert", {})
+
+                            parsed = {
+                                "signature": alert.get("signature"),
+                                "severity": alert.get("severity"),
+                                "category": alert.get("category"),
+                                "src_ip": event.get("src_ip"),
+                                "dest_ip": event.get("dest_ip"),
+                                "proto": event.get("proto")
+                            }
+
+                            self.enqueue("/suricata_alert", parsed)
+
+                    except Exception as e:
+                        self.get_logger().warn(f"Suricata parse error: {e}")
+
+        except Exception as e:
+            self.get_logger().error(f"Suricata reader failed: {e}")
+
+    # -----------------------------
+    # ROS Callbacks
     def battery_cb(self, msg):
-        self.enqueue("/pinky/battery_state", {
+        self.enqueue("/battery_state", {
             "voltage": msg.voltage,
             "current": msg.current,
             "percentage": msg.percentage,
@@ -130,7 +172,7 @@ class LogstashPublisher(Node):
 
         euler = quaternion_to_euler(o)
 
-        self.enqueue("/pinky/odom", {
+        self.enqueue("/odom", {
             "pos": [p.x, p.y, p.z],
             "ori": euler,
             "lin_vel": [t.x, t.y, t.z],
@@ -138,7 +180,7 @@ class LogstashPublisher(Node):
         })
 
     def cmd_vel_cb(self, msg):
-        self.enqueue("/pinky/cmd_vel", {
+        self.enqueue("/cmd_vel", {
             "linear": [msg.linear.x, msg.linear.y, msg.linear.z],
             "angular": [msg.angular.x, msg.angular.y, msg.angular.z]
         })

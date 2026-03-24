@@ -381,7 +381,7 @@ For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** and all robot
 
 To check TF and connectivity from the central PC, run (from the central workspace):  
 `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
-(The script lives in the central repo.)
+(The script lives in the central repo.) After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
 
 #### High-level changes
 
@@ -401,18 +401,34 @@ ros2 launch turtlebot3_bringup robot.launch.py
 
 #### 2. Namespaced SLAM + Nav2 on each robot
 
-Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name:
+Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name.
+
+**With the central PC** (`./scripts/start_central.sh` on the remote machine): you **must** enable fleet mode so Nav2 uses global `/tf`, `/tf_static`, and `/map` (merged map from `map_merge`, or a relay of `/<robot>/map` when only one robot runs). Use exactly this pattern:
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/turtlebot3_ws/install/setup.bash
 export TURTLEBOT3_MODEL=burger
 
-# Run SLAM + Nav2 on the robot (topics under /<robot_name>)
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+  use_sim_time:=false \
+  use_rviz:=false \
+  fleet_mode:=true
+```
+
+That uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
+
+**Robot only** (bench test, no central stack): omit `fleet_mode` or set `fleet_mode:=false` (default). Nav2 then uses `/<robot>/tf` and the global costmap subscribes to `/<robot>/map` (see `burger.yaml`). `navigation2_slam.launch.py` starts `standalone_world_map_tf.py` so frame `map` matches `/<robot>/map` for goals.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
 ```
 
-**Map topics:** In multi-robot mode each robot publishes its own map topics (e.g. `/pinky/map`, `/pinky/map_metadata`, `/pinky/map_updates`). Nav2 is configured to subscribe to that same per-robot map (not the global `/map`, and not `/pinky/global_costmap/map`), so multiple robots can run SLAM + Nav2 in a single ROS domain without overwriting each other’s maps.
+**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `fleet_mode:=true`, Nav2’s costmaps use **`/map` on the network**: multi-robot **merged** map from the central PC, or **single-robot** relay from `/<robot>/map` started by `start_central.sh`. With `fleet_mode:=false`, the global costmap static layer uses `/<robot>/map` only. On the robot, `navigation2_slam.launch.py` starts a namespaced static TF `map` → `<robot>/map` (identity) in standalone mode so Nav2 and default goals that use frame `map` match SLAM’s `<robot>/map` frame.
 
 > **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
 
@@ -456,5 +472,70 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 
 ### Troubleshooting (Nav2 + SLAM on robot)
 
+- **Planner: `source_frame` / frame `map` does not exist / "Could not transform the start or goal pose in the costmap frame":**
+  - **Robot only** (no central PC): launch with **`fleet_mode:=false`** (default) and rebuild/install so `standalone_world_map_tf.py` runs. Check logs for `standalone_world_map_tf: Publishing static TF map -> <robot>/map`.
+  - **If you use `fleet_mode:=true`:** Nav2 listens on **global** `/tf` and **`/map` must be available on the DDS graph** — start **`start_central.sh`** on the PC (multi-robot: `map_merge`; single-robot: `single_robot_map_relay.py` republishes `/<robot>/map` → `/map`). Running `fleet_mode:=true` on the robot **without** the central stack (no relay, no merge) will fail with missing `map` / costmap data.
+- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
+
+### Nav2 motion debug capture (robot side)
+
+Use this when a robot appears to drive into obstacles even when the assigned goal and global plan look safe.
+
+1. Start robot bringup in terminal 1:
+
+   ```bash
+   source /opt/ros/humble/setup.bash
+   source ~/turtlebot3_ws/install/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   ros2 launch turtlebot3_bringup robot.launch.py
+   ```
+
+2. Start SLAM + Nav2 with structured debug logging in terminal 2:
+
+   ```bash
+   source /opt/ros/humble/setup.bash
+   source ~/turtlebot3_ws/install/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+     use_sim_time:=false \
+     use_rviz:=false \
+     enable_debug_logging:=true \
+     debug_log_dir:=~/turtlebot3_ws/logs \
+     debug_log_rate_hz:=5.0
+   ```
+
+3. Start rosbag capture in terminal 3:
+
+   ```bash
+   cd ~/turtlebot3_ws
+   ./scripts/start_nav2_debug_capture.sh
+   # Optional explicit robot name:
+   # ./scripts/start_nav2_debug_capture.sh pinky
+   ```
+
+#### Files produced
+
+- JSONL timeline: `~/turtlebot3_ws/logs/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
+- rosbag2 capture: `~/turtlebot3_ws/logs/<robot>/bag-YYYYmmdd-HHMMSS/`
+
+#### What gets recorded
+
+- Raw topics (bag): map, map updates, global costmap, global costmap updates, plan, cmd_vel, cmd_vel_nav, odom, tf, action status/feedback/result.
+- Derived JSONL metrics (at `debug_log_rate_hz`):
+  - robot pose in map frame
+  - robot costmap cell value at current pose
+  - goal and robot-to-goal distance
+  - plan length, plan endpoint, and plan points outside global costmap bounds
+  - cmd_vel vs cmd_vel_nav vs odom twist
+  - latest NavigateToPose action status
+  - anomaly flags
+
+#### Quick triage checklist
+
+- `robot_in_lethal_cost` or `robot_in_high_cost`: robot position entered high-cost/lethal cells.
+- `plan_has_out_of_global_costmap_points`: global plan includes points outside current global costmap bounds.
+- `robot_in_high_cost_while_plan_low_cost`: local execution diverged from what the global plan/costmap suggested.
+- `forward_cmd_in_high_cost`: motion command remained forward while the robot was already in high-cost area.
+- Compare `cmd_vel_nav` vs `cmd_vel` vs `odom_twist` to separate planner/controller intent from robot motion response.

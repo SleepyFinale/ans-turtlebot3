@@ -16,6 +16,7 @@ from geometry_msgs.msg import Twist
 # Config
 # -----------------------------
 PI4_LAN_IP = "192.168.0.194"
+#PI4_LAN_IP = "10.3.141.194"
 LOGSTASH_IP = "192.168.0.76"
 LOGSTASH_PORT = 5045
 
@@ -24,9 +25,9 @@ ROBOT_NAME = "pinky"
 QUEUE_SIZE = 5000
 
 THROTTLE = {
-    "/pinky/odom": 0.1,
-    "/pinky/battery_state": 5.0,
-    "/pinky/cmd_vel": 0.1,
+    "/odom": 0.1,
+    "/battery_state": 5.0,
+    "/cmd_vel": 0.1,
 }
 
 # -----------------------------
@@ -72,9 +73,9 @@ class LogstashPublisher(Node):
         self.sender_thread.start()
 
         # Subscriptions
-        self.create_subscription(BatteryState, '/pinky/battery_state', self.battery_cb, 10)
-        self.create_subscription(Odometry, '/pinky/odom', self.odom_cb, 10)
-        self.create_subscription(Twist, '/pinky/cmd_vel', self.cmd_vel_cb, 10)
+        self.create_subscription(BatteryState, '/battery_state', self.battery_cb, 10)
+        self.create_subscription(Odometry, '/odom', self.odom_cb, 10)
+        self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_cb, 10)
 
     # -----------------------------
     def allowed(self, topic):
@@ -89,11 +90,10 @@ class LogstashPublisher(Node):
         if not self.allowed(topic):
             return
 
-        clean_topic = topic.replace(f"/{ROBOT_NAME}", "", 1)
         event = {
             "@timestamp": datetime.utcnow().isoformat() + "Z",
             "robot": ROBOT_NAME,
-            "topic": clean_topic,
+            "topic": topic,
             "data": data
         }
 
@@ -107,7 +107,6 @@ class LogstashPublisher(Node):
             event = self.queue.get()
             try:
                 payload = (json.dumps(event) + "\n").encode()
-                print("SENDING:", event)
                 self.sock.sendto(payload, (LOGSTASH_IP, LOGSTASH_PORT))
             except Exception as e:
                 self.get_logger().error(f"UDP send failed: {e}")
@@ -115,7 +114,7 @@ class LogstashPublisher(Node):
     # -----------------------------
     # Callbacks
     def battery_cb(self, msg):
-        self.enqueue("/pinky/battery_state", {
+        self.enqueue("/battery_state", {
             "voltage": msg.voltage,
             "current": msg.current,
             "percentage": msg.percentage,
@@ -130,7 +129,7 @@ class LogstashPublisher(Node):
 
         euler = quaternion_to_euler(o)
 
-        self.enqueue("/pinky/odom", {
+        self.enqueue("/odom", {
             "pos": [p.x, p.y, p.z],
             "ori": euler,
             "lin_vel": [t.x, t.y, t.z],
@@ -138,7 +137,7 @@ class LogstashPublisher(Node):
         })
 
     def cmd_vel_cb(self, msg):
-        self.enqueue("/pinky/cmd_vel", {
+        self.enqueue("/cmd_vel", {
             "linear": [msg.linear.x, msg.linear.y, msg.linear.z],
             "angular": [msg.angular.x, msg.angular.y, msg.angular.z]
         })

@@ -1,6 +1,6 @@
-# Multi-robot variant of nav2 navigation_launch.py
-# Uses remapping (tf -> /tf) so namespaced Nav2 nodes receive the full TF tree
-# (map, blinky/odom, blinky/base_footprint, etc.) from global /tf.
+# Fleet / central-PC variant of nav2 navigation_launch.py.
+# Remaps tf -> /tf so namespaced Nav2 nodes receive the full TF tree from the
+# central relay and map_merge: map -> blinky/map -> blinky/odom -> base, etc.
 #
 # Based on nav2_bringup/navigation_launch.py (Apache 2.0)
 
@@ -34,9 +34,9 @@ def generate_launch_description():
         'behavior_server', 'bt_navigator', 'waypoint_follower', 'velocity_smoother'
     ]
 
-    # Multi-robot: namespaced nodes use relative "tf" (=/blinky/tf) which only has
-    # robot odom. Redirect to global /tf for full tree (map->odom->base).
-    # Map: use global /map from map_merge.
+    # Namespaced nodes default to /<ns>/tf (no world map -> ns/map). Use global
+    # /tf from the central relay + map_merge (or single-robot map bridge).
+    # Map: merged /map on the central PC when map_merge runs.
     remappings = [
         ('tf', '/tf'), ('tf_static', '/tf_static'),
         ('map', '/map'), ('map_updates', '/map_updates'),
