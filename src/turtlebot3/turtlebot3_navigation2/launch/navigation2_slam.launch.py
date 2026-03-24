@@ -94,6 +94,11 @@ def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
         _rewrite_frame(params, 'topic', 'scan_normalized', scan_abs)
         _rewrite_frame(params, 'scan_topic', '/scan_normalized', scan_abs)
         _rewrite_frame(params, 'scan_topic', 'scan_normalized', scan_abs)
+        ultra_abs = f'/{namespace}/ultrasonic'
+        _rewrite_frame(params, 'topic', '/ultrasonic', ultra_abs)
+        _rewrite_frame(params, 'topic', 'ultrasonic', ultra_abs)
+        _rewrite_frame(params, 'scan_topic', '/ultrasonic', ultra_abs)
+        _rewrite_frame(params, 'scan_topic', 'ultrasonic', ultra_abs)
         if not fleet_mode:
             # Standalone namespaced robot: SLAM map frame is {ns}/map.
             _rewrite_frame(params, 'global_frame', 'map',
