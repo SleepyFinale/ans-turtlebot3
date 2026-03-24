@@ -412,7 +412,18 @@ export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
 ```
 
-**Map topics:** In multi-robot mode each robot publishes its own map topics (e.g. `/pinky/map`, `/pinky/map_metadata`, `/pinky/map_updates`). Nav2 is configured to subscribe to that same per-robot map (not the global `/map`, and not `/pinky/global_costmap/map`), so multiple robots can run SLAM + Nav2 in a single ROS domain without overwriting each other’s maps.
+**Central PC + map merge + explorer (`start_central.sh`):** Exploration goals are sent in the merged world frame `map`, while `map_merge` publishes `map` → `<robot>/map` on the global `/tf` topic. Namespaced Nav2 defaults to `/<robot>/tf`, which does not include that link, so the robot can plan and drive in the wrong place relative to the path you see in RViz. **Use:**
+
+```bash
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+  use_sim_time:=false \
+  use_rviz:=false \
+  use_central_tf_map:=true
+```
+
+This switches Nav2 to `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged map as the central stack. Omit `use_central_tf_map` (default `false`) when testing the robot **alone** without the central stack, so Nav2 keeps subscribing to `/<robot>/tf` only.
+
+**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `use_central_tf_map:=true`, Nav2’s costmaps also use the merged `/map` from the central PC so goals, plans, and obstacles stay aligned. With `use_central_tf_map:=false`, the global costmap static layer uses the per-robot map topic only (see `burger.yaml`).
 
 > **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
 
@@ -456,6 +467,7 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 
 ### Troubleshooting (Nav2 + SLAM on robot)
 
+- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`use_central_tf_map:=true`** when `start_central.sh` (tf relay + map merge) is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
 
