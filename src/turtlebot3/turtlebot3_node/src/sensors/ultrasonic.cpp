@@ -66,7 +66,7 @@ void Ultrasonic::publish(
   ultrasonic_msg->time_increment = 0.0f;
   ultrasonic_msg->scan_time = 0.0f;
   ultrasonic_msg->range_min = 0.03f;
-  ultrasonic_msg->range_max = 4.5f;
+  ultrasonic_msg->range_max = 1.0f;
 
  
   sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
