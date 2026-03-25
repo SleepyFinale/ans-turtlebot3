@@ -104,21 +104,9 @@ def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
             _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
             _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
 
-    # Force BT navigator to use local no-backup behavior trees so disabling
-    # the backup behavior plugin does not break lifecycle activation.
-    bt_dir = os.path.join(
-        get_package_share_directory('turtlebot3_navigation2'),
-        'behavior_trees')
-    bt_to_pose = os.path.join(
-        bt_dir, 'navigate_to_pose_w_replanning_and_recovery_no_backup.xml')
-    bt_through_poses = os.path.join(
-        bt_dir, 'navigate_through_poses_w_replanning_and_recovery_no_backup.xml')
-    if 'bt_navigator' in params and 'ros__parameters' in params['bt_navigator']:
-        bt_params = params['bt_navigator']['ros__parameters']
-        bt_params['default_nav_to_pose_bt_xml'] = bt_to_pose
-        bt_params['default_nav_through_poses_bt_xml'] = bt_through_poses
-        # Keep compatibility with older key used by some Nav2 configs.
-        bt_params['default_bt_xml_filename'] = bt_to_pose
+    # Behavior trees: omit default_nav_to_pose_bt_xml / default_nav_through_poses_bt_xml
+    # so bt_navigator uses Nav2's stock trees (include backup recovery). Params already
+    # list the BackUp plugin under recoveries_server.
 
     fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
     with os.fdopen(fd, 'w') as f:
