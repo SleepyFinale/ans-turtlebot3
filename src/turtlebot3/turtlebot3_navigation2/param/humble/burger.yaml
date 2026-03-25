@@ -134,7 +134,8 @@ controller_server:
       plugin: "nav2_controller::SimpleProgressChecker"
       # Make this less trigger-happy in dynamic / cluttered spaces.
       required_movement_radius: 0.20
-      movement_time_allowance: 20.0
+      # Slightly relaxed for SLAM + Pi load (was 20.0); retest if goals feel “stuck” too long.
+      movement_time_allowance: 28.0
 
     general_goal_checker:
       stateful: True
@@ -149,11 +150,11 @@ controller_server:
       debug_trajectory_details: False
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.16
+      max_vel_x: 0.22
       max_vel_y: 0.0
       max_vel_theta: 1.0
       min_speed_xy: 0.0
-      max_speed_xy: 0.16
+      max_speed_xy: 0.22
       min_speed_theta: 0.15
       # Add high threshold velocity for turtlebot 3 issue.
       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
@@ -219,8 +220,8 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Keep a safety halo while reducing over-inflation that can trap the
         # robot in "starting point in lethal space" states near walls/corners.
-        inflation_radius: 0.35
-        cost_scaling_factor: 5.0
+        inflation_radius: 0.30
+        cost_scaling_factor: 4.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -295,8 +296,8 @@ global_costmap:
         # Balanced inflation: keep global plans off walls and corners without
         # frequently considering the robot to start in lethal space in tight
         # lab corridors.
-        inflation_radius: 0.25
-        cost_scaling_factor: 5.0
+        inflation_radius: 0.20
+        cost_scaling_factor: 4.0
       always_send_full_costmap: True
   global_costmap_client:
     ros__parameters:
