@@ -47,12 +47,14 @@ void Ultrasonic::publish(
 {
   auto ultrasonic_msg = std::make_unique<sensor_msgs::msg::LaserScan>();
 
-  const float angle_min = -1.57f - 0.52f;
-  const float angle_max = 1.57f + 0.52f;
+  const float senpos[3] = {-0.78,0.0,0.78};
+  const float angle_min = senpos[0] - 0.52f;
+  const float angle_max = senpos[2] + 0.52f;
   const float angle_increment = 0.017f;
-  const float coneAngle = 15 * (3.145926/180);
-  int numPoints = (int)(angle_max - angle_min)/angle_increment;
+  const float coneAngle = 5 * (3.145926/180);
+  int numPoints = (int)((angle_max - angle_min)/angle_increment);
   float sdist[3];
+
   int aIndex, senToUse;
   ultrasonic_msg->header.frame_id = this->frame_id_;
   ultrasonic_msg->header.stamp = now;
@@ -82,8 +84,8 @@ void Ultrasonic::publish(
   for (aIndex = 1; aIndex < numPoints; aIndex++)
   {
     senToUse = ((float)aIndex/numPoints)*3;
-    if ((angle_min + angle_increment * aIndex <= -1.57 + 1.57 * senToUse + coneAngle) && 
-    (angle_min + angle_increment * aIndex >= -1.57 + 1.57 * senToUse - coneAngle)) 
+    if ((angle_min + angle_increment * aIndex <= senpos[senToUse] + coneAngle) && 
+    (angle_min + angle_increment * aIndex >= senpos[senToUse] - coneAngle)) 
     {
       ultrasonic_msg->ranges[aIndex] = sdist[senToUse];
     } else {
