@@ -27,7 +27,14 @@ from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonE
 from launch_ros.actions import Node, PushRosNamespace
 
 
-DEFAULT_ROBOT_NAME = os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+def _default_robot_name():
+    hostname = os.environ.get('HOSTNAME') or os.environ.get('HOST')
+    if hostname:
+        return hostname.split('.')[0]
+    return os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+
+
+DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
 def generate_launch_description():

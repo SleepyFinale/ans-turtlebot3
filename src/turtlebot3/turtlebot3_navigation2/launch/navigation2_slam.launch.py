@@ -41,9 +41,11 @@ from launch.actions import (
     GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
+    RegisterEventHandler,
     TimerAction,
 )
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
@@ -51,7 +53,14 @@ from launch_ros.actions import Node, PushRosNamespace
 TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 ROS_DISTRO = os.environ.get('ROS_DISTRO')
 
-DEFAULT_ROBOT_NAME = os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+def _default_robot_name():
+    hostname = os.environ.get('HOSTNAME') or os.environ.get('HOST')
+    if hostname:
+        return hostname.split('.')[0]
+    return os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+
+
+DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
 def _rewrite_frame(d, key, old_val, new_val):
@@ -125,10 +134,14 @@ def _launch_setup(context):
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
+    auto_fleet_wait_timeout_str = LaunchConfiguration(
+        'auto_fleet_wait_timeout_sec').perform(context)
     use_central_tf_map_str = LaunchConfiguration('use_central_tf_map').perform(
         context)
 
-    fleet_active = fleet_mode_str.lower() in ('1', 'true', 'yes')
+    fleet_mode_norm = fleet_mode_str.lower()
+    fleet_auto_mode = fleet_mode_norm == 'auto'
+    fleet_active = fleet_mode_norm in ('1', 'true', 'yes') or fleet_auto_mode
     if use_central_tf_map_str.lower() in ('1', 'true', 'yes'):
         fleet_active = True
 
@@ -285,7 +298,40 @@ def _launch_setup(context):
     else:
         nav2_group = nav2_include
 
-    if wait_for_tf_str.lower() == 'true':
+    if fleet_auto_mode and ns:
+        # In auto mode, keep startup order flexible: robots can start before
+        # the central stack. Delay Nav2 bringup until global TF chain exists.
+        auto_wait_env = dict(os.environ)
+        auto_wait_env['TF_WAIT_ODOM_ONLY'] = 'false'
+        auto_wait_env['TF_WAIT_TIMEOUT_SEC'] = auto_fleet_wait_timeout_str
+        auto_wait_env['TF_WAIT_MAP_FRAME'] = 'map'
+        auto_wait_env['TF_WAIT_ODOM_FRAME'] = f'{ns}/odom'
+        auto_wait_env['TF_WAIT_BASE_FRAMES'] = (
+            f'{ns}/base_footprint,{ns}/base_link'
+        )
+        # Empty namespace means the waiter listens to global /tf only.
+        auto_wait_env['TF_WAIT_NAMESPACE'] = ''
+        auto_wait_proc = ExecuteProcess(
+            cmd=['python3', wait_tf_script],
+            output='screen',
+            env=auto_wait_env,
+        )
+        actions.append(auto_wait_proc)
+        if wait_for_tf_str.lower() == 'true':
+            actions.append(RegisterEventHandler(
+                OnProcessExit(
+                    target_action=auto_wait_proc,
+                    on_exit=[TimerAction(period=3.0, actions=[nav2_group])],
+                )
+            ))
+        else:
+            actions.append(RegisterEventHandler(
+                OnProcessExit(
+                    target_action=auto_wait_proc,
+                    on_exit=[nav2_group],
+                )
+            ))
+    elif wait_for_tf_str.lower() == 'true':
         actions.append(TimerAction(period=3.0, actions=[nav2_group]))
     else:
         actions.append(nav2_group)
@@ -369,7 +415,7 @@ def generate_launch_description():
             'use_sim_time', default_value='false',
             description='Use simulation (Gazebo) clock if true'),
         DeclareLaunchArgument(
-            'use_rviz', default_value='true',
+            'use_rviz', default_value='false',
             description='Launch RViz2 if true'),
         DeclareLaunchArgument(
             'wait_for_tf', default_value='true',
@@ -384,9 +430,14 @@ def generate_launch_description():
             'debug_log_rate_hz', default_value='5.0',
             description='Debug logger sampling rate in Hz'),
         DeclareLaunchArgument(
-            'fleet_mode', default_value='false',
-            description='If true, Nav2 uses global /tf, /tf_static, /map (required with '
-                        'start_central.sh: tf relay, map merge, explorer).'),
+            'fleet_mode', default_value='auto',
+            description=('Fleet topology mode: false=standalone namespaced map/TF, '
+                         'true=global /tf+/map (central required), auto=wait for '
+                         'central global TF/map before starting Nav2.')),
+        DeclareLaunchArgument(
+            'auto_fleet_wait_timeout_sec', default_value='300.0',
+            description=('When fleet_mode=auto, max seconds to wait for central '
+                         'global TF/map before proceeding.')),
         DeclareLaunchArgument(
             'use_central_tf_map', default_value='false',
             description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
