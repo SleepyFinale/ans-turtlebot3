@@ -416,7 +416,7 @@ ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
   fleet_mode:=true
 ```
 
-That uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
+By default, `robot.launch.py` and `navigation2_slam.launch.py` use `HOSTNAME` as the robot namespace (for example host `pinky` -> namespace `pinky`), so `robot_name:=...` is optional unless you want to override it manually. This uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
 
 **Robot only** (bench test, no central stack): omit `fleet_mode` or set `fleet_mode:=false` (default). Nav2 then uses `/<robot>/tf` and the global costmap subscribes to `/<robot>/map` (see `burger.yaml`). `navigation2_slam.launch.py` starts `standalone_world_map_tf.py` so frame `map` matches `/<robot>/map` for goals.
 
@@ -478,6 +478,35 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 - **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
+
+#### Stability tuning profile (Mar 2026)
+
+These values are tuned to reduce false `Failed to make progress` aborts when using the central explorer:
+
+- `controller_server.progress_checker.required_movement_radius: 0.10`
+- `controller_server.progress_checker.movement_time_allowance: 45.0`
+- `controller_server.FollowPath.min_speed_theta: 0.10`
+- `local_costmap.local_costmap.transform_timeout: 0.5`
+- `global_costmap.global_costmap.transform_timeout: 0.5`
+- `local_costmap.local_costmap.width/height: 4.0`
+- `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.25`
+
+Use this with `fleet_mode:=true` when `start_central.sh` is running.
+
+#### A/B/C validation sequence
+
+Use short 8-12 minute runs with comparable space/starting pose:
+
+1. **Run A (topology only)**: keep old parameters, but launch with `fleet_mode:=true` and explicit `robot_name:=...`.
+2. **Run B (A + robot tuning)**: apply only robot `burger.yaml` tuning from this section.
+3. **Run C (B + central tuning)**: apply central `multi_robot_explorer.yaml` anti-thrashing tuning.
+
+For each run, record:
+
+- count of `Failed to make progress` in robot Nav2 logs
+- count of `Goal canceled` in central explorer logs
+- average time from goal completion/cancel to next goal assignment
+- rough map growth (coverage) over the same duration
 
 ### Nav2 motion debug capture (robot side)
 
