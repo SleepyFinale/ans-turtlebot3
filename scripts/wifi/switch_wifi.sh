@@ -44,6 +44,13 @@ AZURE_IP_BLINKY="172.20.10.13"
 AZURE_IP_PINKY="172.20.10.14"
 AZURE_IP_INKY="172.20.10.15"
 
+# Jack Wifi static IP config
+JACK_GATEWAY="172.20.10.1"
+JACK_PREFIX="28"
+JACK_IP_BLINKY="172.20.10.5"
+JACK_IP_PINKY="172.20.10.6"
+JACK_IP_INKY="172.20.10.7"
+
 SNS_SSID="SNS"
 SNS_PASSWORD="sn5_rox!"
 
@@ -52,6 +59,9 @@ RASPAP_PASSWORD="sn5_rox!"
 
 AZURE_SSID="Azure"
 AZURE_PASSWORD="howdoyouwanttodothis"
+
+JACK_SSID="jack_iphone"
+JACK_PASSWORD="Cjames123!"
 
 # Resolve robot name: current user (when using sudo we use SUDO_USER), or ROBOT_NAME env or second argument
 get_robot_name() {
@@ -71,6 +81,7 @@ set_robot_static_ips() {
       LAB_STATIC_IP="$LAB_IP_BLINKY"
       RPI_STATIC_IP="$RPI_IP_BLINKY"
       AZURE_STATIC_IP="$AZURE_IP_BLINKY"
+      JACK_STATIC_IP="$JACK_IP_BLINKY"
       ;;
     pinky)
       LAB_STATIC_IP="$LAB_IP_PINKY"
@@ -170,6 +181,28 @@ network:
 EOF
 }
 
+write_netplan_jack() {
+  cat << EOF
+network:
+  version: 2
+  wifis:
+    wlan0:
+      dhcp4: false
+      addresses:
+        - ${JACK_STATIC_IP}/${JACK_PREFIX}
+      routes:
+        - to: default
+          via: ${JACK_GATEWAY}
+      nameservers:
+        addresses:
+          - ${JACK_GATEWAY}
+          - 8.8.8.8
+      access-points:
+        "${JACK_SSID}":
+          password: "${JACK_PASSWORD}"
+EOF
+}
+
 case "${1:-}" in
   lab)
     if [ "$(id -u)" -ne 0 ]; then
@@ -203,6 +236,17 @@ case "${1:-}" in
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
     echo "Switched to Azure (SSID ${AZURE_SSID}, static IP ${AZURE_STATIC_IP})."
+    ;;
+  jack)
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "Run with sudo for Jack: sudo $0 Jack"
+      exit 1
+    fi
+    set_robot_static_ips "${2:-$ROBOT_NAME}"
+    write_netplan_jack > "$NETPLAN_OVERRIDE"
+    chmod 600 "$NETPLAN_OVERRIDE"
+    netplan_apply_quiet
+    echo "Switched to Jack (SSID ${JACK_SSID}, static IP ${JACK_STATIC_IP})."
     ;;
   status)
     ssid=""
