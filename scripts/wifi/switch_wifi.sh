@@ -12,12 +12,12 @@
 #   /etc/netplan/50-cloud-init.yaml so this script's 99-wifi-switch.yaml
 #   is the only WiFi config (avoids "Duplicate access point SSID").
 #
-# Static IPs are chosen by current user (blinky / pinky / inky):
-#   SNS:      blinky -> 192.168.0.158,  pinky -> 192.168.0.194,  inky -> 192.168.0.139
-#   RaspAP:   blinky -> 10.3.141.220,   pinky -> 10.3.141.194,   inky -> 10.3.141.139
-#   Azure:    blinky -> 172.20.10.13,   pinky -> 172.20.10.14,   inky -> 172.20.10.15
+# Static IPs are chosen by current user (blinky / pinky / inky / clyde):
+#   SNS:      blinky -> 192.168.0.158,  pinky -> 192.168.0.194,  inky -> 192.168.0.139,  clyde -> 192.168.0.236
+#   RaspAP:   blinky -> 10.3.141.220,   pinky -> 10.3.141.194,   inky -> 10.3.141.139,  clyde -> 10.3.141.236
+#   Azure:    blinky -> 172.20.10.13,   pinky -> 172.20.10.14,   inky -> 172.20.10.15,   clyde -> 172.20.10.16
 # When run with sudo we use SUDO_USER so \"blinky\" user gets the blinky IPs.
-# Override with: $0 lab blinky / $0 lab inky / $0 rpi pinky or ROBOT_NAME=inky.
+# Override with: $0 lab blinky / $0 rpi pinky / $0 azure inky or ROBOT_NAME=clyde.
 #
 
 set -e
@@ -29,6 +29,7 @@ LAB_PREFIX="24"
 LAB_IP_BLINKY="192.168.0.158"
 LAB_IP_PINKY="192.168.0.194"
 LAB_IP_INKY="192.168.0.139"
+LAB_IP_CLYDE="192.168.0.236"
 
 # RaspAP WiFi (rpi) static IP config
 RPI_GATEWAY="10.3.141.1"
@@ -36,6 +37,7 @@ RPI_PREFIX="24"
 RPI_IP_BLINKY="10.3.141.220"
 RPI_IP_PINKY="10.3.141.194"
 RPI_IP_INKY="10.3.141.139"
+RPI_IP_CLYDE="10.3.141.236"
 
 # Azure Wifi static IP config
 AZURE_GATEWAY="172.20.10.1"
@@ -43,6 +45,7 @@ AZURE_PREFIX="28"
 AZURE_IP_BLINKY="172.20.10.13"
 AZURE_IP_PINKY="172.20.10.14"
 AZURE_IP_INKY="172.20.10.15"
+AZURE_IP_CLYDE="172.20.10.16"
 
 SNS_SSID="SNS"
 SNS_PASSWORD="sn5_rox!"
@@ -82,9 +85,14 @@ set_robot_static_ips() {
       RPI_STATIC_IP="$RPI_IP_INKY"
       AZURE_STATIC_IP="$AZURE_IP_INKY"
       ;;
+    clyde)
+      LAB_STATIC_IP="$LAB_IP_CLYDE"
+      RPI_STATIC_IP="$RPI_IP_CLYDE"
+      AZURE_STATIC_IP="$AZURE_IP_CLYDE"
+      ;;
     *)
       echo "Unknown robot: '$robot'. Current user is: $(get_robot_name)"
-      echo "Use: $0 {lab|rpi|azure} blinky   or   $0 {lab|rpi|azure} pinky   or   $0 {lab|rpi|azure} inky   (or set ROBOT_NAME=blinky/pinky/inky)"
+      echo "Use: $0 {lab|rpi|azure} {blinky|pinky|inky|clyde}   (or set ROBOT_NAME=…)"
       exit 1
       ;;
   esac
@@ -92,9 +100,9 @@ set_robot_static_ips() {
 
 usage() {
   echo "Usage: $0 { lab | azure | rpi | status } [robot]"
-  echo "  lab [blinky|pinky|inky]   - connect to SNS (static IP by robot)"
-  echo "  rpi [blinky|pinky|inky]   - connect to RaspAP (static IP by robot)"
-  echo "  azure [blinky|pinky|inky] - connect to Azure (static IP by robot)"
+  echo "  lab [blinky|pinky|inky|clyde]   - connect to SNS (static IP by robot)"
+  echo "  rpi [blinky|pinky|inky|clyde]   - connect to RaspAP (static IP by robot)"
+  echo "  azure [blinky|pinky|inky|clyde] - connect to Azure (static IP by robot)"
   echo "  status                    - show current WiFi (no sudo)"
   exit 1
 }

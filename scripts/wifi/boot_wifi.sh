@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Boot-time WiFi connection script: tries SNS (lab) first, then RaspAP (rpi), then Azure.
+# Boot-time WiFi connection script: tries SNS (lab) first, then Azure.
 #
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
-# It attempts to connect to SNS first, then RaspAP, and only switches to Azure if both are unavailable.
+# It attempts SNS first, then Azure if the lab network is unavailable.
 #
 # Usage: sudo ./scripts/wifi/boot_wifi.sh [robot]
-#   robot: optional robot name (blinky/pinky/inky). If not provided, detected from hostname.
+#   robot: optional robot name (blinky/pinky/inky/clyde). If not provided, detected from hostname.
 #
 
 set -e
@@ -17,7 +17,6 @@ SWITCH_WIFI_SCRIPT="${SCRIPT_DIR}/switch_wifi.sh"
 
 # Gateways for connectivity checks
 LAB_GATEWAY="192.168.0.1"
-RPI_GATEWAY="10.3.141.1"
 AZURE_GATEWAY="172.20.10.1"
 
 # Timeout for WiFi connection attempts (seconds)
@@ -124,20 +123,8 @@ main() {
     exit 0
   fi
   
-  # Step 2: SNS failed, try RaspAP (rpi)
-  echo "[boot_wifi] SNS connection failed, attempting RaspAP (rpi)..."
-  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" rpi "$robot_name"
-  
-  # Wait for connection to establish
-  if wait_for_connection "$RPI_GATEWAY" "$CONNECTION_TIMEOUT"; then
-    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
-    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    echo "[boot_wifi] Successfully connected to RaspAP (SSID: $current_ssid, IP: $current_ip)"
-    exit 0
-  fi
-  
-  # Step 3: SNS and RaspAP failed, try Azure
-  echo "[boot_wifi] SNS and RaspAP connections failed, attempting Azure..."
+  # Step 2: SNS failed, try Azure
+  echo "[boot_wifi] SNS connection failed, attempting Azure..."
   ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
   
   # Wait for connection to establish
@@ -149,7 +136,7 @@ main() {
   fi
   
   # All failed
-  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab), RaspAP (rpi), or Azure"
+  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab) or Azure"
   echo "[boot_wifi] ERROR: Please check your WiFi connections and try again."
   exit 1
 }

@@ -35,7 +35,7 @@ fi
 # Create the service file with the correct workspace path
 cat > "$TARGET_SERVICE" << EOF
 [Unit]
-Description=Boot WiFi Connection (SNS first, then RaspAP, then Azure fallback)
+Description=Boot WiFi Connection (SNS first, then Azure)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target
@@ -64,9 +64,26 @@ echo ""
 echo "To check status: sudo systemctl status $SERVICE_NAME"
 echo "To view logs: sudo journalctl -u $SERVICE_NAME"
 echo "To test now: sudo systemctl start $SERVICE_NAME"
+echo ""
+echo "Prereq: only one netplan file should configure wlan0. If \`switch_wifi.sh\` applies SNS/Azure,"
+echo "  remove the wifis/wlan0 block from /etc/netplan/50-cloud-init.yaml (see scripts/wifi/switch_wifi.sh"
+echo "  header), then: sudo netplan apply"
 
-# If the service is already running (or previously failed), restarting here makes the install
-# immediately effective without requiring a reboot.
-if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+netplan_ok=1
+netplan_out=$(netplan generate 2>&1) || netplan_ok=0
+if [ "$netplan_ok" -eq 0 ]; then
+  echo ""
+  echo "WARNING: netplan is currently invalid — boot WiFi will fail until this is fixed:"
+  echo "$netplan_out"
+  echo ""
+  echo "If you see 'Duplicate access point SSID', delete or comment out wlan0 under wifis in"
+  echo "  /etc/netplan/50-cloud-init.yaml so /etc/netplan/99-wifi-switch.yaml is the only WiFi config."
+fi
+
+# If the service is enabled, restart only when netplan is valid.
+if systemctl is-enabled --quiet "$SERVICE_NAME" && [ "$netplan_ok" -eq 1 ]; then
   systemctl restart "$SERVICE_NAME" || true
+elif systemctl is-enabled --quiet "$SERVICE_NAME"; then
+  echo ""
+  echo "Skipping: systemctl restart $SERVICE_NAME (fix netplan first, then: sudo systemctl start $SERVICE_NAME)"
 fi

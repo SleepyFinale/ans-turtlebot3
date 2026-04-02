@@ -27,7 +27,7 @@ Use this table when configuring a given robot. SSH using the hostname or IP for 
 | Blinky | blinky@192.168.0.158  | blinky@10.3.141.220 | blinky@172.20.10.13 |
 | Pinky  | pinky@192.168.0.194   | pinky@10.3.141.194  | pinky@172.20.10.14  |
 | Inky   | inky@192.168.0.139    | inky@10.3.141.139   | inky@172.20.10.15   |
-| Clyde  | `clyde@<IP>`          | `clyde@<IP>`        | `clyde@<IP>`        |
+| Clyde  | clyde@192.168.0.236   | clyde@10.3.141.236  | clyde@172.20.10.16  |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
@@ -35,7 +35,7 @@ Use this table when configuring a given robot. SSH using the hostname or IP for 
 
 When following this README, substitute your robot’s hostname/IP where indicated.
 
-For **multi-robot SLAM** (e.g. Blinky + Pinky), the central PC and all robots share are distinguished by per-robot namespaces (e.g. `/blinky`, `/pinky`). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
+For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), the central PC and all robots are distinguished by per-robot namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
 
 ---
 
@@ -232,6 +232,8 @@ When connected to the **SNS** lab Wi‑Fi, each robot uses a fixed IP (based on 
 
 - **Blinky** (user `blinky`) → `192.168.0.158`
 - **Pinky** (user `pinky`) → `192.168.0.194`
+- **Inky** (user `inky`) → `192.168.0.139`
+- **Clyde** (user `clyde`) → `192.168.0.236`
 
 Gateway for SNS is assumed to be `192.168.0.1` with prefix `/24`.
 
@@ -241,8 +243,21 @@ When connected to the **Azure** mobile hotspot, each robot also uses a fixed IP:
 
 - **Blinky** (user `blinky`) → `172.20.10.13/28`
 - **Pinky** (user `pinky`) → `172.20.10.14/28`
+- **Inky** (user `inky`) → `172.20.10.15/28`
+- **Clyde** (user `clyde`) → `172.20.10.16/28`
 
 Gateway for Azure is assumed to be `172.20.10.1` with prefix `/28` (typical iOS hotspot range).
+
+### Static IPs on RaspAP (SSID: RaspAP)
+
+When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/wifi/switch_wifi.sh`):
+
+- **Blinky** → `10.3.141.220`
+- **Pinky** → `10.3.141.194`
+- **Inky** → `10.3.141.139`
+- **Clyde** → `10.3.141.236`
+
+Gateway is assumed to be `10.3.141.1` with prefix `/24`.
 
 ### Usage
 
@@ -257,6 +272,9 @@ sudo ./scripts/wifi/switch_wifi.sh lab
 # Connect to Azure mobile hotspot with static IP (per robot/user)
 sudo ./scripts/wifi/switch_wifi.sh azure
 
+# Connect to RaspAP with static IP (per robot/user)
+sudo ./scripts/wifi/switch_wifi.sh rpi
+
 # Show current Wi‑Fi SSID and wlan0 IP
 ./scripts/wifi/switch_wifi.sh status
 ```
@@ -266,10 +284,14 @@ The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP.
 ```bash
 sudo ./scripts/wifi/switch_wifi.sh lab pinky
 sudo ./scripts/wifi/switch_wifi.sh lab blinky
+sudo ./scripts/wifi/switch_wifi.sh lab inky
+sudo ./scripts/wifi/switch_wifi.sh lab clyde
 
 # or
 ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh lab
 ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh lab
 ```
 
 You can use the same override pattern for Azure:
@@ -277,10 +299,14 @@ You can use the same override pattern for Azure:
 ```bash
 sudo ./scripts/wifi/switch_wifi.sh azure pinky
 sudo ./scripts/wifi/switch_wifi.sh azure blinky
+sudo ./scripts/wifi/switch_wifi.sh azure inky
+sudo ./scripts/wifi/switch_wifi.sh azure clyde
 
 # or
 ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh azure
 ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh azure
+ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh azure
+ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh azure
 ```
 
 If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
@@ -334,6 +360,8 @@ sudo ./scripts/wifi/boot_wifi.sh
 # or specify robot name explicitly:
 sudo ./scripts/wifi/boot_wifi.sh pinky
 sudo ./scripts/wifi/boot_wifi.sh blinky
+sudo ./scripts/wifi/boot_wifi.sh inky
+sudo ./scripts/wifi/boot_wifi.sh clyde
 ```
 
 **Disabling boot WiFi (if needed):**
@@ -377,7 +405,7 @@ source ~/.bashrc
 
 ### Multi-robot and central computer
 
-For **multi-robot SLAM** (e.g. Blinky + Pinky), the **central PC** and all robots are distinguished by their namespaces (e.g. `/blinky`, `/pinky`). Domain bridges are no longer required in the standard setup; see the central repo for the multi-robot SLAM workflow and diagnostic commands: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), the **central PC** and all robots are distinguished by their namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`). Domain bridges are no longer required in the standard setup; see the central repo for the multi-robot SLAM workflow and diagnostic commands: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
 
 To check TF and connectivity from the central PC, run (from the central workspace):  
 `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
@@ -387,7 +415,7 @@ To check TF and connectivity from the central PC, run (from the central workspac
 
 #### 1. Per-robot bringup with namespaces
 
-Use the standard bringup launch file in `turtlebot3_bringup`, which now **automatically determines the robot name and applies a matching namespace** (e.g. `/blinky`, `/pinky`):
+Use the standard bringup launch file in `turtlebot3_bringup`, which now **automatically determines the robot name and applies a matching namespace** (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`):
 
 ```bash
 source /opt/ros/humble/setup.bash
