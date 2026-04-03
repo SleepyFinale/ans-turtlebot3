@@ -64,12 +64,21 @@ DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
 def _rewrite_frame(d, key, old_val, new_val):
-    """Recursively find parameters matching key=old_val and replace with new_val."""
-    for k, v in list(d.items()):
-        if k == key and v == old_val:
-            d[k] = new_val
-        elif isinstance(v, dict):
-            _rewrite_frame(v, key, old_val, new_val)
+    """Recursively find parameters matching key=old_val and replace with new_val, including lists."""
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if k == key:
+                if isinstance(v, str):
+                    if v == old_val:
+                        d[k] = new_val
+                elif isinstance(v, list):
+                    d[k] = [new_val if item == old_val else item for item in v]
+            elif isinstance(v, dict) or isinstance(v, list):
+                _rewrite_frame(v, key, old_val, new_val)
+    elif isinstance(d, list):
+        for item in d:
+            if isinstance(item, dict) or isinstance(item, list):
+                _rewrite_frame(item, key, old_val, new_val)
 
 
 def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
@@ -106,10 +115,10 @@ def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
         ultra_abs = f'/{namespace}/ultrasonic_'
         ultra_list = ['l', 'f', 'r']
         for label in ultra_list:
-            _rewrite_frame(params, 'topic', '/ultrasonic_${label}', ultra_abs+label)
-            _rewrite_frame(params, 'topic', 'ultrasonic_${label}', ultra_abs+label)
-            _rewrite_frame(params, 'scan_topic', '/ultrasonic_${label}', ultra_abs+label)
-            _rewrite_frame(params, 'scan_topic', 'ultrasonic_${label}', ultra_abs+label)
+            _rewrite_frame(params, 'topics', f'/ultrasonic_{label}', ultra_abs+label)
+            _rewrite_frame(params, 'topics', f'ultrasonic_{label}', ultra_abs+label)
+            _rewrite_frame(params, 'range_topic', f'/ultrasonic_{label}', ultra_abs+label)
+            _rewrite_frame(params, 'range_topic', f'ultrasonic_{label}', ultra_abs+label)
         if not fleet_mode:
             # Standalone namespaced robot: SLAM map frame is {ns}/map.
             _rewrite_frame(params, 'global_frame', 'map',
