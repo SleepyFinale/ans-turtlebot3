@@ -1,7 +1,7 @@
 /**:
   ekf_filter_node:
     ros__parameters:
-      frequency: 20.0
+      frequency: 5.0
       sensor_timeout: 0.1
       two_d_mode: true
       transform_time_offset: 0.0
@@ -10,13 +10,13 @@
       print_diagnostics: true
       debug: false
 
-      publish_tf: true
+      publish_tf: false
       publish_acceleration: false
 
-      map_frame: "map"
-      odom_frame: "odom"
-      base_link_frame: "base_footprint"
-      world_frame: "odom"
+      map_frame: blinky/map
+      odom_frame: blinky/odom
+      base_link_frame: blinky/base_footprint
+      world_frame: blinky/odom
 
       # Wheel odometry input
       odom0: odom
@@ -32,9 +32,9 @@
       imu0: imu
       imu0_config: [false, false, false,
                     true,  true,  true,
-                    true, false, false,
+                    false, false, false,
                     true,  true,  true,
-                    true, true, false]
+                    true, true, true]
       imu0_differential: false
       imu0_relative: false
       imu0_remove_gravitational_acceleration: true

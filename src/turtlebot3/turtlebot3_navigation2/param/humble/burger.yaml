@@ -214,20 +214,34 @@ local_costmap:
       height: 3
       resolution: 0.05
       robot_radius: 0.15
-      plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "voxel_layer", "range_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Keep a safety halo while reducing over-inflation that can trap the
         # robot in "starting point in lethal space" states near walls/corners.
         inflation_radius: 0.35
         cost_scaling_factor: 4.0
+      range_layer:
+        plugin: "nav2_costmap_2d::RangeSensorLayer"
+        enabled: True
+
+        topics: ["ultrasonic_f", "ultrasonic_l", "ultrasonic_r"]
+
+        clear_threshold: 0.2
+        mark_threshold: 0.8
+
+        no_readings_timeout: 0.5
+
+        clear_on_max_reading: True
+
+        input_sensor_type: "ALL"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        observation_sources: ultrasonic 
+        observation_sources: scan 
         ultrasonic:
-          topic: ultrasonic
-          max_obstacle_height: 1.0
+          topic: scan_normalized
+          max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
@@ -277,21 +291,35 @@ global_costmap:
       robot_radius: 0.15
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "voxel_layer", "range_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        observation_sources: ultrasonic 
+        observation_sources: scan 
         ultrasonic:
-          topic: ultrasonic
+          topic: scan_normalized
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 0.5
-          raytrace_min_range: 0.12
-          obstacle_max_range: 0.5
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
           obstacle_min_range: 0.0
+      range_layer:
+        plugin: "nav2_costmap_2d::RangeSensorLayer"
+        enabled: True
+
+        topics: ["ultrasonic_f", "ultrasonic_l", "ultrasonic_r"]
+
+        clear_threshold: 0.2
+        mark_threshold: 0.8
+
+        no_readings_timeout: 0.5
+
+        clear_on_max_reading: True
+
+        input_sensor_type: "ALL"
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
