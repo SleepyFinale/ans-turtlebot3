@@ -191,7 +191,7 @@ void TurtleBot3::add_sensors()
   sensors_.push_back(
     new sensors::Ultrasonic(
       node_handle_,
-      "ultrasonic", "ultrasonic_scan_link"));
+      "ultrasonic", "ultrasonic_link"));
   
   sensors_.push_back(
     new sensors::SensorState(

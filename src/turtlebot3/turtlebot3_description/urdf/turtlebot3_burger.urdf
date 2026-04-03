@@ -212,4 +212,20 @@
     <origin xyz="-0.032 0 0.01" rpy="0 0 0"/>
   </joint>
 
+  <xacro:property name="radius" value="0.12"/>
+
+  <xacro:macro name="ultrasonic_sensor" params="name angle">
+    <link name="${namespace}ultrasonic_link_${name}"/>
+    <joint name="${namespace}ultrasonic_joint_${name}" type="fixed">
+      <parent link="${namespace}ultrasonic_scan_link"/>
+      <child link="${namespace}ultrasonic_link_${name}"/>
+      <origin xyz="${radius*cos(angle)} ${radius*sin(angle)} 0"
+              rpy="0 0 ${angle}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:ultrasonic_sensor name="front" angle="0.0"/>
+  <xacro:ultrasonic_sensor name="left" angle="1.57"/>
+  <xacro:ultrasonic_sensor name="right" angle="-1.57"/>
+
 </robot>
