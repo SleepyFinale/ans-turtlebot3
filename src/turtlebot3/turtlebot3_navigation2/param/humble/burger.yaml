@@ -225,7 +225,7 @@ local_costmap:
         plugin: "nav2_costmap_2d::RangeSensorLayer"
         enabled: True
 
-        topics: ["ultrasonic_f", "ultrasonic_l", "ultrasonic_r"]
+        topics: [ultrasonic_f, ultrasonic_l, ultrasonic_r]
 
         clear_threshold: 0.2
         mark_threshold: 0.8
@@ -310,7 +310,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::RangeSensorLayer"
         enabled: True
 
-        topics: ["ultrasonic_f", "ultrasonic_l", "ultrasonic_r"]
+        topics: [ultrasonic_f, ultrasonic_l, ultrasonic_r]
 
         clear_threshold: 0.2
         mark_threshold: 0.8
