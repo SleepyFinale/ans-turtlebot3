@@ -113,9 +113,16 @@ def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
             _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
             _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
 
-    # Behavior trees: omit default_nav_to_pose_bt_xml / default_nav_through_poses_bt_xml
-    # so bt_navigator uses Nav2's stock trees (include backup recovery). Params already
-    # list the BackUp plugin under recoveries_server.
+    # Use a custom navigate-to-pose tree that proactively clears costmaps
+    # around planner/controller failures and keeps backup/spin/wait recoveries.
+    bt_tree_path = os.path.join(
+        get_package_share_directory('turtlebot3_navigation2'),
+        'behavior_trees',
+        'navigate_to_pose_w_replanning_and_recovery_with_lethal_escape.xml',
+    )
+    bt_nav_params = params.get('bt_navigator', {}).get('ros__parameters', {})
+    if isinstance(bt_nav_params, dict):
+        bt_nav_params['default_bt_xml_filename'] = bt_tree_path
 
     fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
     with os.fdopen(fd, 'w') as f:
@@ -131,6 +138,7 @@ def _launch_setup(context):
     params_file = LaunchConfiguration('params_file').perform(context)
     wait_for_tf_str = LaunchConfiguration('wait_for_tf').perform(context)
     enable_debug_logging_str = LaunchConfiguration('enable_debug_logging').perform(context)
+    enable_lethal_watch_str = LaunchConfiguration('enable_lethal_watch').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
@@ -358,6 +366,28 @@ def _launch_setup(context):
         condition=IfCondition(enable_debug_logging_str),
     ))
 
+    # --- Publish whether the robot is in Nav2 lethal costmap space ---
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='nav2_lethal_watch.py',
+        name='nav2_lethal_watch',
+        namespace=ns if ns else None,
+        parameters=[{
+            'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
+            'map_frame': (
+                'map' if fleet_active or not ns else f'{ns}/map'),
+            'base_frame': (
+                f'{ns}/base_footprint' if ns else 'base_footprint'),
+            'costmap_topic': 'global_costmap/costmap',
+            'publish_topic': 'nav2_lethal_inflation',
+            'lethal_cost_threshold': 100,
+            'publish_hz': 4.0,
+        }],
+        remappings=tf_remappings,
+        output='screen',
+        condition=IfCondition(enable_lethal_watch_str),
+    ))
+
     # --- RViz (optional) ---
     if use_rviz_str.lower() == 'true':
         # RViz config uses absolute topic names like `/map` and `/map_updates`.
@@ -429,6 +459,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'debug_log_rate_hz', default_value='5.0',
             description='Debug logger sampling rate in Hz'),
+        DeclareLaunchArgument(
+            'enable_lethal_watch', default_value='true',
+            description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
         DeclareLaunchArgument(
             'fleet_mode', default_value='auto',
             description=('Fleet topology mode: false=standalone namespaced map/TF, '
