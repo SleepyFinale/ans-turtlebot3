@@ -194,6 +194,8 @@ def _launch_setup(context):
     normalizer_params = {
         'input_topic': 'scan',
         'output_topic': 'scan_normalized',
+        'range_topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
+        'range_frame_ids': ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right']
     }
     if ns:
         normalizer_params['frame_id_prefix'] = ns
@@ -204,6 +206,7 @@ def _launch_setup(context):
         name='laser_scan_normalizer',
         namespace=ns if ns else None,
         parameters=[normalizer_params],
+        remappings=tf_remappings,
         output='screen',
     ))
 
