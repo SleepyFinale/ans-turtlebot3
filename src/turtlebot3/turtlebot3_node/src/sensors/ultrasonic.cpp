@@ -20,8 +20,7 @@
 #include <string>
 #include <utility>
 
-int logCount = 0;
-extern float ult_cmd_vel[2];
+
 using robotis::turtlebot3::sensors::Ultrasonic;
 
 Ultrasonic::Ultrasonic(
@@ -53,7 +52,6 @@ void Ultrasonic::publish(
   auto ultrasonic_msg = std::make_unique<sensor_msgs::msg::Range>();
   float sdist[3];
   const float coneAngle = 15 * (3.145926/180);
-  const float turnThreshold = 30;
 
   sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_l.addr,
@@ -64,16 +62,6 @@ void Ultrasonic::publish(
   sdist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_r.addr,
     extern_control_table.ultrasonic_r.length);
-
-  if (logCount >= 10) {
-    logCount = 0;
-    RCLCPP_INFO(
-      nh_->get_logger(),
-      "[ultrasonic_msg] cmd_vel: %.3f %.3f",
-      abs(ult_cmd_vel[0]), abs(ult_cmd_vel[1]));
-  } else {
-    logCount++;
-  }
   
   auto make_range_msg = [&](float dist, const std::string & msg_frame_id)
   {
@@ -90,7 +78,7 @@ void Ultrasonic::publish(
     msg.max_range = 3.0;
 
     // Handle invalid readings
-    if (dist <= msg.min_range || dist > msg.max_range || turnThreshold <= abs(ult_cmd_vel[1]))
+    if (dist <= msg.min_range || dist > msg.max_range)
     {
       msg.range = msg.max_range;  // treat as "no obstacle"
     }

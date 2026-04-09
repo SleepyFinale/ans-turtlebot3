@@ -9,6 +9,9 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Range
+import tf2_ros
+import math
 
 
 class LaserScanNormalizer(Node):
@@ -26,12 +29,23 @@ class LaserScanNormalizer(Node):
         # For multi-robot: prefix for frame_id (e.g. "blinky" -> "blinky/base_scan"). Empty = use original.
         self.declare_parameter('frame_id_prefix', '')
         
+        # ultrasonic sensor topics
+        self.declare_parameter('range_topics', [''])
+        self.declare_parameter('range_frame_ids', [''])
+
         target_readings = self.get_parameter('target_readings').value
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value
         self.publish_every_n = self.get_parameter('publish_every_n_scans').value
         self._frame_id_prefix = self.get_parameter('frame_id_prefix').value
+        self._range_topics = self.get_parameter('range_topics').value
+        self._range_frame_ids = self.get_parameter('range_frame_ids').value
         self._scan_counter = 0
+
+        self._range_subs = []
+        self._range_msgs = []
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
         # Subscribe to the original scan with sensor QoS (best effort, volatile)
         from rclpy.qos import qos_profile_sensor_data
@@ -41,6 +55,17 @@ class LaserScanNormalizer(Node):
             self.scan_callback,
             qos_profile_sensor_data
         )
+
+        for topic in self._range_topics:
+            self._range_subs.append(
+                self.create_subscription(
+                Range,
+                topic,
+                self.range_callback,
+                qos_profile_sensor_data
+                )
+            )
+            self._range_msgs.append(None)
         
         # Publish the normalized scan with sensor QoS
         self.publisher = self.create_publisher(
@@ -54,6 +79,11 @@ class LaserScanNormalizer(Node):
             f'Laser scan normalizer started: {input_topic} -> {output_topic} '
             f'(normalizing to {target_readings} readings, publishing every {self.publish_every_n} scan(s))'
         )
+    
+    def range_callback(self, msg):
+        topic_index = self._range_frame_ids.index(msg.header.frame_id.replace(self._frame_id_prefix + '/',''))
+        if topic_index != -1:
+            self._range_msgs[topic_index] = msg
     
     def scan_callback(self, msg):
         # Throttle: only process and publish every Nth scan to reduce SLAM message filter queue overflow
@@ -155,6 +185,57 @@ class LaserScanNormalizer(Node):
         angle_span = msg.angle_max - msg.angle_min
         normalized_msg.angle_increment = angle_span / (self.target_readings - 1) if self.target_readings > 1 else msg.angle_increment
         
+        # add in ultrasonic ranges
+        for range_msg in self._range_msgs:
+            if range_msg is None:
+                continue
+
+            # ignore invalid readings
+            if range_msg.range < range_msg.min_range or range_msg.range > range_msg.max_range:
+                continue
+
+            try:
+                tf = self.tf_buffer.lookup_transform(
+                    self._frame_id_prefix + '/base_scan',
+                    range_msg.header.frame_id,
+                    rclpy.time.Time()
+                )
+            except Exception as e:
+                self.get_logger().warn(f"TF lookup failed: {e}")
+                continue
+
+            # --- sensor position ---
+            sx = tf.transform.translation.x
+            sy = tf.transform.translation.y
+
+            # --- get yaw from quaternion ---
+            q = tf.transform.rotation
+            yaw = math.atan2(
+                2.0 * (q.w * q.z + q.x * q.y),
+                1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            )
+
+            # --- project obstacle point into base_scan ---
+            r = range_msg.range
+
+            ox = sx + r * math.cos(yaw)
+            oy = sy + r * math.sin(yaw)
+
+            # --- convert to polar (angle + distance) ---
+            angle = math.atan2(oy, ox)
+            dist = math.sqrt(ox**2 + oy**2)
+
+            # --- map angle to LaserScan index ---
+            index = int((angle - normalized_msg.angle_min) / normalized_msg.angle_increment)
+
+            # --- bounds check ---
+            if 0 <= index < len(normalized_msg.ranges):
+                # keep closest obstacle (important!)
+                if math.isinf(normalized_msg.ranges[index]) or dist < normalized_msg.ranges[index]:
+                    normalized_msg.ranges[index] = dist
+
+            
+
         # CRITICAL: Verify we have exactly the target number of readings
         # This is a safety check - the code above should always produce exactly target_readings
         if len(normalized_msg.ranges) != self.target_readings:

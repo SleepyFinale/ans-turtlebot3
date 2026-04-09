@@ -22,8 +22,6 @@
 using robotis::turtlebot3::TurtleBot3;
 using namespace std::chrono_literals;
 
-float ult_cmd_vel[2];
-
 TurtleBot3::TurtleBot3(const std::string & usb_port)
 : Node("turtlebot3_node", rclcpp::NodeOptions().use_intra_process_comms(true))
 {
@@ -359,9 +357,6 @@ void TurtleBot3::cmd_vel_callback()
         data.dword[4] = 0;
         data.dword[5] = static_cast<int32_t>(msg->angular.z * 100);
 
-        ult_cmd_vel[0] = data.dword[0];
-        ult_cmd_vel[1] = data.dword[5];
-
         uint16_t start_addr = extern_control_table.cmd_velocity_linear_x.addr;
         uint16_t addr_length =
         (extern_control_table.cmd_velocity_angular_z.addr -
@@ -393,9 +388,6 @@ void TurtleBot3::cmd_vel_callback()
         data.dword[3] = 0;
         data.dword[4] = 0;
         data.dword[5] = static_cast<int32_t>(msg->twist.angular.z * 100);
-
-        ult_cmd_vel[0] = data.dword[0];
-        ult_cmd_vel[1] = data.dword[5];
 
         uint16_t start_addr = extern_control_table.cmd_velocity_linear_x.addr;
         uint16_t addr_length =
