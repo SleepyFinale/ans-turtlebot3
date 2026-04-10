@@ -208,31 +208,50 @@ class LaserScanNormalizer(Node):
             sx = tf.transform.translation.x
             sy = tf.transform.translation.y
 
-            # --- get yaw from quaternion ---
+            # --- yaw from quaternion ---
             q = tf.transform.rotation
             yaw = math.atan2(
                 2.0 * (q.w * q.z + q.x * q.y),
                 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
             )
 
-            # --- project obstacle point into base_scan ---
+            # --- range ---
             r = range_msg.range
 
+            # --- center of detection in base_scan frame ---
             ox = sx + r * math.cos(yaw)
             oy = sy + r * math.sin(yaw)
 
-            # --- convert to polar (angle + distance) ---
-            angle = math.atan2(oy, ox)
+            angle_center = math.atan2(oy, ox)
             dist = math.sqrt(ox**2 + oy**2)
 
-            # --- map angle to LaserScan index ---
-            index = int((angle - normalized_msg.angle_min) / normalized_msg.angle_increment)
+            # --- FOV spreading ---
+            fov = getattr(range_msg, "field_of_view", 0.2)  # fallback if missing
+            half_fov = fov * 0.5
 
-            # --- bounds check ---
-            if 0 <= index < len(normalized_msg.ranges):
-                # keep closest obstacle (important!)
-                if math.isinf(normalized_msg.ranges[index]) or dist < normalized_msg.ranges[index]:
-                    normalized_msg.ranges[index] = dist
+            # convert angular spread → scan index spread
+            angle_min = normalized_msg.angle_min
+            angle_inc = normalized_msg.angle_increment
+            scan_len = len(normalized_msg.ranges)
+
+            # convert bounds in angle space
+            start_angle = angle_center - half_fov
+            end_angle = angle_center + half_fov
+
+            start_idx = int((start_angle - angle_min) / angle_inc)
+            end_idx = int((end_angle - angle_min) / angle_inc)
+
+            # clamp
+            start_idx = max(0, start_idx)
+            end_idx = min(scan_len - 1, end_idx)
+
+            # --- fill cone ---
+            for i in range(start_idx, end_idx + 1):
+                # optional: taper edges (more realistic)
+                normalized_msg.ranges[i] = min(
+                    normalized_msg.ranges[i],
+                    dist
+                ) if not math.isinf(normalized_msg.ranges[i]) else dist
 
             
 

@@ -74,7 +74,7 @@ void Ultrasonic::publish(
 
     msg.field_of_view = coneAngle;
 
-    msg.min_range = 0.03;
+    msg.min_range = 0.00;
     msg.max_range = 3.0;
 
     // Handle invalid readings
