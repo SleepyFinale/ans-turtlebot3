@@ -214,36 +214,13 @@ local_costmap:
       height: 3
       resolution: 0.05
       robot_radius: 0.15
-      plugins: ["obstacle_layer", "range_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Keep a safety halo while reducing over-inflation that can trap the
         # robot in "starting point in lethal space" states near walls/corners.
         inflation_radius: 0.3
         cost_scaling_factor: 4.0
-      range_layer:
-        plugin: "nav2_costmap_2d::RangeSensorLayer"
-        enabled: True
-
-        topics: [ultrasonic_f, ultrasonic_l, ultrasonic_r]
-
-        clear_on_max_reading: True
-        no_readings_timeout: 0.1   # faster clearing when sensor direction changes
-
-        # --- Probability thresholds ---
-        mark_threshold: 0.85       # only mark strong detections
-        clear_threshold: 0.7       # clear aggressively
-
-        # --- Angular behavior (KEY FOR ARTIFACTS) ---
-        phi: 0.1                  # tight angular falloff → reduces smearing
-        inflate_cone: 0.0         # disable extra spreading (important!)
-
-        # --- Sensor model ---
-        input_sensor_type: "ALL"
-
-        # --- Optional but useful ---
-        # Keeps updates local to sensor range
-        range_max: 3.0
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -281,7 +258,7 @@ global_costmap:
       robot_radius: 0.15
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "range_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -296,29 +273,6 @@ global_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
-      range_layer:
-        plugin: "nav2_costmap_2d::RangeSensorLayer"
-        enabled: False
-
-        topics: [ultrasonic_f, ultrasonic_l, ultrasonic_r]
-
-        clear_on_max_reading: True
-        no_readings_timeout: 0.1   # faster clearing when sensor direction changes
-
-        # --- Probability thresholds ---
-        mark_threshold: 0.99       # only mark strong detections
-        clear_threshold: 0.7       # clear aggressively
-
-        # --- Angular behavior (KEY FOR ARTIFACTS) ---
-        phi: 0.1                 # tight angular falloff → reduces smearing
-        inflate_cone: 0.0         # disable extra spreading (important!)
-
-        # --- Sensor model ---
-        input_sensor_type: "ALL"
-
-        # --- Optional but useful ---
-        # Keeps updates local to sensor range
-        range_max: 3.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
