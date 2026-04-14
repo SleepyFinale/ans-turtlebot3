@@ -1,5 +1,5 @@
 [Unit]
-Description=Boot WiFi Connection (SNS first, then Azure)
+Description=Boot WiFi Connection (SNS, then Starlink, then Azure)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target

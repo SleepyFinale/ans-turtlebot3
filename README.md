@@ -22,12 +22,12 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 Use this table when configuring a given robot. SSH using the hostname or IP for that robot. All robots and any Remote PCs or central computers talking to them should share **ROS_DOMAIN_ID=50**.
 
-| Robot  | Lab (SSID: SNS)       | RaspAP (rpi)        | Azure (SSID: Azure) |
-| ------ | --------------------- | ------------------- | --------------------|
-| Blinky | blinky@192.168.0.158  | blinky@10.3.141.220 | blinky@172.20.10.13 |
-| Pinky  | pinky@192.168.0.194   | pinky@10.3.141.194  | pinky@172.20.10.14  |
-| Inky   | inky@192.168.0.139    | inky@10.3.141.139   | inky@172.20.10.15   |
-| Clyde  | clyde@192.168.0.236   | clyde@10.3.141.236  | clyde@172.20.10.16  |
+| Robot  | SNS (lab)             | ANS_starlink (star)  | RaspAP (rpi)        | Azure (azure)       |
+| ------ | --------------------- | -------------------- | ------------------- | --------------------|
+| Blinky | blinky@192.168.0.158  | blinky@192.168.1.158 | blinky@10.3.141.158 | blinky@172.20.10.13 |
+| Pinky  | pinky@192.168.0.194   | pinky@192.168.1.194  | pinky@10.3.141.194  | pinky@172.20.10.14  |
+| Inky   | inky@192.168.0.139    | inky@192.168.1.139   | inky@10.3.141.139   | inky@172.20.10.15   |
+| Clyde  | clyde@192.168.0.236   | clyde@192.168.1.236  | clyde@10.3.141.236  | clyde@172.20.10.16  |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
@@ -235,29 +235,32 @@ When connected to the **SNS** lab Wi‑Fi, each robot uses a fixed IP (based on 
 - **Inky** (user `inky`) → `192.168.0.139`
 - **Clyde** (user `clyde`) → `192.168.0.236`
 
-Gateway for SNS is assumed to be `192.168.0.1` with prefix `/24`.
+### Static IPs on the ANS_starlink star Wi‑Fi
 
-### Static IPs on the Azure hotspot
+When connected to **ANS_starlink**, each robot uses the same **last octet** as on the SNS lab network, on subnet `192.168.1.0/24`:
+
+- **Blinky** (user `blinky`) → `192.168.1.158`
+- **Pinky** (user `pinky`) → `192.168.1.194`
+- **Inky** (user `inky`) → `192.168.1.139`
+- **Clyde** (user `clyde`) → `192.168.1.236`
+
+### Static IPs on the Azure azure hotspot
 
 When connected to the **Azure** mobile hotspot, each robot also uses a fixed IP:
 
-- **Blinky** (user `blinky`) → `172.20.10.13/28`
-- **Pinky** (user `pinky`) → `172.20.10.14/28`
-- **Inky** (user `inky`) → `172.20.10.15/28`
-- **Clyde** (user `clyde`) → `172.20.10.16/28`
+- **Blinky** (user `blinky`) → `172.20.10.13`
+- **Pinky** (user `pinky`) → `172.20.10.14`
+- **Inky** (user `inky`) → `172.20.10.15`
+- **Clyde** (user `clyde`) → `172.20.10.16`
 
-Gateway for Azure is assumed to be `172.20.10.1` with prefix `/28` (typical iOS hotspot range).
-
-### Static IPs on RaspAP (SSID: RaspAP)
+### Static IPs on RaspAP rpi Wi-Fi
 
 When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/wifi/switch_wifi.sh`):
 
-- **Blinky** → `10.3.141.220`
+- **Blinky** → `10.3.141.158`
 - **Pinky** → `10.3.141.194`
 - **Inky** → `10.3.141.139`
 - **Clyde** → `10.3.141.236`
-
-Gateway is assumed to be `10.3.141.1` with prefix `/24`.
 
 ### Usage
 
@@ -268,6 +271,9 @@ cd ~/turtlebot3_ws
 
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
 sudo ./scripts/wifi/switch_wifi.sh lab
+
+# Connect to Starlink (ANS_starlink) with static IP (per robot/user)
+sudo ./scripts/wifi/switch_wifi.sh star
 
 # Connect to Azure mobile hotspot with static IP (per robot/user)
 sudo ./scripts/wifi/switch_wifi.sh azure
@@ -294,22 +300,7 @@ ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh lab
 ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh lab
 ```
 
-You can use the same override pattern for Azure:
-
-```bash
-sudo ./scripts/wifi/switch_wifi.sh azure pinky
-sudo ./scripts/wifi/switch_wifi.sh azure blinky
-sudo ./scripts/wifi/switch_wifi.sh azure inky
-sudo ./scripts/wifi/switch_wifi.sh azure clyde
-
-# or
-ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh azure
-ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh azure
-ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh azure
-ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh azure
-```
-
-If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
+If you change the SNS, ANS_starlink, RaspAP, or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
 
 ### Automatic WiFi connection on boot (`scripts/wifi/boot_wifi.sh`)
 
@@ -317,9 +308,10 @@ To prevent the robot from being stuck without WiFi when it boots (e.g., if it wa
 
 **Behavior:**
 
-- On boot, the robot **first attempts to connect to SNS (lab WiFi)**
-- If SNS is unavailable or connection fails, it **automatically falls back to Azure (hotspot)**
-- This ensures the robot can connect to WiFi even if the hotspot is not nearby when it boots
+- On boot, the robot **first attempts to connect to SNS (lab)**.
+- If that fails, it tries **ANS_starlink (star)**.
+- If that fails, it tries **Azure (azure)**.
+- This order helps the robot come up on lab or field WiFi before relying on the phone hotspot.
 
 **Installation (one-time setup per robot):**
 
@@ -331,8 +323,8 @@ sudo ./scripts/wifi/install_boot_wifi.sh
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
 
 - Detects the robot name from the hostname
-- Attempts to connect to SNS first (waits up to 30 seconds)
-- If SNS fails, switches to Azure and waits for connection
+- Attempts SNS first (waits up to 30 seconds per network)
+- Then ANS_starlink, then Azure, each with the same timeout behavior
 - Logs all connection attempts to the systemd journal
 
 **Checking boot WiFi status:**
@@ -582,7 +574,7 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 
 #### What gets recorded
 
-- Raw topics (bag): map, map updates, global costmap, global costmap updates, plan, cmd_vel, cmd_vel_nav, odom, tf, action status/feedback/result.
+- Raw topics (bag): map, map updates, local/global costmap (+ updates), plan, cmd_vel, cmd_vel_nav, odom, tf, action status/feedback/result, and /rosout.
 - Derived JSONL metrics (at `debug_log_rate_hz`):
   - robot pose in map frame
   - robot costmap cell value at current pose
@@ -599,3 +591,37 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 - `robot_in_high_cost_while_plan_low_cost`: local execution diverged from what the global plan/costmap suggested.
 - `forward_cmd_in_high_cost`: motion command remained forward while the robot was already in high-cost area.
 - Compare `cmd_vel_nav` vs `cmd_vel` vs `odom_twist` to separate planner/controller intent from robot motion response.
+
+#### Stop-while-active analyzer (bag only)
+
+Use this when a robot appears to "freeze" while Nav2 still has an active goal:
+
+```bash
+cd ~/turtlebot3_ws
+python3 scripts/analyze_nav2_bag_stop.py \
+  logs/<robot>/bag-YYYYmmdd-HHMMSS \
+  --robot <robot> \
+  --start <unix_start_s> \
+  --end <unix_end_s>
+```
+
+What this flags:
+
+- plan still exists (`plan_poses` above threshold),
+- controller commands rotate-only / near-zero linear velocity,
+- odom linear speed remains near zero,
+- `distance_remaining` trend across the interval.
+
+#### Rosout clue extractor (same bag window)
+
+Use this on the stop interval to pull likely controller/planner reasons from `/rosout`:
+
+```bash
+cd ~/turtlebot3_ws
+python3 scripts/analyze_nav2_bag_rosout.py \
+  logs/<robot>/bag-YYYYmmdd-HHMMSS \
+  --start <interval_start_unix_s> \
+  --end <interval_end_unix_s>
+```
+
+Tip: pair this with the interval printed by `analyze_nav2_bag_stop.py`.
