@@ -34,6 +34,9 @@ echo ""
 ros2 bag record -o "$BAG_OUT" \
   "/${ROBOT_NAME}/map" \
   "/${ROBOT_NAME}/map_updates" \
+  "/${ROBOT_NAME}/local_costmap/costmap" \
+  "/${ROBOT_NAME}/local_costmap/costmap_raw" \
+  "/${ROBOT_NAME}/local_costmap/costmap_updates" \
   "/${ROBOT_NAME}/global_costmap/costmap_raw" \
   "/${ROBOT_NAME}/global_costmap/costmap_updates" \
   "/${ROBOT_NAME}/plan" \
@@ -46,4 +49,5 @@ ros2 bag record -o "$BAG_OUT" \
   "/${ROBOT_NAME}/navigate_to_pose/_action/feedback" \
   "/${ROBOT_NAME}/navigate_to_pose/_action/result" \
   "/${ROBOT_NAME}/goal_pose" \
+  "/rosout" \
   --include-hidden-topics
