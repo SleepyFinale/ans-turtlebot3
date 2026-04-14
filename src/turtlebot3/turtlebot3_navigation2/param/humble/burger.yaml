@@ -236,7 +236,7 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          raytrace_max_range: 3.5
           raytrace_min_range: 0.12
           obstacle_max_range: 2.5
           obstacle_min_range: 0.12
@@ -280,7 +280,7 @@ global_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          raytrace_max_range: 3.5
           raytrace_min_range: 0.12
           obstacle_max_range: 2.5
           obstacle_min_range: 0.12
@@ -292,7 +292,7 @@ global_costmap:
         map_topic: "/map"
         map_subscribe_transient_local: True
         subscribe_to_updates: True  # Enable incremental map updates for faster map updates
-        use_maximum: false  # Use overwrite to preserve unknown space for frontier detection
+        use_maximum: true  # Use overwrite to preserve unknown space for frontier detection
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Balanced inflation: keep global plans off walls and corners without
@@ -331,14 +331,16 @@ planner_server:
       # NavFn can produce: "Failed to create a plan from potential when a legal potential was found"
       # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
       plugin: "nav2_smac_planner/SmacPlanner2D"
-      tolerance: 0.5
+      tolerance: 1.5
+      downsample_costmap: false
+      use_final_approach_orientation: true
+      max_on_approach_iterations: 5000 
       # Stronger avoidance of inflated / high-cost cells (2D Smac); steers paths
       # through open corridors when a detour exists. Tune 2.0–3.5 if needed.
-      cost_travel_multiplier: 2.75
+      cost_travel_multiplier: 1.25
       # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
-      max_on_approach_iterations: 1000
       smooth_path: true
 
 planner_server_rclcpp_node:
@@ -353,10 +355,17 @@ recoveries_server:
     recovery_plugins: ["spin", "backup", "wait"]
     spin:
       plugin: "nav2_recoveries/Spin"
+      spin_dist: 1.2
     backup:
       plugin: "nav2_recoveries/BackUp"
+      backup_dist: 0.20
+      backup_speed: 0.06
+      # If your robot radius is 0.12, setting this slightly smaller 
+      # allows it to move even if it's "touching" a lethal cell.
+      simulated_footprint_radius: 0.10 
     wait:
       plugin: "nav2_recoveries/Wait"
+      wait_duration: 2.0
     global_frame: odom
     robot_base_frame: base_footprint
     # Increased transform timeout for SLAM (map->odom transforms may have slight delays)
@@ -374,10 +383,14 @@ behavior_server:
     behavior_plugins: ["spin", "backup", "wait"]
     spin:
       plugin: "nav2_behaviors/Spin"
+      spin_dist: 1.2
     backup:
       plugin: "nav2_behaviors/BackUp"
+      backup_dist: 0.20
+      backup_speed: 0.06
     wait:
       plugin: "nav2_behaviors/Wait"
+      wait_duration: 2.0
     global_frame: odom
     robot_base_frame: base_footprint
     transform_tolerance: 1.5

@@ -7,13 +7,18 @@
     <RecoveryNode number_of_retries="6" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
-          <RecoveryNode number_of_retries="2" name="ComputePathToPose">
+          <RecoveryNode number_of_retries="3" name="ComputePathToPose">
             <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-            <Sequence name="ClearGlobalThenRetryPlan">
+            <Sequence name="EscapeLethalThenRetryPlan">
+              <BackUp backup_dist="0.18" backup_speed="0.06"/>
+              <Wait wait_duration="0.3"/>
+              <ClearEntireCostmap
+                name="ClearLocalCostmap-PlanRetry"
+                service_name="local_costmap/clear_entirely_local_costmap"/>
               <ClearEntireCostmap
                 name="ClearGlobalCostmap-Context"
                 service_name="global_costmap/clear_entirely_global_costmap"/>
-              <Wait wait_duration="0.4"/>
+              <Wait wait_duration="0.5"/>
             </Sequence>
           </RecoveryNode>
         </RateController>
