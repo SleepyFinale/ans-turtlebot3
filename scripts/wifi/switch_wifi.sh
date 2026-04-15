@@ -14,10 +14,10 @@
 #   is the only WiFi config (avoids "Duplicate access point SSID").
 #
 # Static IPs are chosen by current user (blinky / pinky / inky / clyde):
-#   lab:    blinky@192.168.0.158, pinky@192.168.0.194, inky@192.168.0.139, clyde@192.168.0.236
-#   star:   blinky@192.168.1.158, pinky@192.168.1.194, inky@192.168.1.139, clyde@192.168.1.236
-#   rpi:    blinky@10.3.141.158, pinky@10.3.141.194, inky@10.3.141.139, clyde@10.3.141.236
-#   azure:  blinky@172.20.10.13, pinky@172.20.10.14, inky@172.20.10.15, clyde@172.20.10.16
+#   lab:    blinky@192.168.0.158, pinky@192.168.0.194,  inky@192.168.0.139, clyde@192.168.0.236
+#   star:   blinky@192.168.1.158, pinky@192.168.1.194,  inky@192.168.1.139, clyde@192.168.1.236
+#   rpi:    blinky@10.3.141.158,  pinky@10.3.141.194,   inky@10.3.141.139,  clyde@10.3.141.236
+#   azure:  blinky@172.20.10.13,  pinky@172.20.10.14,   inky@172.20.10.15,  clyde@172.20.10.16
 # When run with sudo we use SUDO_USER so \"blinky\" user gets the blinky IPs.
 # Override with: $0 lab blinky / $0 star pinky / $0 rpi inky / $0 azure clyde or ROBOT_NAME=….
 #
