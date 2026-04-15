@@ -1,9 +1,10 @@
 #!/bin/bash
 #
-# Switch Raspberry Pi WiFi between SNS (lab), RaspAP (rpi), and Azure.
+# Switch Raspberry Pi WiFi between SNS (lab), Starlink (star), RaspAP (rpi), and Azure.
 #
 # Usage:
 #   sudo ./scripts/wifi/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
+#   sudo ./scripts/wifi/switch_wifi.sh star      # ANS_starlink WiFi with static IP (per robot/user)
 #   sudo ./scripts/wifi/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
 #   sudo ./scripts/wifi/switch_wifi.sh azure     # Azure hotspot with static IP (per robot/user)
 #   ./scripts/wifi/switch_wifi.sh status         # show current WiFi (no sudo)
@@ -12,12 +13,13 @@
 #   /etc/netplan/50-cloud-init.yaml so this script's 99-wifi-switch.yaml
 #   is the only WiFi config (avoids "Duplicate access point SSID").
 #
-# Static IPs are chosen by current user (blinky / pinky / inky):
-#   SNS:      blinky -> 192.168.0.158,  pinky -> 192.168.0.194,  inky -> 192.168.0.139
-#   RaspAP:   blinky -> 10.3.141.220,   pinky -> 10.3.141.194,   inky -> 10.3.141.139
-#   Azure:    blinky -> 172.20.10.13,   pinky -> 172.20.10.14,   inky -> 172.20.10.15
+# Static IPs are chosen by current user (blinky / pinky / inky / clyde):
+#   lab:    blinky@192.168.0.158, pinky@192.168.0.194,  inky@192.168.0.139, clyde@192.168.0.236
+#   star:   blinky@192.168.1.158, pinky@192.168.1.194,  inky@192.168.1.139, clyde@192.168.1.236
+#   rpi:    blinky@10.3.141.158,  pinky@10.3.141.194,   inky@10.3.141.139,  clyde@10.3.141.236
+#   azure:  blinky@172.20.10.13,  pinky@172.20.10.14,   inky@172.20.10.15,  clyde@172.20.10.16
 # When run with sudo we use SUDO_USER so \"blinky\" user gets the blinky IPs.
-# Override with: $0 lab blinky / $0 lab inky / $0 rpi pinky or ROBOT_NAME=inky.
+# Override with: $0 lab blinky / $0 star pinky / $0 rpi inky / $0 azure clyde or ROBOT_NAME=….
 #
 
 set -e
@@ -29,13 +31,15 @@ LAB_PREFIX="24"
 LAB_IP_BLINKY="192.168.0.158"
 LAB_IP_PINKY="192.168.0.194"
 LAB_IP_INKY="192.168.0.139"
+LAB_IP_CLYDE="192.168.0.236"
 
 # RaspAP WiFi (rpi) static IP config
 RPI_GATEWAY="10.3.141.1"
 RPI_PREFIX="24"
-RPI_IP_BLINKY="10.3.141.220"
+RPI_IP_BLINKY="10.3.141.158"
 RPI_IP_PINKY="10.3.141.194"
 RPI_IP_INKY="10.3.141.139"
+RPI_IP_CLYDE="10.3.141.236"
 
 # Azure Wifi static IP config
 AZURE_GATEWAY="172.20.10.1"
@@ -43,13 +47,15 @@ AZURE_PREFIX="28"
 AZURE_IP_BLINKY="172.20.10.13"
 AZURE_IP_PINKY="172.20.10.14"
 AZURE_IP_INKY="172.20.10.15"
+AZURE_IP_CLYDE="172.20.10.16"
 
-# Jack Wifi static IP config
-JACK_GATEWAY="172.20.10.1"
-JACK_PREFIX="28"
-JACK_IP_BLINKY="172.20.10.5"
-JACK_IP_PINKY="172.20.10.6"
-JACK_IP_INKY="172.20.10.7"
+# Starlink WiFi (star) static IP config
+STAR_GATEWAY="192.168.1.1"
+STAR_PREFIX="24"
+STAR_IP_BLINKY="192.168.1.158"
+STAR_IP_PINKY="192.168.1.194"
+STAR_IP_INKY="192.168.1.139"
+STAR_IP_CLYDE="192.168.1.236"
 
 SNS_SSID="SNS"
 SNS_PASSWORD="sn5_rox!"
@@ -60,8 +66,8 @@ RASPAP_PASSWORD="sn5_rox!"
 AZURE_SSID="Azure"
 AZURE_PASSWORD="howdoyouwanttodothis"
 
-JACK_SSID="jack_iphone"
-JACK_PASSWORD="Cjames123!"
+STAR_SSID="ANS_starlink"
+STAR_PASSWORD="an5_rox!"
 
 # Resolve robot name: current user (when using sudo we use SUDO_USER), or ROBOT_NAME env or second argument
 get_robot_name() {
@@ -71,7 +77,7 @@ get_robot_name() {
   echo "${name:-}"
 }
 
-# Set per-robot static IPs for SNS, RaspAP, and Azure. Exits if unknown robot.
+# Set per-robot static IPs for SNS, Starlink, RaspAP, and Azure. Exits if unknown robot.
 set_robot_static_ips() {
   local robot
   robot="${1:-$(get_robot_name)}"
@@ -79,33 +85,42 @@ set_robot_static_ips() {
   case "$robot" in
     blinky)
       LAB_STATIC_IP="$LAB_IP_BLINKY"
+      STAR_STATIC_IP="$STAR_IP_BLINKY"
       RPI_STATIC_IP="$RPI_IP_BLINKY"
       AZURE_STATIC_IP="$AZURE_IP_BLINKY"
-      JACK_STATIC_IP="$JACK_IP_BLINKY"
       ;;
     pinky)
       LAB_STATIC_IP="$LAB_IP_PINKY"
+      STAR_STATIC_IP="$STAR_IP_PINKY"
       RPI_STATIC_IP="$RPI_IP_PINKY"
       AZURE_STATIC_IP="$AZURE_IP_PINKY"
       ;;
     inky)
       LAB_STATIC_IP="$LAB_IP_INKY"
+      STAR_STATIC_IP="$STAR_IP_INKY"
       RPI_STATIC_IP="$RPI_IP_INKY"
       AZURE_STATIC_IP="$AZURE_IP_INKY"
       ;;
+    clyde)
+      LAB_STATIC_IP="$LAB_IP_CLYDE"
+      STAR_STATIC_IP="$STAR_IP_CLYDE"
+      RPI_STATIC_IP="$RPI_IP_CLYDE"
+      AZURE_STATIC_IP="$AZURE_IP_CLYDE"
+      ;;
     *)
       echo "Unknown robot: '$robot'. Current user is: $(get_robot_name)"
-      echo "Use: $0 {lab|rpi|azure} blinky   or   $0 {lab|rpi|azure} pinky   or   $0 {lab|rpi|azure} inky   (or set ROBOT_NAME=blinky/pinky/inky)"
+      echo "Use: $0 {lab|star|rpi|azure} {blinky|pinky|inky|clyde}   (or set ROBOT_NAME=…)"
       exit 1
       ;;
   esac
 }
 
 usage() {
-  echo "Usage: $0 { lab | azure | rpi | status } [robot]"
-  echo "  lab [blinky|pinky|inky]   - connect to SNS (static IP by robot)"
-  echo "  rpi [blinky|pinky|inky]   - connect to RaspAP (static IP by robot)"
-  echo "  azure [blinky|pinky|inky] - connect to Azure (static IP by robot)"
+  echo "Usage: $0 { lab | star | azure | rpi | status } [robot]"
+  echo "  lab [blinky|pinky|inky|clyde]   - connect to SNS (static IP by robot)"
+  echo "  star [blinky|pinky|inky|clyde]  - connect to ANS_starlink (static IP by robot)"
+  echo "  rpi [blinky|pinky|inky|clyde]   - connect to RaspAP (static IP by robot)"
+  echo "  azure [blinky|pinky|inky|clyde] - connect to Azure (static IP by robot)"
   echo "  status                    - show current WiFi (no sudo)"
   exit 1
 }
@@ -181,7 +196,7 @@ network:
 EOF
 }
 
-write_netplan_jack() {
+write_netplan_star() {
   cat << EOF
 network:
   version: 2
@@ -189,17 +204,17 @@ network:
     wlan0:
       dhcp4: false
       addresses:
-        - ${JACK_STATIC_IP}/${JACK_PREFIX}
+        - ${STAR_STATIC_IP}/${STAR_PREFIX}
       routes:
         - to: default
-          via: ${JACK_GATEWAY}
+          via: ${STAR_GATEWAY}
       nameservers:
         addresses:
-          - ${JACK_GATEWAY}
+          - ${STAR_GATEWAY}
           - 8.8.8.8
       access-points:
-        "${JACK_SSID}":
-          password: "${JACK_PASSWORD}"
+        "${STAR_SSID}":
+          password: "${STAR_PASSWORD}"
 EOF
 }
 
@@ -214,6 +229,17 @@ case "${1:-}" in
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
     echo "Switched to SNS (SSID ${SNS_SSID}, static IP ${LAB_STATIC_IP})."
+    ;;
+  star)
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "Run with sudo for Starlink: sudo $0 star"
+      exit 1
+    fi
+    set_robot_static_ips "${2:-$ROBOT_NAME}"
+    write_netplan_star > "$NETPLAN_OVERRIDE"
+    chmod 600 "$NETPLAN_OVERRIDE"
+    netplan_apply_quiet
+    echo "Switched to Starlink (SSID ${STAR_SSID}, static IP ${STAR_STATIC_IP})."
     ;;
   rpi)
     if [ "$(id -u)" -ne 0 ]; then
@@ -236,17 +262,6 @@ case "${1:-}" in
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
     echo "Switched to Azure (SSID ${AZURE_SSID}, static IP ${AZURE_STATIC_IP})."
-    ;;
-  jack)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for Jack: sudo $0 Jack"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_jack > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to Jack (SSID ${JACK_SSID}, static IP ${JACK_STATIC_IP})."
     ;;
   status)
     ssid=""
