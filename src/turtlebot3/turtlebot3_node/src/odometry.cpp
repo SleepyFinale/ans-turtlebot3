@@ -187,19 +187,19 @@ void Odometry::publish(const rclcpp::Time & now)
   odom_msg->twist.twist.angular.z = robot_vel_[2];
 
   // TODO(Will Son): Find more accurate covariance.
-  // odom_msg->pose.covariance[0] = 0.05;
-  // odom_msg->pose.covariance[7] = 0.05;
-  // odom_msg->pose.covariance[14] = 1.0e-9;
-  // odom_msg->pose.covariance[21] = 1.0e-9;
-  // odom_msg->pose.covariance[28] = 1.0e-9;
-  // odom_msg->pose.covariance[35] = 0.0872665;
+  odom_msg->pose.covariance[0] = 0.01;
+  odom_msg->pose.covariance[7] = 0.01;
+  odom_msg->pose.covariance[14] = 1.0e9;
+  odom_msg->pose.covariance[21] = 1.0e9;
+  odom_msg->pose.covariance[28] = 1.0e9;
+  odom_msg->pose.covariance[35] = 0.0872665;
 
-  // odom_msg->twist.covariance[0] = 0.001;
-  // odom_msg->twist.covariance[7] = 1.0e-9;
-  // odom_msg->twist.covariance[14] = 1.0e-9;
-  // odom_msg->twist.covariance[21] = 1.0e-9;
-  // odom_msg->twist.covariance[28] = 1.0e-9;
-  // odom_msg->twist.covariance[35] = 0.001;
+  odom_msg->twist.covariance[0] = 0.001;
+  odom_msg->twist.covariance[7] = 1.0e9;
+  odom_msg->twist.covariance[14] = 1.0e9;
+  odom_msg->twist.covariance[21] = 1.0e9;
+  odom_msg->twist.covariance[28] = 1.0e9;
+  odom_msg->twist.covariance[35] = 0.001;
 
   geometry_msgs::msg::TransformStamped odom_tf;
 
