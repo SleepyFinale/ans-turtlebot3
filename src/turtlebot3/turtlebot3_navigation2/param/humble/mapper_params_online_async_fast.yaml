@@ -39,7 +39,7 @@ slam_toolbox:
     # Balance CPU load with responsiveness; allow more frequent processing when the robot is moving
     minimum_time_interval: 0.30
     transform_timeout: 0.25  # Increased timeout to handle TF delays better
-    tf_buffer_duration: 30.
+    tf_buffer_duration: 30.0
     stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
     enable_interactive_mode: true
 
