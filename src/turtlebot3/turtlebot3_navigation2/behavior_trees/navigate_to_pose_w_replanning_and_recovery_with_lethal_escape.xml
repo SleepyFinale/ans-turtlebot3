@@ -10,7 +10,15 @@
           <RecoveryNode number_of_retries="3" name="ComputePathToPose">
             <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
             <Sequence name="EscapeLethalThenRetryPlan">
+              <ClearEntireCostmap
+                name="ClearLocalCostmap-PreEscape"
+                service_name="local_costmap/clear_entirely_local_costmap"/>
+              <ClearEntireCostmap
+                name="ClearGlobalCostmap-PreEscape"
+                service_name="global_costmap/clear_entirely_global_costmap"/>
+              <Wait wait_duration="0.2"/>
               <BackUp backup_dist="0.18" backup_speed="0.06"/>
+              <Spin spin_dist="0.6"/>
               <Wait wait_duration="0.3"/>
               <ClearEntireCostmap
                 name="ClearLocalCostmap-PlanRetry"
@@ -18,16 +26,20 @@
               <ClearEntireCostmap
                 name="ClearGlobalCostmap-Context"
                 service_name="global_costmap/clear_entirely_global_costmap"/>
-              <Wait wait_duration="0.5"/>
+              <Wait wait_duration="0.6"/>
             </Sequence>
           </RecoveryNode>
         </RateController>
         <RecoveryNode number_of_retries="2" name="FollowPath">
           <FollowPath path="{path}" controller_id="FollowPath"/>
           <Sequence name="ClearLocalThenRetryControl">
+            <BackUp backup_dist="0.10" backup_speed="0.05"/>
             <ClearEntireCostmap
               name="ClearLocalCostmap-Context"
               service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-ControlRetry"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
             <Wait wait_duration="0.4"/>
           </Sequence>
         </RecoveryNode>

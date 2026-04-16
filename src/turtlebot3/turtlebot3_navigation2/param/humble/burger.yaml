@@ -292,7 +292,9 @@ global_costmap:
         map_topic: "/map"
         map_subscribe_transient_local: True
         subscribe_to_updates: True  # Enable incremental map updates for faster map updates
-        use_maximum: true  # Use overwrite to preserve unknown space for frontier detection
+        # Avoid sticky lethal cells during live SLAM updates; latest map update
+        # should overwrite stale high-cost artifacts around the robot.
+        use_maximum: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Balanced inflation: keep global plans off walls and corners without
