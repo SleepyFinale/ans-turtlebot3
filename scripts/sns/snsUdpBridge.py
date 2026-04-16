@@ -7,6 +7,8 @@ import threading
 import queue
 from datetime import datetime
 import math
+import os
+import getpass
 
 from sensor_msgs.msg import BatteryState
 from nav_msgs.msg import Odometry
@@ -15,21 +17,50 @@ from geometry_msgs.msg import Twist
 # -----------------------------
 # Config
 # -----------------------------
-PI4_LAN_IP = "192.168.0.194"
 LOGSTASH_IP = "192.168.0.76"
 LOGSTASH_PORT = 5045
-
-ROBOT_NAME = "pinky"
-
 QUEUE_SIZE = 5000
 
+def get_robot_name():
+    # Uses original user if launched with sudo, otherwise normal whoami
+    return os.getenv("SUDO_USER") or getpass.getuser()
+
+ROBOT_NAME = get_robot_name()
+
+# Real ROS topics on the robot
+BATTERY_TOPIC = f'/{ROBOT_NAME}/battery_state'
+ODOM_TOPIC = f'/{ROBOT_NAME}/odom'
+CMD_VEL_TOPIC = f'/{ROBOT_NAME}/cmd_vel'
+
 THROTTLE = {
-    "/pinky/odom": 0.1,
-    "/pinky/battery_state": 5.0,
-    "/pinky/cmd_vel": 0.1,
+    BATTERY_TOPIC: 5.0,
+    ODOM_TOPIC: 0.1,
+    CMD_VEL_TOPIC: 0.1,
 }
 
 # -----------------------------
+def get_local_ip_for_destination(dest_ip, dest_port):
+    """
+    Figure out which local IP this robot would use to reach Logstash.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((dest_ip, dest_port))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+def strip_namespace(topic, robot_name):
+    """
+    Convert /inky/odom -> /odom
+    Convert /pinky/cmd_vel -> /cmd_vel
+    """
+    prefix = f'/{robot_name}'
+    if topic.startswith(prefix):
+        cleaned = topic[len(prefix):]
+        return cleaned if cleaned else "/"
+    return topic
+
 def quaternion_to_euler(o):
     sinr_cosp = 2 * (o.w * o.x + o.y * o.z)
     cosr_cosp = 1 - 2 * (o.x * o.x + o.y * o.y)
@@ -49,17 +80,22 @@ class LogstashPublisher(Node):
     def __init__(self):
         super().__init__('ros2_logstash_bridge')
 
-        # ✅ UDP socket
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.robot_name = ROBOT_NAME
+        self.local_ip = get_local_ip_for_destination(LOGSTASH_IP, LOGSTASH_PORT)
 
-        # Allow reuse (safe for ROS2 coexistence)
+        # UDP socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # Bind to LAN interface only (prevents DDS issues)
-        self.sock.bind((PI4_LAN_IP, 0))  # 0 = OS chooses source port
+        # Bind to the correct local interface automatically
+        self.sock.bind((self.local_ip, 0))
 
+        self.get_logger().info(f"Robot name: {self.robot_name}")
+        self.get_logger().info(f"Subscribing to: {BATTERY_TOPIC}")
+        self.get_logger().info(f"Subscribing to: {ODOM_TOPIC}")
+        self.get_logger().info(f"Subscribing to: {CMD_VEL_TOPIC}")
         self.get_logger().info(
-            f"UDP socket bound to {PI4_LAN_IP}, sending to {LOGSTASH_IP}:{LOGSTASH_PORT}"
+            f"UDP socket bound to {self.local_ip}, sending to {LOGSTASH_IP}:{LOGSTASH_PORT}"
         )
 
         self.queue = queue.Queue(maxsize=QUEUE_SIZE)
@@ -71,10 +107,10 @@ class LogstashPublisher(Node):
         )
         self.sender_thread.start()
 
-        # Subscriptions
-        self.create_subscription(BatteryState, '/pinky/battery_state', self.battery_cb, 10)
-        self.create_subscription(Odometry, '/pinky/odom', self.odom_cb, 10)
-        self.create_subscription(Twist, '/pinky/cmd_vel', self.cmd_vel_cb, 10)
+        # Subscriptions use actual ROS namespaced topics
+        self.create_subscription(BatteryState, BATTERY_TOPIC, self.battery_cb, 10)
+        self.create_subscription(Odometry, ODOM_TOPIC, self.odom_cb, 10)
+        self.create_subscription(Twist, CMD_VEL_TOPIC, self.cmd_vel_cb, 10)
 
     # -----------------------------
     def allowed(self, topic):
@@ -89,10 +125,11 @@ class LogstashPublisher(Node):
         if not self.allowed(topic):
             return
 
-        clean_topic = topic.replace(f"/{ROBOT_NAME}", "", 1)
+        clean_topic = strip_namespace(topic, self.robot_name)
+
         event = {
             "@timestamp": datetime.utcnow().isoformat() + "Z",
-            "robot": ROBOT_NAME,
+            "robot": self.robot_name,
             "topic": clean_topic,
             "data": data
         }
@@ -100,14 +137,13 @@ class LogstashPublisher(Node):
         try:
             self.queue.put_nowait(event)
         except queue.Full:
-            self.get_logger().warn("Queue full — dropping message")
+            self.get_logger().warn("Queue full - dropping message")
 
     def sender_loop(self):
         while True:
             event = self.queue.get()
             try:
                 payload = (json.dumps(event) + "\n").encode()
-                print("SENDING:", event)
                 self.sock.sendto(payload, (LOGSTASH_IP, LOGSTASH_PORT))
             except Exception as e:
                 self.get_logger().error(f"UDP send failed: {e}")
@@ -115,7 +151,7 @@ class LogstashPublisher(Node):
     # -----------------------------
     # Callbacks
     def battery_cb(self, msg):
-        self.enqueue("/pinky/battery_state", {
+        self.enqueue(BATTERY_TOPIC, {
             "voltage": msg.voltage,
             "current": msg.current,
             "percentage": msg.percentage,
@@ -130,7 +166,7 @@ class LogstashPublisher(Node):
 
         euler = quaternion_to_euler(o)
 
-        self.enqueue("/pinky/odom", {
+        self.enqueue(ODOM_TOPIC, {
             "pos": [p.x, p.y, p.z],
             "ori": euler,
             "lin_vel": [t.x, t.y, t.z],
@@ -138,7 +174,7 @@ class LogstashPublisher(Node):
         })
 
     def cmd_vel_cb(self, msg):
-        self.enqueue("/pinky/cmd_vel", {
+        self.enqueue(CMD_VEL_TOPIC, {
             "linear": [msg.linear.x, msg.linear.y, msg.linear.z],
             "angular": [msg.angular.x, msg.angular.y, msg.angular.z]
         })

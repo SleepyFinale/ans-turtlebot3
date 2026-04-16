@@ -144,6 +144,8 @@ def _launch_setup(context):
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
     auto_fleet_wait_timeout_str = LaunchConfiguration(
         'auto_fleet_wait_timeout_sec').perform(context)
+    auto_fleet_tf_max_age_str = LaunchConfiguration(
+        'auto_fleet_tf_max_age_sec').perform(context)
     use_central_tf_map_str = LaunchConfiguration('use_central_tf_map').perform(
         context)
 
@@ -263,6 +265,7 @@ def _launch_setup(context):
     # --- Wait for TF ---
     wait_tf_env = dict(os.environ)
     wait_tf_env['TF_WAIT_ODOM_ONLY'] = 'true'
+    wait_tf_env['TF_WAIT_STABLE_SAMPLES'] = '2'
     if ns:
         wait_tf_env['TF_WAIT_ODOM_FRAME'] = f'{ns}/odom'
         wait_tf_env['TF_WAIT_BASE_FRAMES'] = f'{ns}/base_footprint,{ns}/base_link'
@@ -312,6 +315,8 @@ def _launch_setup(context):
         auto_wait_env = dict(os.environ)
         auto_wait_env['TF_WAIT_ODOM_ONLY'] = 'false'
         auto_wait_env['TF_WAIT_TIMEOUT_SEC'] = auto_fleet_wait_timeout_str
+        auto_wait_env['TF_WAIT_MAX_AGE_SEC'] = auto_fleet_tf_max_age_str
+        auto_wait_env['TF_WAIT_STABLE_SAMPLES'] = '3'
         auto_wait_env['TF_WAIT_MAP_FRAME'] = 'map'
         auto_wait_env['TF_WAIT_ODOM_FRAME'] = f'{ns}/odom'
         auto_wait_env['TF_WAIT_BASE_FRAMES'] = (
@@ -471,6 +476,11 @@ def generate_launch_description():
             'auto_fleet_wait_timeout_sec', default_value='300.0',
             description=('When fleet_mode=auto, max seconds to wait for central '
                          'global TF/map before proceeding.')),
+        DeclareLaunchArgument(
+            'auto_fleet_tf_max_age_sec', default_value='0.6',
+            description=('When fleet_mode=auto, require fresh global TF '
+                         '(map->odom and odom->base) age <= this value. '
+                         'Set <= 0 to disable freshness gating.')),
         DeclareLaunchArgument(
             'use_central_tf_map', default_value='false',
             description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),

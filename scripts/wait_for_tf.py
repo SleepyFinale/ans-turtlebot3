@@ -69,6 +69,37 @@ class TfWaiter(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
         return False
 
+    def wait_for_fresh(
+        self,
+        target: str,
+        source: str,
+        timeout_sec: float,
+        max_age_sec: float,
+        stable_samples: int,
+    ) -> bool:
+        """Wait until transform exists and is fresh for N consecutive checks."""
+        start = time.time()
+        fresh_ok = 0
+        while rclpy.ok() and (time.time() - start) < timeout_sec:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            try:
+                t = self._buffer.lookup_transform(
+                    target, source, rclpy.time.Time())
+            except Exception:
+                fresh_ok = 0
+                continue
+
+            stamp = float(t.header.stamp.sec) + (float(t.header.stamp.nanosec) / 1e9)
+            now = self.get_clock().now().nanoseconds / 1e9
+            age = max(0.0, now - stamp)
+            if age <= max_age_sec:
+                fresh_ok += 1
+                if fresh_ok >= max(1, stable_samples):
+                    return True
+            else:
+                fresh_ok = 0
+        return False
+
 
 def main() -> int:
     map_frame = os.environ.get("TF_WAIT_MAP_FRAME", "map")
@@ -77,6 +108,8 @@ def main() -> int:
     timeout = float(os.environ.get("TF_WAIT_TIMEOUT_SEC", "30.0"))
     odom_only = os.environ.get("TF_WAIT_ODOM_ONLY", "false").lower() in ("1", "true", "yes")
     namespace = os.environ.get("TF_WAIT_NAMESPACE", "")
+    max_age_sec = float(os.environ.get("TF_WAIT_MAX_AGE_SEC", "0.0"))
+    stable_samples = int(os.environ.get("TF_WAIT_STABLE_SAMPLES", "1"))
 
     rclpy.init()
     node = TfWaiter(namespace=namespace)
@@ -94,8 +127,21 @@ def main() -> int:
             )
 
         if not odom_only:
-            if not node.wait_for(map_frame, odom_frame, timeout_sec=timeout):
-                node.get_logger().error(f"Timed out waiting for TF {map_frame} -> {odom_frame}")
+            if max_age_sec > 0.0:
+                ok = node.wait_for_fresh(
+                    map_frame,
+                    odom_frame,
+                    timeout_sec=timeout,
+                    max_age_sec=max_age_sec,
+                    stable_samples=stable_samples,
+                )
+            else:
+                ok = node.wait_for(map_frame, odom_frame, timeout_sec=timeout)
+            if not ok:
+                node.get_logger().error(
+                    f"Timed out waiting for fresh TF {map_frame} -> {odom_frame} "
+                    f"(max_age_sec={max_age_sec}, stable_samples={stable_samples})"
+                )
                 return 1
 
         ok_base = False
@@ -103,7 +149,17 @@ def main() -> int:
             base = base.strip()
             if not base:
                 continue
-            if node.wait_for(odom_frame, base, timeout_sec=timeout):
+            if max_age_sec > 0.0:
+                ok = node.wait_for_fresh(
+                    odom_frame,
+                    base,
+                    timeout_sec=timeout,
+                    max_age_sec=max_age_sec,
+                    stable_samples=stable_samples,
+                )
+            else:
+                ok = node.wait_for(odom_frame, base, timeout_sec=timeout)
+            if ok:
                 node.get_logger().info(f"TF ready: {odom_frame} -> {base}")
                 ok_base = True
                 break
