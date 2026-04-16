@@ -4,5 +4,5 @@ install/
 log/
 logs/
 __pycache__/
-
+scripts/sns/snsUdpBridge.py
 .cursor/
