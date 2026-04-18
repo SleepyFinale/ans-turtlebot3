@@ -27,6 +27,9 @@ slam_toolbox:
     #map_start_at_dock: true
 
     debug_logging: false
+    # tf2_ros::MessageFilter queue for scan+odom TF (default in node is 1). At 1, any
+    # CPU spike (Nav2 composition, Wi-Fi, map relay) causes "queue is full" scan drops.
+    scan_queue_size: 40
     # Throttle scans to reduce queue overflow when TF isn't ready or processing is slow
     # Process every scan (1 = no throttle)
     throttle_scans: 1

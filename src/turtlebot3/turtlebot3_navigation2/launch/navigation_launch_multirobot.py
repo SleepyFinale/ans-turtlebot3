@@ -9,7 +9,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode, ParameterFile
@@ -28,18 +28,27 @@ def generate_launch_description():
     container_name_full = (namespace, '/', container_name)
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
+    nav_map_topic = LaunchConfiguration('nav_map_topic')
+    nav_map_updates_topic = LaunchConfiguration('nav_map_updates_topic')
+    use_isolated_container = LaunchConfiguration('use_isolated_container')
 
     lifecycle_nodes = [
         'controller_server', 'smoother_server', 'planner_server',
         'behavior_server', 'bt_navigator', 'waypoint_follower', 'velocity_smoother'
     ]
 
+    # bond_timeout <= 0 disables bond heartbeats (nav2_lifecycle_manager). With
+    # component_container, preshutdown order is undefined: a node can destroy its bond
+    # before the manager stops the bond timer — spurious CRITICAL FAILURE, conflicting
+    # lifecycle transitions, and teardown SIGSEGV (-11).
+    lifecycle_manager_extra_params = {'bond_timeout': 0.0}
+
     # Namespaced nodes default to /<ns>/tf (no world map -> ns/map). Use global
     # /tf from the central relay + map_merge (or single-robot map bridge).
     # Map: merged /map on the central PC when map_merge runs.
     remappings = [
         ('tf', '/tf'), ('tf_static', '/tf_static'),
-        ('map', '/map'), ('map_updates', '/map_updates'),
+        ('map', nav_map_topic), ('map_updates', nav_map_updates_topic),
     ]
 
     param_substitutions = {'use_sim_time': use_sim_time, 'autostart': autostart}
@@ -65,9 +74,71 @@ def generate_launch_description():
     ld.add_action(DeclareLaunchArgument('container_name', default_value='nav2_container'))
     ld.add_action(DeclareLaunchArgument('use_respawn', default_value='False'))
     ld.add_action(DeclareLaunchArgument('log_level', default_value='info'))
+    ld.add_action(DeclareLaunchArgument(
+        'nav_map_topic', default_value='/map',
+        description='Absolute topic Nav2 subscribes to for OccupancyGrid (e.g. /map_relay when throttling)'))
+    ld.add_action(DeclareLaunchArgument(
+        'nav_map_updates_topic', default_value='/map_updates',
+        description='Absolute topic for map_updates remapping'))
+    container_sigterm_timeout = LaunchConfiguration('container_sigterm_timeout')
+    container_sigkill_timeout = LaunchConfiguration('container_sigkill_timeout')
+    ld.add_action(DeclareLaunchArgument(
+        'container_sigterm_timeout',
+        default_value='30',
+        description=(
+            'Seconds after SIGINT before launch sends SIGTERM to the Nav2 '
+            'component container (lifecycle shutdown is serialized; default '
+            'launch 5s is often too short).')))
+    ld.add_action(DeclareLaunchArgument(
+        'container_sigkill_timeout',
+        default_value='45',
+        description=(
+            'Seconds after SIGTERM before launch sends SIGKILL to the Nav2 '
+            'component container.')))
+    ld.add_action(DeclareLaunchArgument(
+        'use_isolated_container',
+        default_value='false',
+        description=(
+            'If true, use component_container_isolated (per-component executors). '
+            'If false (default), use component_container — avoids known hangs on '
+            'Ctrl+C where the isolated manager never exits after Nav2 cleanup '
+            '(see ros2/rclcpp#2083 / #2085).')))
+
+    # rclcpp component container when use_composition is true. Default is
+    # component_container, not *_isolated, for reliable process exit on shutdown.
+    container_common = dict(
+        package='rclcpp_components',
+        name=container_name,
+        parameters=[configured_params, {'autostart': autostart}],
+        arguments=['--ros-args', '--log-level', log_level],
+        remappings=[('tf', '/tf'), ('tf_static', '/tf_static')],
+        output='screen',
+        sigterm_timeout=container_sigterm_timeout,
+        sigkill_timeout=container_sigkill_timeout,
+    )
+    ld.add_action(Node(
+        condition=IfCondition(PythonExpression([
+            "(", "'", use_composition,
+            "'.strip().lower() in ('true', '1', 'yes')) and not (",
+            "'", use_isolated_container,
+            "'.strip().lower() in ('true', '1', 'yes'))",
+        ])),
+        executable='component_container',
+        **container_common,
+    ))
+    ld.add_action(Node(
+        condition=IfCondition(PythonExpression([
+            "(", "'", use_composition,
+            "'.strip().lower() in ('true', '1', 'yes')) and (",
+            "'", use_isolated_container,
+            "'.strip().lower() in ('true', '1', 'yes'))",
+        ])),
+        executable='component_container_isolated',
+        **container_common,
+    ))
 
     load_nodes = GroupAction(
-        condition=IfCondition(PythonExpression(['not ', use_composition])),
+        condition=UnlessCondition(use_composition),
         actions=[
             Node(package='nav2_controller', executable='controller_server', output='screen',
                  respawn=use_respawn, respawn_delay=2.0, parameters=[configured_params],
@@ -106,8 +177,12 @@ def generate_launch_description():
             Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
                  name='lifecycle_manager_navigation', output='screen',
                  arguments=['--ros-args', '--log-level', log_level],
-                 parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
-                             'node_names': lifecycle_nodes}]),
+                 parameters=[{
+                     'use_sim_time': use_sim_time,
+                     'autostart': autostart,
+                     'node_names': lifecycle_nodes,
+                     **lifecycle_manager_extra_params,
+                 }]),
         ])
 
     load_composable_nodes = LoadComposableNodes(
@@ -141,8 +216,12 @@ def generate_launch_description():
             ComposableNode(package='nav2_lifecycle_manager',
                           plugin='nav2_lifecycle_manager::LifecycleManager',
                           name='lifecycle_manager_navigation',
-                          parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
-                                      'node_names': lifecycle_nodes}]),
+                          parameters=[{
+                              'use_sim_time': use_sim_time,
+                              'autostart': autostart,
+                              'node_names': lifecycle_nodes,
+                              **lifecycle_manager_extra_params,
+                          }]),
         ])
 
     ld.add_action(load_nodes)

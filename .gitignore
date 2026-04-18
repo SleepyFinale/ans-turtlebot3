@@ -8,3 +8,5 @@ __pycache__/
 scripts/wifi/netplan-wpa-wlan0.log
 
 .cursor/
+
+/scripts/monitor/logs/

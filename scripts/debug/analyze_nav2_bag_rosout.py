@@ -40,7 +40,8 @@ def main() -> None:
     ap.add_argument(
         "--node-filter",
         default="controller_server,planner_server,bt_navigator,behavior_server,recoveries_server,velocity_smoother,local_costmap,global_costmap",
-        help="Comma-separated node names to include",
+        help="Comma-separated substrings; a log row is kept if node name contains any token "
+        "(e.g. controller_server matches pinky.controller_server). Empty string = all nodes.",
     )
     ap.add_argument("--show-all", action="store_true", help="Show all matching-node logs, not just keyword hits")
     args = ap.parse_args()
@@ -48,7 +49,8 @@ def main() -> None:
     if args.end <= args.start:
         raise SystemExit("--end must be greater than --start")
 
-    node_allow = {n.strip() for n in args.node_filter.split(",") if n.strip()}
+    # Substring match: e.g. "controller_server" matches "pinky.controller_server"
+    node_allow = tuple(n.strip() for n in args.node_filter.split(",") if n.strip())
     msg_cls = get_message("rcl_interfaces/msg/Log")
 
     reader = SequentialReader()
@@ -70,7 +72,7 @@ def main() -> None:
             continue
         m = deserialize_message(data, msg_cls)
         node_name = str(m.name)
-        if node_allow and node_name not in node_allow:
+        if node_allow and not any(token in node_name for token in node_allow):
             continue
         text = str(m.msg)
         if args.show_all or _match(text):
