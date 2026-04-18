@@ -5,4 +5,6 @@ log/
 logs/
 __pycache__/
 
+scripts/wifi/netplan-wpa-wlan0.log
+
 .cursor/

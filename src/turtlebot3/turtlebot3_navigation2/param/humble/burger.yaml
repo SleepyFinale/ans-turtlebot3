@@ -74,7 +74,7 @@ bt_navigator:
     bt_loop_duration: 50
     # Allow slower action/service acknowledgements under load.
     default_server_timeout: 100
-    enable_groot_monitoring: True
+    enable_groot_monitoring: False # Was true, possibly caused TF timestamp mismatches
     groot_zmq_publisher_port: 1666
     groot_zmq_server_port: 1667
     plugin_lib_names:
@@ -167,10 +167,10 @@ controller_server:
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
       # Lower sample count to reduce DWB compute per cycle on Pi.
-      vx_samples: 15
+      vx_samples: 10 # Was 15, reduced to 10 to reduce compute on Pi
       vy_samples: 0
-      vtheta_samples: 30
-      sim_time: 1.5
+      vtheta_samples: 20 # Was 30, reduced to 20 to reduce compute on Pi
+      sim_time: 1.2 # Was 1.5, reduced to 1.2 to reduce compute on Pi
       linear_granularity: 0.05
       angular_granularity: 0.025
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
@@ -242,7 +242,7 @@ local_costmap:
           obstacle_min_range: 0.12
       static_layer:
         map_subscribe_transient_local: True
-      always_send_full_costmap: True
+      always_send_full_costmap: False # Was true, possibly caused TF timestamp mismatches
   local_costmap_client:
     ros__parameters:
       use_sim_time: False
@@ -302,7 +302,7 @@ global_costmap:
         # lab corridors.
         inflation_radius: 0.25
         cost_scaling_factor: 3.0
-      always_send_full_costmap: True
+      always_send_full_costmap: False # Was true, possibly caused TF timestamp mismatches
   global_costmap_client:
     ros__parameters:
       use_sim_time: False

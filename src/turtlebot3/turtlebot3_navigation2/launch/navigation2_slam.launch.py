@@ -219,6 +219,16 @@ def _launch_setup(context):
             output='screen',
         ))
 
+    # Fleet mode: zlib-compressed map side channel for central relay (/{ns}/map_wire_z).
+    if ns and fleet_active:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='map_wire_compressed_republisher.py',
+            name='map_wire_compressed_republisher',
+            namespace=ns,
+            output='screen',
+        ))
+
     # --- SLAM Toolbox ---
     slam_overrides = {
         'use_sim_time': use_sim_time_str.lower() == 'true',
@@ -468,10 +478,10 @@ def generate_launch_description():
             'enable_lethal_watch', default_value='true',
             description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
         DeclareLaunchArgument(
-            'fleet_mode', default_value='auto',
-            description=('Fleet topology mode: false=standalone namespaced map/TF, '
-                         'true=global /tf+/map (central required), auto=wait for '
-                         'central global TF/map before starting Nav2.')),
+            'fleet_mode', default_value='true',
+            description=('Fleet topology mode: true=merged /map + inject map TF from '
+                         'central (default), false=standalone namespaced map/TF, '
+                         'auto=wait for central global TF/map before starting Nav2.')),
         DeclareLaunchArgument(
             'auto_fleet_wait_timeout_sec', default_value='300.0',
             description=('When fleet_mode=auto, max seconds to wait for central '
