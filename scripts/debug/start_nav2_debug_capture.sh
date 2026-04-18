@@ -2,7 +2,8 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+# This file lives in scripts/debug — workspace root is two levels up (colcon install/).
+WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 cd "$WORKSPACE_DIR"
 source /opt/ros/humble/setup.bash
@@ -31,7 +32,17 @@ echo "Press Ctrl+C to stop recording."
 echo "=========================================="
 echo ""
 
+# Namespaced topics: robot SLAM + Nav2. Fleet mode also publishes merged map + full TF on
+# global /map and /tf (see navigation_launch_multirobot.py); record those too or bags
+# replay without the world→robot chain.
+# Omit global_costmap/costmap: some stacks advertise multiple types on that name and rosbag2
+# rejects the topic; costmap_raw + costmap_updates are enough for postmortems.
 ros2 bag record -o "$BAG_OUT" \
+  "/tf" \
+  "/tf_static" \
+  "/map" \
+  "/map_updates" \
+  "/clock" \
   "/${ROBOT_NAME}/map" \
   "/${ROBOT_NAME}/map_updates" \
   "/${ROBOT_NAME}/local_costmap/costmap" \

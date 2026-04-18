@@ -23,6 +23,7 @@ install(
 install(
   PROGRAMS
     scripts/map_wire_compressed_republisher.py
+    scripts/map_throttle_relay.py
     scripts/normalize_laser_scan.py
     scripts/nav2_motion_debug_logger.py
     scripts/nav2_lethal_watch.py

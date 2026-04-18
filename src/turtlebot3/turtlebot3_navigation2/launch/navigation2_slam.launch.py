@@ -27,6 +27,10 @@
 # With central PC (start_central.sh: map_merge + tf_relay + explorer), enable
 # global TF + merged map so Nav2 goals in frame `map` match the central stack:
 #   fleet_mode:=true
+#
+# Optional: nav2_use_composition (default true), nav2_use_isolated_container (default false),
+# fleet_map_relay_hz, nav2_use_local_slam_map,
+# slam_toolbox_mode (async|sync). See README "Optional fleet tuning".
 
 import os
 import tempfile
@@ -72,12 +76,22 @@ def _rewrite_frame(d, key, old_val, new_val):
             _rewrite_frame(v, key, old_val, new_val)
 
 
-def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
+def _generate_nav2_params(
+    source_file,
+    namespace,
+    fleet_mode: bool,
+    *,
+    fleet_use_local_slam_map: bool = False,
+    fleet_map_relay: bool = False,
+):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
     When namespace is set and fleet_mode is False (robot alone), SLAM uses
     frame {namespace}/map; Nav2 global frames and map_topic follow that.
     When fleet_mode is True, Nav2 uses world frame ``map`` and merged ``/map``.
+    When fleet_mode and fleet_use_local_slam_map, Nav2 uses local SLAM ``/{ns}/map``
+    (no network ``/map`` subscription) while TF can remain global via remappings.
+    When fleet_map_relay, static layer ``map_topic`` points at ``/map_relay``.
     """
     with open(source_file) as f:
         params = yaml.safe_load(f)
@@ -112,6 +126,18 @@ def _generate_nav2_params(source_file, namespace, fleet_mode: bool):
             # Global costmap static layer uses this robot's SLAM map topic.
             _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
             _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
+        elif fleet_mode and fleet_use_local_slam_map:
+            # Fleet TF from central, but costmaps use local SLAM map (less DDS load).
+            _rewrite_frame(params, 'global_frame', 'map',
+                            f'{namespace}/map')
+            _rewrite_frame(params, 'global_frame_id', 'map',
+                            f'{namespace}/map')
+            _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
+            _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
+
+    if namespace and fleet_mode and fleet_map_relay and not fleet_use_local_slam_map:
+        _rewrite_frame(params, 'map_topic', '/map', '/map_relay')
+        _rewrite_frame(params, 'map_topic', 'map', '/map_relay')
 
     # Use a custom navigate-to-pose tree that proactively clears costmaps
     # around planner/controller failures and keeps backup/spin/wait recoveries.
@@ -148,6 +174,22 @@ def _launch_setup(context):
         'auto_fleet_tf_max_age_sec').perform(context)
     use_central_tf_map_str = LaunchConfiguration('use_central_tf_map').perform(
         context)
+    fleet_map_relay_hz_str = LaunchConfiguration('fleet_map_relay_hz').perform(
+        context)
+    nav2_use_local_slam_map_str = LaunchConfiguration(
+        'nav2_use_local_slam_map').perform(context)
+    nav2_use_composition_str = LaunchConfiguration('nav2_use_composition').perform(
+        context)
+    nav2_container_name_str = LaunchConfiguration('nav2_container_name').perform(
+        context)
+    slam_toolbox_mode_str = LaunchConfiguration('slam_toolbox_mode').perform(
+        context)
+    container_sigterm_timeout_str = LaunchConfiguration(
+        'container_sigterm_timeout').perform(context)
+    container_sigkill_timeout_str = LaunchConfiguration(
+        'container_sigkill_timeout').perform(context)
+    nav2_use_isolated_container_str = LaunchConfiguration(
+        'nav2_use_isolated_container').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -155,14 +197,32 @@ def _launch_setup(context):
     if use_central_tf_map_str.lower() in ('1', 'true', 'yes'):
         fleet_active = True
 
+    try:
+        fleet_map_relay_hz = float(fleet_map_relay_hz_str)
+    except ValueError:
+        fleet_map_relay_hz = 0.0
+    fleet_use_local_nav_map = (
+        fleet_active and bool(ns) and
+        nav2_use_local_slam_map_str.lower() in ('1', 'true', 'yes'))
+    fleet_map_relay = fleet_active and bool(ns) and fleet_map_relay_hz > 0.0
+    if fleet_map_relay:
+        fleet_use_local_nav_map = False
+
     nav2_bringup_launch_dir = os.path.join(
         get_package_share_directory('nav2_bringup'), 'launch')
     turtlebot3_nav2_launch_dir = os.path.join(
         get_package_share_directory('turtlebot3_navigation2'), 'launch')
 
-    slam_params = os.path.join(
-        get_package_share_directory('turtlebot3_navigation2'),
-        'param', 'humble', 'mapper_params_online_async_fast.yaml')
+    if slam_toolbox_mode_str.lower() == 'sync':
+        slam_params = os.path.join(
+            get_package_share_directory('slam_toolbox'),
+            'config', 'mapper_params_online_sync.yaml')
+        slam_toolbox_executable = 'sync_slam_toolbox_node'
+    else:
+        slam_params = os.path.join(
+            get_package_share_directory('turtlebot3_navigation2'),
+            'param', 'humble', 'mapper_params_online_async_fast.yaml')
+        slam_toolbox_executable = 'async_slam_toolbox_node'
 
     workspace_dir = os.path.expanduser(
         os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
@@ -229,6 +289,22 @@ def _launch_setup(context):
             output='screen',
         ))
 
+    # Throttle merged /map (and updates) for Nav2 when Wi‑Fi is constrained.
+    if fleet_map_relay:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='map_throttle_relay.py',
+            name='map_throttle_relay',
+            parameters=[{
+                'input_map_topic': '/map',
+                'output_map_topic': '/map_relay',
+                'input_updates_topic': '/map_updates',
+                'output_updates_topic': '/map_updates_relay',
+                'max_map_hz': fleet_map_relay_hz,
+            }],
+            output='screen',
+        ))
+
     # --- SLAM Toolbox ---
     slam_overrides = {
         'use_sim_time': use_sim_time_str.lower() == 'true',
@@ -259,7 +335,7 @@ def _launch_setup(context):
 
     actions.append(Node(
         package='slam_toolbox',
-        executable='async_slam_toolbox_node',
+        executable=slam_toolbox_executable,
         name='slam_toolbox',
         namespace=ns if ns else None,
         output='screen',
@@ -290,7 +366,31 @@ def _launch_setup(context):
         ))
 
     # --- Nav2 with frame-rewritten params ---
-    nav2_params_file = _generate_nav2_params(params_file, ns, fleet_active)
+    nav2_params_file = _generate_nav2_params(
+        params_file, ns, fleet_active,
+        fleet_use_local_slam_map=fleet_use_local_nav_map,
+        fleet_map_relay=fleet_map_relay,
+    )
+
+    if fleet_map_relay:
+        nav_map_topic_str = '/map_relay'
+        nav_map_updates_str = '/map_updates_relay'
+    elif fleet_use_local_nav_map:
+        nav_map_topic_str = f'/{ns}/map'
+        nav_map_updates_str = f'/{ns}/map_updates'
+    else:
+        nav_map_topic_str = '/map'
+        nav_map_updates_str = '/map_updates'
+
+    if ns:
+        if fleet_use_local_nav_map:
+            map_frame_for_nav = f'{ns}/map'
+        elif fleet_active:
+            map_frame_for_nav = 'map'
+        else:
+            map_frame_for_nav = f'{ns}/map'
+    else:
+        map_frame_for_nav = 'map'
 
     use_multirobot_nav_launch = fleet_active
     if use_multirobot_nav_launch:
@@ -301,14 +401,27 @@ def _launch_setup(context):
         nav2_launch_source = PythonLaunchDescriptionSource(
             [nav2_bringup_launch_dir, '/navigation_launch.py'])
 
+    nav2_launch_args = {
+        'namespace': ns,
+        'use_sim_time': use_sim_time_str,
+        'params_file': nav2_params_file,
+        'autostart': 'True',
+    }
+    # navigation_launch_multirobot spawns rclcpp component_container_isolated; stock
+    # navigation_launch.py does not — only enable composition for fleet (multirobot).
+    if fleet_active:
+        nav2_launch_args['use_composition'] = nav2_use_composition_str
+        nav2_launch_args['container_name'] = nav2_container_name_str
+    if use_multirobot_nav_launch:
+        nav2_launch_args['nav_map_topic'] = nav_map_topic_str
+        nav2_launch_args['nav_map_updates_topic'] = nav_map_updates_str
+        nav2_launch_args['container_sigterm_timeout'] = container_sigterm_timeout_str
+        nav2_launch_args['container_sigkill_timeout'] = container_sigkill_timeout_str
+        nav2_launch_args['use_isolated_container'] = nav2_use_isolated_container_str
+
     nav2_include = IncludeLaunchDescription(
         nav2_launch_source,
-        launch_arguments={
-            'namespace': ns,
-            'use_sim_time': use_sim_time_str,
-            'params_file': nav2_params_file,
-            'autostart': 'True',
-        }.items(),
+        launch_arguments=nav2_launch_args.items(),
     )
 
     if ns:
@@ -369,14 +482,15 @@ def _launch_setup(context):
             'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
             'output_dir': resolved_debug_log_dir,
             'log_rate_hz': float(debug_log_rate_hz),
-            'map_frame': (
-                'map' if fleet_active or not ns else f'{ns}/map'),
+            'map_frame': map_frame_for_nav,
             'base_frame_candidates': (
                 f'{ns}/base_footprint,{ns}/base_link,base_footprint,base_link'
                 if ns else 'base_footprint,base_link'
             ),
         }],
-        remappings=tf_remappings,
+        # tf2_ros.TransformListener hard-subscribes to /tf and /tf_static. Remapping those
+        # to namespaced topics breaks fleet stacks that publish the world TF on global /tf
+        # (same rationale as navigation_launch_multirobot.py).
         output='screen',
         condition=IfCondition(enable_debug_logging_str),
     ))
@@ -389,8 +503,7 @@ def _launch_setup(context):
         namespace=ns if ns else None,
         parameters=[{
             'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
-            'map_frame': (
-                'map' if fleet_active or not ns else f'{ns}/map'),
+            'map_frame': map_frame_for_nav,
             'base_frame': (
                 f'{ns}/base_footprint' if ns else 'base_footprint'),
             'costmap_topic': 'global_costmap/costmap',
@@ -398,7 +511,6 @@ def _launch_setup(context):
             'lethal_cost_threshold': 100,
             'publish_hz': 4.0,
         }],
-        remappings=tf_remappings,
         output='screen',
         condition=IfCondition(enable_lethal_watch_str),
     ))
@@ -475,7 +587,7 @@ def generate_launch_description():
             'debug_log_rate_hz', default_value='5.0',
             description='Debug logger sampling rate in Hz'),
         DeclareLaunchArgument(
-            'enable_lethal_watch', default_value='true',
+            'enable_lethal_watch', default_value='false',
             description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
         DeclareLaunchArgument(
             'fleet_mode', default_value='true',
@@ -494,6 +606,44 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_central_tf_map', default_value='false',
             description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
+        DeclareLaunchArgument(
+            'fleet_map_relay_hz', default_value='0.0',
+            description=(
+                'Fleet only: if > 0, throttle merged /map to /map_relay at this max rate (Hz). '
+                'Reduces DDS load on Wi‑Fi; requires merged /map from central (default 0 = off).')),
+        DeclareLaunchArgument(
+            'nav2_use_local_slam_map', default_value='false',
+            description=(
+                'Fleet only: if true, Nav2 costmaps use local /<robot>/map from SLAM instead of '
+                'network /map. Central goals must use frame /<robot>/map (or equivalent TF). '
+                'Ignored if fleet_map_relay_hz > 0.')),
+        DeclareLaunchArgument(
+            'nav2_use_composition', default_value='true',
+            description='When fleet_mode is true: load Nav2 in one rclcpp component container.'),
+        DeclareLaunchArgument(
+            'nav2_container_name', default_value='nav2_container',
+            description='Component container name for Nav2 composition.'),
+        DeclareLaunchArgument(
+            'container_sigterm_timeout',
+            default_value='30',
+            description=(
+                'Fleet Nav2 only: seconds after SIGINT before launch escalates the '
+                'component container to SIGTERM (Nav2 lifecycle teardown is slow).')),
+        DeclareLaunchArgument(
+            'container_sigkill_timeout',
+            default_value='45',
+            description=(
+                'Fleet Nav2 only: seconds after SIGTERM before launch SIGKILLs the '
+                'component container.')),
+        DeclareLaunchArgument(
+            'nav2_use_isolated_container',
+            default_value='false',
+            description=(
+                'Fleet Nav2 only: if true, use component_container_isolated (can hang '
+                'on shutdown; see ros2/rclcpp#2083). Default false uses component_container.')),
+        DeclareLaunchArgument(
+            'slam_toolbox_mode', default_value='async',
+            description='slam_toolbox node: async (default) or sync (mapper_params_online_sync).'),
         DeclareLaunchArgument(
             'effective_namespace', default_value=effective_namespace,
             description='(internal) resolved namespace'),
