@@ -50,7 +50,7 @@ def generate_launch_description():
         ['"', namespace, '" if "', namespace, '" != "" else "', robot_name, '"']
     )
 
-    usb_port = LaunchConfiguration('usb_port', default='/dev/ttyACM1')
+    usb_port = LaunchConfiguration('usb_port', default='/dev/ttyACM0')
 
     if ROS_DISTRO == 'humble':
         tb3_param_dir = LaunchConfiguration(
