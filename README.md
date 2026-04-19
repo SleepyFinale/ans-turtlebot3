@@ -387,13 +387,36 @@ sudo systemctl start boot-wifi.service
 
 ### USB port settings for OpenCR
 
-After the workspace is built, set udev rules so the OpenCR is accessible:
+The OpenCR enumerates as a USB serial device (`ttyACM*`). udev can recognize it by USB vendor and product ID (STM32 Virtual ComPort: `0483` / `5740`) and create a stable symlink **`/dev/opencr`**, so bringup and scripts do not depend on `ttyACM0` vs `ttyACM1` ordering. Bringup in this workspace defaults to `usb_port:=/dev/opencr`.
+
+#### Step 1 — Create the rules file
 
 ```bash
-sudo cp $(ros2 pkg prefix turtlebot3_bringup)/share/turtlebot3_bringup/script/99-turtlebot3-cdc.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo nano /etc/udev/rules.d/99-opencr.rules
 ```
+
+#### Step 2 — Add this content
+
+The comment line in the file reminds you which rules file you are editing.
+
+```text
+# /etc/udev/rules.d/99-opencr.rules
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="opencr", MODE:="0666"
+```
+
+#### Step 3 — Reload and verify
+
+Run `udevadm` to reload rules and re-trigger `tty` devices, then list `/dev/opencr`. Replug the OpenCR USB cable if the symlink is not created until the device is seen again.
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=tty
+ls -l /dev/opencr
+```
+
+`ls -l` should show `opencr` pointing at the underlying `ttyACM*` node.
+
+**Note:** Robotis ships `99-turtlebot3-cdc.rules` in `turtlebot3_bringup` (symlink `tb3_lidar`, `ID_MM_DEVICE_IGNORE` for several USB IDs, permissions). Keeping **both** that file (copied to `/etc/udev/rules.d/`) and `99-opencr.rules` is normal: matching rules stack, and `99-opencr.rules` adds the **`opencr`** name for `0483:5740`. If you install **only** the snippet above and ModemManager ever claims the port, add `ENV{ID_MM_DEVICE_IGNORE}="1",` on the same rule line (Robotis does this for `5740` in their file).
 
 ### ROS_DOMAIN_ID
 
@@ -488,13 +511,15 @@ source ~/.bashrc
 
 ### OpenCR setup
 
-Connect the OpenCR to the Raspberry Pi via micro USB, then on the robot (SBC) run:
+Connect the OpenCR to the Raspberry Pi via micro USB. Use **`/dev/opencr`** for the serial port; that path requires the udev rules in [USB port settings for OpenCR](#usb-port-settings-for-opencr) (replug USB after applying them if the symlink is missing).
+
+On the robot (SBC) run:
 
 ```bash
 sudo dpkg --add-architecture armhf
 sudo apt-get update
 sudo apt-get install libc6:armhf
-export OPENCR_PORT=/dev/ttyACM0
+export OPENCR_PORT=/dev/opencr
 export OPENCR_MODEL=burger
 rm -rf ./opencr_update.tar.bz2
 wget https://github.com/ROBOTIS-GIT/OpenCR-Binaries/raw/master/turtlebot3/ROS2/latest/opencr_update.tar.bz2
