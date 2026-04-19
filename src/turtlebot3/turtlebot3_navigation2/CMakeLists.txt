@@ -27,6 +27,7 @@ install(
     scripts/normalize_laser_scan.py
     scripts/nav2_motion_debug_logger.py
     scripts/nav2_lethal_watch.py
+    scripts/nav2_controller_collision_watch.py
     scripts/standalone_world_map_tf.py
   DESTINATION lib/${PROJECT_NAME}
 )
