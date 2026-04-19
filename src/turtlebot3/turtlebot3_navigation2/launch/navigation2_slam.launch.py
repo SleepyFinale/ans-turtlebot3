@@ -165,6 +165,8 @@ def _launch_setup(context):
     wait_for_tf_str = LaunchConfiguration('wait_for_tf').perform(context)
     enable_debug_logging_str = LaunchConfiguration('enable_debug_logging').perform(context)
     enable_lethal_watch_str = LaunchConfiguration('enable_lethal_watch').perform(context)
+    enable_controller_collision_watch_str = LaunchConfiguration(
+        'enable_controller_collision_watch').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
@@ -515,6 +517,24 @@ def _launch_setup(context):
         condition=IfCondition(enable_lethal_watch_str),
     ))
 
+    # --- controller_server "collision ahead" -> Bool for central arrival probe ---
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='nav2_controller_collision_watch.py',
+        name='nav2_controller_collision_watch',
+        namespace=ns if ns else None,
+        parameters=[{
+            'rosout_topic': '/rosout',
+            'node_name_substring': 'controller_server',
+            'message_substring': 'collision ahead',
+            'hold_sec': 0.75,
+            'publish_hz': 4.0,
+            'publish_topic': 'nav2_collision_ahead',
+        }],
+        output='screen',
+        condition=IfCondition(enable_controller_collision_watch_str),
+    ))
+
     # --- RViz (optional) ---
     if use_rviz_str.lower() == 'true':
         # RViz config uses absolute topic names like `/map` and `/map_updates`.
@@ -589,6 +609,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_lethal_watch', default_value='false',
             description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
+        DeclareLaunchArgument(
+            'enable_controller_collision_watch', default_value='true',
+            description=(
+                'Publish /<robot>/nav2_collision_ahead from controller_server '
+                'rosout lines (e.g. RPP collision ahead)')),
         DeclareLaunchArgument(
             'fleet_mode', default_value='true',
             description=('Fleet topology mode: true=merged /map + inject map TF from '
