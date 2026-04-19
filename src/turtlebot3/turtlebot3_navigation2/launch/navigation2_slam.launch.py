@@ -632,10 +632,10 @@ def generate_launch_description():
             'use_central_tf_map', default_value='false',
             description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
         DeclareLaunchArgument(
-            'fleet_map_relay_hz', default_value='0.0',
+            'fleet_map_relay_hz', default_value='1.5',
             description=(
                 'Fleet only: if > 0, throttle merged /map to /map_relay at this max rate (Hz). '
-                'Reduces DDS load on Wi‑Fi; requires merged /map from central (default 0 = off).')),
+                'Reduces DDS load on Wi‑Fi; requires merged /map from central (default 1.5; set 0 to disable).')),
         DeclareLaunchArgument(
             'nav2_use_local_slam_map', default_value='false',
             description=(
