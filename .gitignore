@@ -10,3 +10,12 @@ scripts/wifi/netplan-wpa-wlan0.log
 .cursor/
 
 /scripts/monitor/logs/
+
+# sns generated and sensitive artifacts
+scripts/sns/*.priv
+scripts/sns/*.pem
+scripts/sns/*.pub
+scripts/sns/*.bin
+scripts/sns/*.pcap
+scripts/sns/*.ctx
+scripts/sns/*_test.json
