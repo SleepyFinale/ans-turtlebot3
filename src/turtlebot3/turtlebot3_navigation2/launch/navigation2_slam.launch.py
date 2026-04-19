@@ -33,6 +33,7 @@
 # slam_toolbox_mode (async|sync). See README "Optional fleet tuning".
 
 import os
+import socket
 import tempfile
 
 import yaml
@@ -57,10 +58,37 @@ from launch_ros.actions import Node, PushRosNamespace
 TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 ROS_DISTRO = os.environ.get('ROS_DISTRO')
 
+# Stock image hostnames are not unique per robot; prefer login name for the default namespace.
+_GENERIC_DEFAULT_HOSTNAMES = frozenset({
+    'ubuntu', 'raspberrypi', 'raspberry', 'debian', 'linaro-alip', 'localhost', 'omap',
+})
+
+
 def _default_robot_name():
-    hostname = os.environ.get('HOSTNAME') or os.environ.get('HOST')
-    if hostname:
-        return hostname.split('.')[0]
+    """Default namespace when ``robot_name`` is not passed explicitly.
+
+    Use ``HOSTNAME``/``HOST`` or the kernel hostname when it identifies the robot
+    (e.g. ``pinky``). Ignore common unflashy defaults (``ubuntu``, ``raspberrypi``)
+    so the same launch command on every Pi can rely on ``USER`` (``pinky`` vs ``clyde``).
+    """
+
+    def _short(raw):
+        if not raw:
+            return ''
+        return raw.split('.')[0].strip()
+
+    for key in ('HOSTNAME', 'HOST'):
+        h = _short(os.environ.get(key, ''))
+        if h and h.lower() not in _GENERIC_DEFAULT_HOSTNAMES:
+            return h
+    try:
+        k = _short(socket.gethostname())
+        if k and k.lower() not in _GENERIC_DEFAULT_HOSTNAMES:
+            return k
+    except OSError:
+        pass
+    if os.environ.get('USER') == 'root' and os.environ.get('SUDO_USER'):
+        return os.environ['SUDO_USER']
     return os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
 
 
@@ -581,7 +609,10 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'robot_name', default_value=DEFAULT_ROBOT_NAME,
-            description='Robot name used as namespace (e.g. blinky, pinky)'),
+            description=(
+                'Namespace; default is hostname if it is not a stock image name '
+                '(ubuntu, raspberrypi, …), else login name (USER)'
+            )),
         DeclareLaunchArgument(
             'namespace', default_value='',
             description='Explicit namespace (overrides robot_name if set)'),
