@@ -31,9 +31,8 @@ fi
 echo "  USER=${USER:-}  LOGNAME=${LOGNAME:-}"
 echo "  HOSTNAME=${HOSTNAME:-<unset>}  HOST=${HOST:-<unset>}"
 echo ""
-echo "  In ans-turtlebot3, navigation2_slam default robot_name uses HOSTNAME/HOST"
-echo "  if set; otherwise USER/LOGNAME. An image hostname of 'ubuntu' often means"
-echo "  the ROS namespace follows the Linux login name (e.g. pinky vs clyde)."
+echo "  In ans-turtlebot3, default robot_name is a meaningful hostname if not a"
+echo "  stock default (ubuntu, raspberrypi, …); otherwise USER/LOGNAME (e.g. pinky vs clyde)."
 echo ""
 
 if [[ "$DO_ROS" == true ]]; then
