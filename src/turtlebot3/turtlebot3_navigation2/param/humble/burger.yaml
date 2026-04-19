@@ -136,7 +136,7 @@ controller_server:
       # Make this less trigger-happy in dynamic / cluttered spaces.
       required_movement_radius: 0.10
       # Fleet + explorer: align with stall watchdog margin; reduces false
-      # "Failed to make progress" while DWB recovers from tight local minima.
+      # "Failed to make progress" while the local controller recovers in tight space.
       movement_time_allowance: 5.0
 
     general_goal_checker:
@@ -146,55 +146,37 @@ controller_server:
       # Treat exploration goals as point targets; heading is not required.
       yaw_goal_tolerance: 3.14
 
-    # DWB parameters
+    # Regulated Pure Pursuit (replaces DWB): follows global path geometry; avoids DWB
+    # GoalDist local minima at corners/doorways. Tune lookahead on-robot if needed.
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      # Debugging is expensive and can cause "Control loop missed rate".
-      debug_trajectory_details: False
-      min_vel_x: 0.0
-      min_vel_y: 0.0
-      max_vel_x: 0.22
-      max_vel_y: 0.0
-      max_vel_theta: 1.0
-      min_speed_xy: 0.0
-      max_speed_xy: 0.22
-      min_speed_theta: 0.18 # Was 0.10, increased to 0.18 to reduce "Failed to make progress"
-      # Add high threshold velocity for turtlebot 3 issue.
-      # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
-      acc_lim_x: 1.2
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -1.2
-      decel_lim_y: 0.0
-      decel_lim_theta: -3.2
-      # Lower sample count to reduce DWB compute per cycle on Pi.
-      vx_samples: 10 # Was 15, reduced to 10 to reduce compute on Pi
-      vy_samples: 0
-      vtheta_samples: 20 # Was 30, reduced to 20 to reduce compute on Pi
-      sim_time: 1.2 # Was 1.5, reduced to 1.2 to reduce compute on Pi
-      linear_granularity: 0.05
-      angular_granularity: 0.025
-      # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      # SLAM Toolbox publishes map->odom at ~20-50Hz, but timing can vary during map updates
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.22
+      lookahead_dist: 0.55
+      min_lookahead_dist: 0.35
+      max_lookahead_dist: 0.85
+      lookahead_time: 1.8
+      rotate_to_heading_angular_vel: 1.0
+      # Match SLAM / map–odom timing (same rationale as prior DWB block).
       transform_tolerance: 1.5
-      xy_goal_tolerance: 0.05
-      # CRITICAL: must be below your typical commanded speeds.
-      # Your max_vel_x is 0.22, so 0.25 makes DWB think you're always stopped.
-      trans_stopped_velocity: 0.01
-      short_circuit_trajectory_evaluation: True
-      stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      # Prioritize obstacle avoidance over strict path hugging.
-      BaseObstacle.scale: 14.0
-      PathAlign.scale: 8.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 8.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 8.0
-      GoalDist.scale: 10.0
-      RotateToGoal.scale: 4.0 # Was 8.0, reduced to 4.0 to reduce "Failed to make progress"
-      RotateToGoal.slowing_factor: 3.0 # Was 5.0, reduced to 3.0 to reduce "Failed to make progress"
-      RotateToGoal.lookahead_time: -1.0
+      use_velocity_scaled_lookahead_dist: true
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_collision_detection: true
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: true
+      cost_scaling_dist: 0.5
+      cost_scaling_gain: 1.0
+      # Align with local costmap inflation falloff (burger.yaml inflation_layer).
+      inflation_cost_scaling_factor: 4.0
+      regulated_linear_scaling_min_radius: 0.75
+      regulated_linear_scaling_min_speed: 0.12
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.52
+      max_angular_accel: 3.2
+      allow_reversing: false
+      max_robot_pose_search_dist: 10.0
+      use_interpolation: true
 
 controller_server_rclcpp_node:
   ros__parameters:
@@ -221,9 +203,9 @@ local_costmap:
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Slightly tighter than 0.30 so DWB can find forward trajectories in
-        # corridors while staying off walls (fleet stability profile).
-        inflation_radius: 0.25
+        # Slightly reduced vs 0.25 to narrow lethal halos at doorframes; if too tight,
+        # increase ~0.02 m (see README Nav2 / corners).
+        inflation_radius: 0.22
         # Steeper decay than 3.0: narrows the high-cost halo so door centerlines
         # stay more "free" when turning (bag-20260418-162539: robot_cost ~253).
         cost_scaling_factor: 4.0
@@ -300,10 +282,8 @@ global_costmap:
         use_maximum: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Balanced inflation: keep global plans off walls and corners without
-        # frequently considering the robot to start in lethal space in tight
-        # lab corridors.
-        inflation_radius: 0.25
+        # Match local: slightly tighter halo so global plans stay navigable in doorways.
+        inflation_radius: 0.22
         # Match local: steeper inflation falloff for tight door turns (see local note).
         cost_scaling_factor: 4.0
       always_send_full_costmap: False # Was true, possibly caused TF timestamp mismatches
