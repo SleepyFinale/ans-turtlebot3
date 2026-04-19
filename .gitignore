@@ -5,11 +5,10 @@ log/
 logs/
 __pycache__/
 
+/scripts/monitor/logs/
 scripts/wifi/netplan-wpa-wlan0.log
 
 .cursor/
-
-/scripts/monitor/logs/
 
 # sns generated and sensitive artifacts
 scripts/sns/*.priv
