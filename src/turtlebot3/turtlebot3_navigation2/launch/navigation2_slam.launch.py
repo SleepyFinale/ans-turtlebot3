@@ -650,13 +650,13 @@ def generate_launch_description():
             description='Component container name for Nav2 composition.'),
         DeclareLaunchArgument(
             'container_sigterm_timeout',
-            default_value='30',
+            default_value='5',
             description=(
                 'Fleet Nav2 only: seconds after SIGINT before launch escalates the '
                 'component container to SIGTERM (Nav2 lifecycle teardown is slow).')),
         DeclareLaunchArgument(
             'container_sigkill_timeout',
-            default_value='45',
+            default_value='5',
             description=(
                 'Fleet Nav2 only: seconds after SIGTERM before launch SIGKILLs the '
                 'component container.')),
