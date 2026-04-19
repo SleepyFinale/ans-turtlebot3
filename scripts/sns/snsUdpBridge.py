@@ -18,11 +18,17 @@ from geometry_msgs.msg import Twist
 # Config
 # -----------------------------
 LOGSTASH_IP = "192.168.0.76"
-LOGSTASH_PORT = 5045
+
+# ROS topic events
+ROS_LOGSTASH_PORT = 5045
+
+# ARP cache events
+ARP_LOGSTASH_PORT = 5000
+ARP_INTERVAL = 5.0
+
 QUEUE_SIZE = 5000
 
 def get_robot_name():
-    # Uses original user if launched with sudo, otherwise normal whoami
     return os.getenv("SUDO_USER") or getpass.getuser()
 
 ROBOT_NAME = get_robot_name()
@@ -40,9 +46,6 @@ THROTTLE = {
 
 # -----------------------------
 def get_local_ip_for_destination(dest_ip, dest_port):
-    """
-    Figure out which local IP this robot would use to reach Logstash.
-    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect((dest_ip, dest_port))
@@ -51,10 +54,6 @@ def get_local_ip_for_destination(dest_ip, dest_port):
         s.close()
 
 def strip_namespace(topic, robot_name):
-    """
-    Convert /inky/odom -> /odom
-    Convert /pinky/cmd_vel -> /cmd_vel
-    """
     prefix = f'/{robot_name}'
     if topic.startswith(prefix):
         cleaned = topic[len(prefix):]
@@ -75,31 +74,53 @@ def quaternion_to_euler(o):
 
     return [roll, pitch, yaw]
 
+def get_arp_table():
+    arp_entries = []
+    try:
+        with open("/proc/net/arp") as f:
+            next(f)
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 6:
+                    arp_entries.append({
+                        "ip": parts[0],
+                        "mac": parts[3],
+                        "interface": parts[5]
+                    })
+    except Exception:
+        pass
+    return arp_entries
+
 # -----------------------------
 class LogstashPublisher(Node):
     def __init__(self):
         super().__init__('ros2_logstash_bridge')
 
         self.robot_name = ROBOT_NAME
-        self.local_ip = get_local_ip_for_destination(LOGSTASH_IP, LOGSTASH_PORT)
+        self.local_ip = get_local_ip_for_destination(LOGSTASH_IP, ROS_LOGSTASH_PORT)
 
-        # UDP socket
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.ros_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.ros_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.ros_sock.bind((self.local_ip, 0))
 
-        # Bind to the correct local interface automatically
-        self.sock.bind((self.local_ip, 0))
+        self.arp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.arp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.arp_sock.bind((self.local_ip, 0))
 
         self.get_logger().info(f"Robot name: {self.robot_name}")
         self.get_logger().info(f"Subscribing to: {BATTERY_TOPIC}")
         self.get_logger().info(f"Subscribing to: {ODOM_TOPIC}")
         self.get_logger().info(f"Subscribing to: {CMD_VEL_TOPIC}")
         self.get_logger().info(
-            f"UDP socket bound to {self.local_ip}, sending to {LOGSTASH_IP}:{LOGSTASH_PORT}"
+            f"ROS UDP socket bound to {self.local_ip}, sending to {LOGSTASH_IP}:{ROS_LOGSTASH_PORT}"
+        )
+        self.get_logger().info(
+            f"ARP UDP socket bound to {self.local_ip}, sending to {LOGSTASH_IP}:{ARP_LOGSTASH_PORT}"
         )
 
         self.queue = queue.Queue(maxsize=QUEUE_SIZE)
         self.last_sent = {}
+        self.running = True
 
         self.sender_thread = threading.Thread(
             target=self.sender_loop,
@@ -107,12 +128,18 @@ class LogstashPublisher(Node):
         )
         self.sender_thread.start()
 
-        # Subscriptions use actual ROS namespaced topics
+        self.arp_thread = threading.Thread(
+            target=self.arp_loop,
+            daemon=True
+        )
+        self.arp_thread.start()
+
         self.create_subscription(BatteryState, BATTERY_TOPIC, self.battery_cb, 10)
         self.create_subscription(Odometry, ODOM_TOPIC, self.odom_cb, 10)
         self.create_subscription(Twist, CMD_VEL_TOPIC, self.cmd_vel_cb, 10)
 
     # -----------------------------
+    # ROS sender path
     def allowed(self, topic):
         now = time.time()
         last = self.last_sent.get(topic, 0)
@@ -137,19 +164,42 @@ class LogstashPublisher(Node):
         try:
             self.queue.put_nowait(event)
         except queue.Full:
-            self.get_logger().warn("Queue full - dropping message")
+            self.get_logger().warn("Queue full - dropping ROS message")
 
     def sender_loop(self):
-        while True:
+        while self.running:
             event = self.queue.get()
             try:
                 payload = (json.dumps(event) + "\n").encode()
-                self.sock.sendto(payload, (LOGSTASH_IP, LOGSTASH_PORT))
+                self.ros_sock.sendto(payload, (LOGSTASH_IP, ROS_LOGSTASH_PORT))
             except Exception as e:
-                self.get_logger().error(f"UDP send failed: {e}")
+                self.get_logger().error(f"ROS UDP send failed: {e}")
 
     # -----------------------------
-    # Callbacks
+    # ARP sender path
+    def send_arp_snapshot(self):
+        payload = {
+            "robot": self.robot_name,
+            "arp_host": self.robot_name,
+            "source_ip": self.local_ip,
+            "timestamp": time.time(),
+            "arp_table": get_arp_table()
+        }
+
+        try:
+            data = json.dumps(payload).encode()
+            self.arp_sock.sendto(data, (LOGSTASH_IP, ARP_LOGSTASH_PORT))
+            self.get_logger().info("Sent ARP data over UDP")
+        except Exception as e:
+            self.get_logger().error(f"ARP UDP send failed: {e}")
+
+    def arp_loop(self):
+        while self.running:
+            self.send_arp_snapshot()
+            time.sleep(ARP_INTERVAL)
+
+    # -----------------------------
+    # ROS callbacks
     def battery_cb(self, msg):
         self.enqueue(BATTERY_TOPIC, {
             "voltage": msg.voltage,
@@ -179,6 +229,18 @@ class LogstashPublisher(Node):
             "angular": [msg.angular.x, msg.angular.y, msg.angular.z]
         })
 
+    # -----------------------------
+    def close(self):
+        self.running = False
+        try:
+            self.ros_sock.close()
+        except Exception:
+            pass
+        try:
+            self.arp_sock.close()
+        except Exception:
+            pass
+
 # -----------------------------
 def main():
     rclpy.init()
@@ -188,7 +250,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        node.sock.close()
+        node.close()
         node.destroy_node()
         rclpy.shutdown()
 
