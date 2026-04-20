@@ -220,6 +220,8 @@ def _launch_setup(context):
         'container_sigkill_timeout').perform(context)
     nav2_use_isolated_container_str = LaunchConfiguration(
         'nav2_use_isolated_container').perform(context)
+    fleet_tf_map_wait_timeout_str = LaunchConfiguration(
+        'fleet_tf_map_wait_timeout_sec').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -387,6 +389,10 @@ def _launch_setup(context):
         wait_tf_env['TF_WAIT_BASE_FRAMES'] = f'{ns}/base_footprint,{ns}/base_link'
         wait_tf_env['TF_WAIT_NAMESPACE'] = ns
         wait_tf_env['TF_WAIT_MAP_FRAME'] = f'{ns}/map'
+
+    if fleet_active and ns and not fleet_auto_mode:
+        wait_tf_env['TF_WAIT_FLEET_WORLD_MAP_FRAME'] = f'{ns}/map'
+        wait_tf_env['TF_WAIT_FLEET_MAP_TIMEOUT_SEC'] = fleet_tf_map_wait_timeout_str
 
     if wait_for_tf_str.lower() == 'true':
         actions.append(ExecuteProcess(
@@ -663,16 +669,23 @@ def generate_launch_description():
             'use_central_tf_map', default_value='false',
             description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
         DeclareLaunchArgument(
-            'fleet_map_relay_hz', default_value='1.5',
+            'fleet_map_relay_hz', default_value='3.0',
             description=(
                 'Fleet only: if > 0, throttle merged /map to /map_relay at this max rate (Hz). '
-                'Reduces DDS load on Wi‑Fi; requires merged /map from central (default 1.5; set 0 to disable).')),
+                'Reduces DDS load on Wi‑Fi; requires merged /map from central (set 0 to disable relay). '
+                'Higher Hz lowers static-layer staleness; use 0 + nav2_use_local_slam_map:=true '
+                'if merged-map lethal alignment is suspected.')),
+        DeclareLaunchArgument(
+            'fleet_tf_map_wait_timeout_sec', default_value='120.0',
+            description=(
+                'Fleet only (fleet_mode true, not auto): after odom->base TF, max seconds to wait '
+                'for map_merge transform map->/<robot>/map on global /tf before starting Nav2.')),
         DeclareLaunchArgument(
             'nav2_use_local_slam_map', default_value='false',
             description=(
                 'Fleet only: if true, Nav2 costmaps use local /<robot>/map from SLAM instead of '
-                'network /map. Central goals must use frame /<robot>/map (or equivalent TF). '
-                'Ignored if fleet_map_relay_hz > 0.')),
+                'merged /map. Set fleet_map_relay_hz:=0 when using this (relay forces merged map). '
+                'Helps when map->robot/map alignment is wrong; explorer goals still use world map.')),
         DeclareLaunchArgument(
             'nav2_use_composition', default_value='true',
             description='When fleet_mode is true: load Nav2 in one rclcpp component container.'),

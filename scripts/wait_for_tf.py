@@ -14,6 +14,13 @@ This script blocks until those transforms are available (or times out).
 Env: TF_WAIT_ODOM_ONLY=true to only wait for odom->base_* (robot). Use when
 the launch starts SLAM itself so map->odom appears after SLAM Toolbox starts.
 
+Fleet (central map_merge): after odom->base succeeds, optionally wait for
+world_frame -> <robot>/map on global /tf so Nav2's ``map`` frame exists before
+lifecycle activation::
+
+  TF_WAIT_FLEET_WORLD_MAP_FRAME=pinky/map
+  TF_WAIT_FLEET_MAP_TIMEOUT_SEC=120   # optional; default 120
+
 For namespaced setups, set:
   TF_WAIT_ODOM_FRAME=blinky/odom
   TF_WAIT_BASE_FRAMES=blinky/base_footprint,blinky/base_link
@@ -170,6 +177,23 @@ def main() -> int:
                 "Check robot bringup is publishing base TF and ROS_DOMAIN_ID matches."
             )
             return 2
+
+        fleet_map_child = os.environ.get("TF_WAIT_FLEET_WORLD_MAP_FRAME", "").strip()
+        if fleet_map_child:
+            fleet_timeout = float(
+                os.environ.get("TF_WAIT_FLEET_MAP_TIMEOUT_SEC", "120.0"))
+            node.get_logger().info(
+                f"Waiting for fleet world TF: map -> {fleet_map_child} "
+                f"(map_merge on central). Timeout: {fleet_timeout:.1f}s"
+            )
+            ok_map = node.wait_for("map", fleet_map_child, timeout_sec=fleet_timeout)
+            if not ok_map:
+                node.get_logger().error(
+                    f"Timed out waiting for map -> {fleet_map_child}. "
+                    "Start central start_central.sh (map_merge) before Nav2, or use "
+                    "fleet_mode:=auto to block until the chain appears."
+                )
+                return 3
 
         node.get_logger().info("TF tree looks ready.")
         return 0
