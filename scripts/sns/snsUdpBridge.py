@@ -28,6 +28,15 @@ ARP_INTERVAL = 5.0
 
 QUEUE_SIZE = 5000
 
+# Watch only these IPs for MAC changes
+WATCHED_ARP_IPS = {
+    "192.168.0.16": "controller",
+    # "192.168.0.194": "robot",
+}
+
+# Send one baseline event when the script starts
+SEND_INITIAL_ARP_BASELINE = True
+
 def get_robot_name():
     return os.getenv("SUDO_USER") or getpass.getuser()
 
@@ -84,12 +93,32 @@ def get_arp_table():
                 if len(parts) >= 6:
                     arp_entries.append({
                         "ip": parts[0],
-                        "mac": parts[3],
+                        "mac": parts[3].lower(),
                         "interface": parts[5]
                     })
     except Exception:
         pass
     return arp_entries
+
+def get_arp_mapping():
+    """
+    Returns:
+      {
+        "192.168.0.16": {"mac": "aa:bb:cc:dd:ee:ff", "interface": "wlan0"},
+        ...
+      }
+    """
+    mapping = {}
+    for entry in get_arp_table():
+        ip = entry.get("ip")
+        mac = entry.get("mac")
+        iface = entry.get("interface")
+        if ip and mac:
+            mapping[ip] = {
+                "mac": mac,
+                "interface": iface
+            }
+    return mapping
 
 # -----------------------------
 class LogstashPublisher(Node):
@@ -117,10 +146,14 @@ class LogstashPublisher(Node):
         self.get_logger().info(
             f"ARP UDP socket bound to {self.local_ip}, sending to {LOGSTASH_IP}:{ARP_LOGSTASH_PORT}"
         )
+        self.get_logger().info(f"Watching ARP IPs: {list(WATCHED_ARP_IPS.keys())}")
 
         self.queue = queue.Queue(maxsize=QUEUE_SIZE)
         self.last_sent = {}
         self.running = True
+
+        # Track previous MACs for watched IPs
+        self.last_seen_arp = {}
 
         self.sender_thread = threading.Thread(
             target=self.sender_loop,
@@ -177,25 +210,72 @@ class LogstashPublisher(Node):
 
     # -----------------------------
     # ARP sender path
-    def send_arp_snapshot(self):
+    def send_arp_event(self, watched_ip, hostname, current_mac, interface, event_type, previous_mac=None):
         payload = {
+            "@timestamp": datetime.utcnow().isoformat() + "Z",
             "robot": self.robot_name,
             "arp_host": self.robot_name,
             "source_ip": self.local_ip,
-            "timestamp": time.time(),
-            "arp_table": get_arp_table()
+            "watched_ip": watched_ip,
+            "watched_name": hostname,
+            "mac": current_mac,
+            "previous_mac": previous_mac,
+            "interface": interface,
+            "event_type": event_type
         }
 
         try:
             data = json.dumps(payload).encode()
             self.arp_sock.sendto(data, (LOGSTASH_IP, ARP_LOGSTASH_PORT))
-            self.get_logger().info("Sent ARP data over UDP")
+            self.get_logger().info(
+                f"Sent ARP event: {event_type} for {watched_ip} "
+                f"(prev={previous_mac}, curr={current_mac})"
+            )
         except Exception as e:
             self.get_logger().error(f"ARP UDP send failed: {e}")
 
+    def check_arp_changes(self):
+        arp_map = get_arp_mapping()
+
+        for watched_ip, hostname in WATCHED_ARP_IPS.items():
+            entry = arp_map.get(watched_ip)
+
+            if not entry:
+                continue
+
+            current_mac = entry["mac"]
+            interface = entry["interface"]
+            previous_mac = self.last_seen_arp.get(watched_ip)
+
+            # First time seeing it: store baseline and optionally send one event
+            if previous_mac is None:
+                self.last_seen_arp[watched_ip] = current_mac
+                if SEND_INITIAL_ARP_BASELINE:
+                    self.send_arp_event(
+                        watched_ip=watched_ip,
+                        hostname=hostname,
+                        current_mac=current_mac,
+                        interface=interface,
+                        event_type="arp_baseline",
+                        previous_mac=None
+                    )
+                continue
+
+            # MAC changed -> send alert-worthy event
+            if current_mac != previous_mac:
+                self.send_arp_event(
+                    watched_ip=watched_ip,
+                    hostname=hostname,
+                    current_mac=current_mac,
+                    interface=interface,
+                    event_type="arp_mac_change",
+                    previous_mac=previous_mac
+                )
+                self.last_seen_arp[watched_ip] = current_mac
+
     def arp_loop(self):
         while self.running:
-            self.send_arp_snapshot()
+            self.check_arp_changes()
             time.sleep(ARP_INTERVAL)
 
     # -----------------------------
