@@ -124,7 +124,8 @@ controller_server:
     # doesn't interfere with controller logic / progress checks.
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    # Slightly more patience under fleet TF/map jitter before aborting follow_path.
+    failure_tolerance: 0.45
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     # Explicitly set which goal checker to use (silences "No goal checker was specified" warning)
@@ -136,9 +137,9 @@ controller_server:
       plugin: "nav2_controller::SimpleProgressChecker"
       # Make this less trigger-happy in dynamic / cluttered spaces.
       required_movement_radius: 0.10
-      # Fleet + explorer: align with stall watchdog margin; reduces false
-      # "Failed to make progress" while the local controller recovers in tight space.
-      movement_time_allowance: 5.0
+      # Fleet + explorer: allow more time than explorer stall watchdog so Nav2
+      # does not abort before the explorer cancels on stagnation.
+      movement_time_allowance: 7.5
 
     general_goal_checker:
       stateful: True
@@ -158,9 +159,9 @@ controller_server:
       lookahead_time: 1.8
       rotate_to_heading_angular_vel: 1.0
       # Match SLAM / map–odom timing (same rationale as prior DWB block).
-      # Fleet map->odom can lag several seconds under map_merge churn; allow
-      # extra tolerance so transient lag does not immediately abort control.
-      transform_tolerance: 3.0
+      # Fleet map->odom can lag under map_merge churn / Pi load; wider window
+      # reduces extrapolation aborts (paired with costmap transform_tolerance).
+      transform_tolerance: 4.0
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
@@ -195,8 +196,8 @@ local_costmap:
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 3.0
-      transform_timeout: 0.5
+      transform_tolerance: 4.0
+      transform_timeout: 0.75
       rolling_window: true
       width: 4
       height: 4
@@ -249,8 +250,8 @@ global_costmap:
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 3.0
-      transform_timeout: 0.5
+      transform_tolerance: 4.0
+      transform_timeout: 0.75
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways.
       robot_radius: 0.12
@@ -385,8 +386,8 @@ behavior_server:
       wait_duration: 2.0
     global_frame: odom
     robot_base_frame: base_footprint
-    transform_tolerance: 3.0
-    transform_timeout: 0.3
+    transform_tolerance: 4.0
+    transform_timeout: 0.5
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4
