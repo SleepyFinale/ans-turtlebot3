@@ -323,13 +323,13 @@ planner_server:
       # NavFn can produce: "Failed to create a plan from potential when a legal potential was found"
       # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
       plugin: "nav2_smac_planner/SmacPlanner2D"
-      tolerance: 1.5
+      tolerance: 0.25
       downsample_costmap: false
       use_final_approach_orientation: true
       max_on_approach_iterations: 5000 
       # Stronger avoidance of inflated / high-cost cells (2D Smac); steers paths
       # through open corridors when a detour exists. Tune 2.0–3.5 if needed.
-      cost_travel_multiplier: 1.25
+      cost_travel_multiplier: 2.0
       # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
