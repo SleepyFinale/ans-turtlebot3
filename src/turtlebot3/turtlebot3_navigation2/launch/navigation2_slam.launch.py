@@ -226,6 +226,7 @@ def _launch_setup(context):
     wait_for_tf_str = LaunchConfiguration('wait_for_tf').perform(context)
     enable_debug_logging_str = LaunchConfiguration('enable_debug_logging').perform(context)
     enable_lethal_watch_str = LaunchConfiguration('enable_lethal_watch').perform(context)
+    enable_retrace_escape_str = LaunchConfiguration('enable_retrace_escape').perform(context)
     enable_controller_collision_watch_str = LaunchConfiguration(
         'enable_controller_collision_watch').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
@@ -591,6 +592,29 @@ def _launch_setup(context):
         condition=IfCondition(enable_lethal_watch_str),
     ))
 
+    # --- Memory-based retrace escape for lethal-start / progress timeout ---
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='nav2_retrace_escape.py',
+        name='nav2_retrace_escape',
+        namespace=ns if ns else None,
+        parameters=[
+            nav2_params_file,
+            {
+                'robot_name': ns if ns else DEFAULT_ROBOT_NAME,
+                'map_frame': map_frame_for_nav,
+                'base_frame': (
+                    f'{ns}/base_footprint' if ns else 'base_footprint'),
+                'nav2_status_topic': 'navigate_to_pose/_action/status',
+                'nav2_cancel_service': 'navigate_to_pose/_action/cancel_goal',
+                'lethal_topic': 'nav2_lethal_inflation',
+                'retrace_active_topic': 'nav2_retrace_active',
+            },
+        ],
+        output='screen',
+        condition=IfCondition(enable_retrace_escape_str),
+    ))
+
     # --- controller_server "collision ahead" -> Bool for central arrival probe ---
     actions.append(Node(
         package='turtlebot3_navigation2',
@@ -686,6 +710,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_lethal_watch', default_value='false',
             description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
+        DeclareLaunchArgument(
+            'enable_retrace_escape', default_value='true',
+            description=(
+                'Enable robot-side memory retrace helper; publishes '
+                '/<robot>/nav2_retrace_active and sends retreat goals on lethal/stall.')),
         DeclareLaunchArgument(
             'enable_controller_collision_watch', default_value='true',
             description=(

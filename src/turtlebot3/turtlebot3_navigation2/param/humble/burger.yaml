@@ -70,8 +70,8 @@ bt_navigator:
     odom_topic: odom
     # Rewritten to an absolute package-share path in navigation2_slam.launch.py.
     default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery_with_lethal_escape.xml"
-    # Reduce BT tick pressure on SBC CPU (20ms => 50ms).
-    bt_loop_duration: 50
+    # Reduce BT tick pressure on SBC CPU (20ms => 100ms) to avoid tick overruns.
+    bt_loop_duration: 100
     # Allow slower action/service acknowledgements under load.
     default_server_timeout: 100
     enable_groot_monitoring: False # Was true, possibly caused TF timestamp mismatches
@@ -118,14 +118,14 @@ controller_server:
   ros__parameters:
     use_sim_time: False
     # De-rate control loop on SBC to reduce missed-rate cascades under fleet load.
-    controller_frequency: 10.0
+    controller_frequency: 8.0
     min_x_velocity_threshold: 0.001
     # TurtleBot3 is differential drive (no y velocity). Keep this low so it
     # doesn't interfere with controller logic / progress checks.
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    # Slightly more patience under fleet TF/map jitter before aborting follow_path.
-    failure_tolerance: 0.45
+    # More patience under fleet TF/map jitter before aborting follow_path.
+    failure_tolerance: 0.70
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     # Explicitly set which goal checker to use (silences "No goal checker was specified" warning)
@@ -137,9 +137,8 @@ controller_server:
       plugin: "nav2_controller::SimpleProgressChecker"
       # Make this less trigger-happy in dynamic / cluttered spaces.
       required_movement_radius: 0.10
-      # Fleet + explorer: allow more time than explorer stall watchdog so Nav2
-      # does not abort before the explorer cancels on stagnation.
-      movement_time_allowance: 7.5
+      # Give retrace/recovery enough time to trigger before controller abort.
+      movement_time_allowance: 32.0
 
     general_goal_checker:
       stateful: True
@@ -197,7 +196,7 @@ local_costmap:
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
       transform_tolerance: 4.0
-      transform_timeout: 0.75
+      transform_timeout: 1.0
       rolling_window: true
       width: 4
       height: 4
@@ -208,9 +207,8 @@ local_costmap:
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        # Slightly reduced vs 0.25 to narrow lethal halos at doorframes; if too tight,
-        # increase ~0.02 m (see README Nav2 / corners).
-        inflation_radius: 0.22
+        # Keep clearance conservative while reducing doorway deadlocks.
+        inflation_radius: 0.20
         # Steeper decay than 3.0: narrows the high-cost halo so door centerlines
         # stay more "free" when turning (bag-20260418-162539: robot_cost ~253).
         cost_scaling_factor: 4.0
@@ -251,7 +249,7 @@ global_costmap:
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
       transform_tolerance: 4.0
-      transform_timeout: 0.75
+      transform_timeout: 1.0
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways.
       robot_radius: 0.12
@@ -289,7 +287,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # Match local: slightly tighter halo so global plans stay navigable in doorways.
-        inflation_radius: 0.22
+        inflation_radius: 0.20
         # Match local: steeper inflation falloff for tight door turns (see local note).
         cost_scaling_factor: 4.0
       always_send_full_costmap: False # Was true, possibly caused TF timestamp mismatches
@@ -317,7 +315,7 @@ planner_server:
   ros__parameters:
     # NavFn at 20Hz often can't keep up on TB3 + large SLAM maps.
     # Reduce planner cadence to avoid compute bursts during map oscillation.
-    expected_planner_frequency: 1.5
+    expected_planner_frequency: 1.0
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
@@ -362,7 +360,7 @@ recoveries_server:
     global_frame: odom
     robot_base_frame: base_footprint
     # Increased transform timeout for SLAM (map->odom transforms may have slight delays)
-    transform_timeout: 0.3
+    transform_timeout: 1.0
     use_sim_time: False
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
@@ -387,7 +385,7 @@ behavior_server:
     global_frame: odom
     robot_base_frame: base_footprint
     transform_tolerance: 4.0
-    transform_timeout: 0.5
+    transform_timeout: 1.0
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4
@@ -396,6 +394,27 @@ behavior_server:
 robot_state_publisher:
   ros__parameters:
     use_sim_time: False
+
+nav2_retrace_escape:
+  ros__parameters:
+    # Keep enough history to reverse out of narrow dead ends.
+    pose_buffer_duration_sec: 24.0
+    pose_sample_min_dist_m: 0.03
+    pose_sample_period_sec: 0.10
+    trigger_on_lethal: true
+    trigger_on_stall: true
+    # Stall trigger is intentionally conservative to avoid false preemptions.
+    stall_timeout_sec: 12.0
+    stall_min_goal_age_sec: 12.0
+    stall_min_history_distance_m: 0.6
+    min_retreat_distance_m: 0.55
+    max_retreat_distance_m: 2.0
+    cooldown_sec: 6.0
+    insufficient_history_warn_throttle_sec: 2.0
+    retreat_result_timeout_sec: 14.0
+    publish_hz: 4.0
+    tick_hz: 8.0
+    tf_lookup_timeout_sec: 0.12
 
 waypoint_follower:
   ros__parameters:
