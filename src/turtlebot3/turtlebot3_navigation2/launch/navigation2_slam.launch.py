@@ -270,9 +270,10 @@ def _launch_setup(context):
     fleet_use_local_nav_map = (
         fleet_active and bool(ns) and
         nav2_use_local_slam_map_str.lower() in ('1', 'true', 'yes'))
-    fleet_map_relay = fleet_active and bool(ns) and fleet_map_relay_hz > 0.0
-    if fleet_map_relay:
-        fleet_use_local_nav_map = False
+    # Throttled merged-map relay is incompatible with Nav2 on local /<robot>/map.
+    fleet_map_relay = (
+        fleet_active and bool(ns) and fleet_map_relay_hz > 0.0
+        and not fleet_use_local_nav_map)
 
     nav2_bringup_launch_dir = os.path.join(
         get_package_share_directory('nav2_bringup'), 'launch')
@@ -327,11 +328,22 @@ def _launch_setup(context):
         output='screen',
     ))
 
+    # Fleet Nav2 listens on global /tf; robot + SLAM publish on /{ns}/tf only.
+    if ns and fleet_active:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='namespace_tf_to_global_tf_relay.py',
+            name='namespace_tf_to_global_tf_relay',
+            parameters=[{'robot_namespace': ns}],
+            output='screen',
+        ))
+
     # Standalone namespaced robot: SLAM uses {ns}/map but goals / BT often use
     # world frame "map". Publish map -> {ns}/map on /{ns}/tf_static (Python
     # broadcaster + periodic refresh; tf2_ros CLI under launch was unreliable).
-    # With fleet_mode:=true, Nav2 uses global /tf — run start_central.sh (or set
-    # fleet_mode:=false when testing the robot alone).
+    # With fleet_mode:=true, Nav2 uses global /tf; this launch republishes
+    # /{ns}/tf -> /tf so the robot works without central. Central can still add
+    # world frames on /tf when the bridge is up.
     if ns and not fleet_active:
         # tf2_ros.StaticTransformBroadcaster uses absolute "/tf_static". Same
         # remapping as Nav2/slam so the bridge publishes on /<ns>/tf_static.
@@ -758,9 +770,9 @@ def generate_launch_description():
             'fleet_map_relay_hz', default_value='1.5',
             description=(
                 'Fleet only: if > 0, throttle merged /map to /map_relay at this max rate (Hz). '
-                'Reduces DDS load on Wi‑Fi; requires merged /map from central (set 0 to disable relay). '
-                'Higher Hz lowers static-layer staleness; use 0 + nav2_use_local_slam_map:=true '
-                'if merged-map lethal alignment is suspected.')),
+                'Reduces DDS load on Wi‑Fi; requires merged /map from central. Disabled automatically '
+                'when nav2_use_local_slam_map:=true (local /<robot>/map). Set 0 to disable relay '
+                'when using merged /map without throttling.')),
         DeclareLaunchArgument(
             'fleet_tf_map_wait_timeout_sec', default_value='120.0',
             description=(
@@ -770,7 +782,7 @@ def generate_launch_description():
             'nav2_use_local_slam_map', default_value='false',
             description=(
                 'Fleet only: if true, Nav2 costmaps use local /<robot>/map from SLAM instead of '
-                'merged /map. Set fleet_map_relay_hz:=0 when using this (relay forces merged map). '
+                'merged /map (merged-map throttle relay is turned off automatically). '
                 'Helps when map->robot/map alignment is wrong; explorer goals still use world map.')),
         DeclareLaunchArgument(
             'nav2_use_composition', default_value='false',

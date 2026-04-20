@@ -479,8 +479,11 @@ export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
   use_sim_time:=false \
   use_rviz:=false \
-  fleet_mode:=true
+  fleet_mode:=true \
+  nav2_use_local_slam_map:=true
 ```
+
+**Path 2 (recommended with the current `ans-central-computer` stack):** `nav2_use_local_slam_map:=true` keeps Nav2’s global costmap on each robot’s **`/<robot>/map`** (SLAM) while still using **global** `/tf` from the central relay / `map_merge`. The central **`multi_robot_explorer`** transforms `NavigateToPose` / `compute_path_to_pose` goals into **`<robot>/map`**; omit `nav2_use_local_slam_map` only if you intentionally want Nav2 to consume the merged **`/map`** on the fleet graph instead.
 
 By default, `robot.launch.py` and `navigation2_slam.launch.py` use `HOSTNAME` as the robot namespace (for example host `pinky` -> namespace `pinky`), so `robot_name:=...` is optional unless you want to override it manually. This uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
 
