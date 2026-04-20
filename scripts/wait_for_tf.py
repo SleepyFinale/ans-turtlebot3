@@ -20,6 +20,7 @@ lifecycle activation::
 
   TF_WAIT_FLEET_WORLD_MAP_FRAME=pinky/map
   TF_WAIT_FLEET_MAP_TIMEOUT_SEC=120   # optional; default 120
+  TF_WAIT_FLEET_FULL_CHAIN=false      # optional; if true, also require map->base_footprint
 
 For namespaced setups, set:
   TF_WAIT_ODOM_FRAME=blinky/odom
@@ -194,6 +195,36 @@ def main() -> int:
                     "fleet_mode:=auto to block until the chain appears."
                 )
                 return 3
+
+            full_chain = os.environ.get(
+                "TF_WAIT_FLEET_FULL_CHAIN", "true").lower() in (
+                    "1", "true", "yes")
+            if full_chain:
+                ok_full = False
+                deadline = time.time() + fleet_timeout
+                for base in base_candidates:
+                    base = base.strip()
+                    if not base:
+                        continue
+                    remaining = max(0.0, deadline - time.time())
+                    node.get_logger().info(
+                        f"Waiting for full TF chain: map -> {base} "
+                        f"(map_merge + SLAM + odom). Remaining: {remaining:.1f}s"
+                    )
+                    if remaining > 0.0 and node.wait_for(
+                            "map", base, timeout_sec=remaining):
+                        node.get_logger().info(
+                            f"TF ready: map -> {base} (full chain to base frame)"
+                        )
+                        ok_full = True
+                        break
+                if not ok_full:
+                    node.get_logger().error(
+                        "Timed out waiting for map -> base frame (full chain). "
+                        "Need map_merge, slam_toolbox map->odom, and robot odom->base. "
+                        "Set TF_WAIT_FLEET_FULL_CHAIN=false to skip this check."
+                    )
+                    return 4
 
         node.get_logger().info("TF tree looks ready.")
         return 0

@@ -394,12 +394,15 @@ def _launch_setup(context):
         wait_tf_env['TF_WAIT_FLEET_WORLD_MAP_FRAME'] = f'{ns}/map'
         wait_tf_env['TF_WAIT_FLEET_MAP_TIMEOUT_SEC'] = fleet_tf_map_wait_timeout_str
 
+    # Gated Nav2 start: must reference the same ExecuteProcess below for OnProcessExit.
+    wait_tf_proc = None
     if wait_for_tf_str.lower() == 'true':
-        actions.append(ExecuteProcess(
+        wait_tf_proc = ExecuteProcess(
             cmd=['python3', wait_tf_script],
             output='screen',
             env=wait_tf_env,
-        ))
+        )
+        actions.append(wait_tf_proc)
 
     # --- Nav2 with frame-rewritten params ---
     nav2_params_file = _generate_nav2_params(
@@ -503,8 +506,16 @@ def _launch_setup(context):
                     on_exit=[nav2_group],
                 )
             ))
-    elif wait_for_tf_str.lower() == 'true':
-        actions.append(TimerAction(period=3.0, actions=[nav2_group]))
+    elif wait_for_tf_str.lower() == 'true' and wait_tf_proc is not None:
+        # Nav2 must not start on a fixed delay from launch: TimerAction(3s) raced ahead
+        # of wait_for_tf and let the Nav2 stack load/activate before TF was ready
+        # (local_costmap: odom/base_footprint in different trees).
+        actions.append(RegisterEventHandler(
+            OnProcessExit(
+                target_action=wait_tf_proc,
+                on_exit=[TimerAction(period=1.0, actions=[nav2_group])],
+            )
+        ))
     else:
         actions.append(nav2_group)
 
