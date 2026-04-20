@@ -542,17 +542,22 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
   - Verify this path by watching for `GridBased: failed to create plan, invalid use: Starting point in lethal space!` followed by visible reverse motion and a new path publication on `/<robot>/plan`.
   - Keep `fleet_mode:=true` when using `start_central.sh` so recovery and replanning use the same global `/tf` and `/map` graph as the central explorer.
 
-#### Stability tuning profile (Mar 2026)
+#### Stability tuning profile (Apr 2026)
 
 These values are tuned to reduce false `Failed to make progress` aborts when using the central explorer:
 
 - `controller_server.progress_checker.required_movement_radius: 0.10`
-- `controller_server.progress_checker.movement_time_allowance: 45.0`
-- `controller_server.FollowPath.min_speed_theta: 0.10`
-- `local_costmap.local_costmap.transform_timeout: 0.5`
-- `global_costmap.global_costmap.transform_timeout: 0.5`
+- `controller_server.progress_checker.movement_time_allowance: 32.0`
+- `controller_server.controller_frequency: 8.0`
+- `bt_navigator.bt_loop_duration: 100`
+- `controller_server.failure_tolerance: 0.70`
+- `local_costmap.local_costmap.transform_timeout: 1.0`
+- `global_costmap.global_costmap.transform_timeout: 1.0`
+- `recoveries_server.transform_timeout: 1.0`
+- `behavior_server.transform_timeout: 1.0`
 - `local_costmap.local_costmap.width/height: 4.0`
-- `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.25`
+- `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.20`
+- `global_costmap.global_costmap.inflation_layer.inflation_radius: 0.20`
 
 Use this with `fleet_mode:=true` when `start_central.sh` is running.
 
