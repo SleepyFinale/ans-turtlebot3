@@ -420,20 +420,30 @@ ls -l /dev/opencr
 
 ### ROS_DOMAIN_ID
 
-In this fleet, **all robots and all Remote PCs/central computers share a single ROS domain: `ROS_DOMAIN_ID=50`**. Every machine that needs to talk to the robots should use this same value.
+This fleet supports two operating modes:
 
-On the robot (SBC):
+- `shared_domain` (legacy): all robots + central share one domain (typically `50`)
+- `bridged_domains` (recommended): each robot uses its own domain and central bridges the contract topics/actions
+
+For bridged mode, load a robot domain profile before launching bringup/Nav2:
 
 ```bash
-echo 'export ROS_DOMAIN_ID=50' >> ~/.bashrc
-source ~/.bashrc
+cd ~/turtlebot3_ws
+source scripts/ros_domain_profile.bash
+echo $ROS_DOMAIN_ID
 ```
 
-**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another unrelated robot or PC on the same network, or ROS 2 traffic will conflict. Within this fleet we intentionally standardize on **50** across all machines.
+You can also pass a robot name explicitly if hostnames differ:
+
+```bash
+source scripts/ros_domain_profile.bash pinky
+```
+
+Domain assignments are defined on central in `ans-central-computer/config/fleet_domain_map.yaml` and must stay in sync with robot hostnames.
 
 ### Multi-robot and central computer
 
-For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), the **central PC** and all robots are distinguished by their namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`). Domain bridges are no longer required in the standard setup; see the central repo for the multi-robot SLAM workflow and diagnostic commands: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), robots remain namespaced (`/blinky`, `/pinky`, `/inky`, `/clyde`). In `bridged_domains` mode, central bridges only the explicit fleet contract topics/actions; this reduces DDS noise and keeps Nav2 local on each robot.
 
 To check TF and connectivity from the central PC, run (from the central workspace):  
 `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
@@ -542,22 +552,17 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
   - Verify this path by watching for `GridBased: failed to create plan, invalid use: Starting point in lethal space!` followed by visible reverse motion and a new path publication on `/<robot>/plan`.
   - Keep `fleet_mode:=true` when using `start_central.sh` so recovery and replanning use the same global `/tf` and `/map` graph as the central explorer.
 
-#### Stability tuning profile (Apr 2026)
+#### Stability tuning profile (Mar 2026)
 
 These values are tuned to reduce false `Failed to make progress` aborts when using the central explorer:
 
 - `controller_server.progress_checker.required_movement_radius: 0.10`
-- `controller_server.progress_checker.movement_time_allowance: 32.0`
-- `controller_server.controller_frequency: 8.0`
-- `bt_navigator.bt_loop_duration: 100`
-- `controller_server.failure_tolerance: 0.70`
-- `local_costmap.local_costmap.transform_timeout: 1.0`
-- `global_costmap.global_costmap.transform_timeout: 1.0`
-- `recoveries_server.transform_timeout: 1.0`
-- `behavior_server.transform_timeout: 1.0`
+- `controller_server.progress_checker.movement_time_allowance: 45.0`
+- `controller_server.FollowPath.min_speed_theta: 0.10`
+- `local_costmap.local_costmap.transform_timeout: 0.5`
+- `global_costmap.global_costmap.transform_timeout: 0.5`
 - `local_costmap.local_costmap.width/height: 4.0`
-- `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.20`
-- `global_costmap.global_costmap.inflation_layer.inflation_radius: 0.20`
+- `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.25`
 
 Use this with `fleet_mode:=true` when `start_central.sh` is running.
 

@@ -352,6 +352,13 @@ def _launch_setup(context):
             executable='map_wire_compressed_republisher.py',
             name='map_wire_compressed_republisher',
             namespace=ns,
+            parameters=[{
+                'input_topic': 'map',
+                'output_topic': 'map_wire_z',
+                # Fleet bridge contract: low-rate, compressed map side channel.
+                'max_publish_hz': 1.0,
+                'compression_level': 3,
+            }],
             output='screen',
         ))
 
@@ -424,7 +431,12 @@ def _launch_setup(context):
         wait_tf_env['TF_WAIT_NAMESPACE'] = ns
         wait_tf_env['TF_WAIT_MAP_FRAME'] = f'{ns}/map'
 
-    if fleet_active and ns and not fleet_auto_mode:
+    fleet_require_global_tf_before_nav2 = (
+        LaunchConfiguration('fleet_require_global_tf_before_nav2').perform(context).lower()
+        in ('1', 'true', 'yes')
+    )
+
+    if fleet_active and ns and not fleet_auto_mode and fleet_require_global_tf_before_nav2:
         wait_tf_env['TF_WAIT_FLEET_WORLD_MAP_FRAME'] = f'{ns}/map'
         wait_tf_env['TF_WAIT_FLEET_MAP_TIMEOUT_SEC'] = fleet_tf_map_wait_timeout_str
         # Hold briefly while map->base stays valid so Nav2 lifecycle does not race a
@@ -721,10 +733,15 @@ def generate_launch_description():
                 'Publish /<robot>/nav2_collision_ahead from controller_server '
                 'rosout lines (e.g. RPP collision ahead)')),
         DeclareLaunchArgument(
-            'fleet_mode', default_value='true',
+            'fleet_mode', default_value='false',
             description=('Fleet topology mode: true=merged /map + inject map TF from '
-                         'central (default), false=standalone namespaced map/TF, '
+                         'central, false=standalone namespaced map/TF (default), '
                          'auto=wait for central global TF/map before starting Nav2.')),
+        DeclareLaunchArgument(
+            'fleet_require_global_tf_before_nav2', default_value='false',
+            description=(
+                'When fleet_mode=true, block Nav2 startup until global map->robot/map TF exists. '
+                'Default false keeps robot control loops local-first and resilient to central jitter.')),
         DeclareLaunchArgument(
             'auto_fleet_wait_timeout_sec', default_value='300.0',
             description=('When fleet_mode=auto, max seconds to wait for central '
@@ -738,7 +755,7 @@ def generate_launch_description():
             'use_central_tf_map', default_value='false',
             description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
         DeclareLaunchArgument(
-            'fleet_map_relay_hz', default_value='3.0',
+            'fleet_map_relay_hz', default_value='1.5',
             description=(
                 'Fleet only: if > 0, throttle merged /map to /map_relay at this max rate (Hz). '
                 'Reduces DDS load on Wi‑Fi; requires merged /map from central (set 0 to disable relay). '

@@ -23,3 +23,8 @@ fi
 echo "ROS 2 Humble and workspace environment loaded from:"
 echo "  Underlay: /opt/ros/humble"
 echo "  Overlay : ${WS_DIR}"
+if [ -n "${ROS_DOMAIN_ID:-}" ]; then
+  echo "  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}"
+else
+  echo "  ROS_DOMAIN_ID: (unset; source scripts/ros_domain_profile.bash for bridged mode)"
+fi
