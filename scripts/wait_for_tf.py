@@ -11,6 +11,9 @@ Why:
 
 This script blocks until those transforms are available (or times out).
 
+Exit codes: 0 ok; 1 map->odom; 2 odom->base; 3 map->robot/map; 4 full chain;
+5 post-settle lost map->base; 130 interrupt.
+
 Env: TF_WAIT_ODOM_ONLY=true to only wait for odom->base_* (robot). Use when
 the launch starts SLAM itself so map->odom appears after SLAM Toolbox starts.
 
@@ -21,6 +24,7 @@ lifecycle activation::
   TF_WAIT_FLEET_WORLD_MAP_FRAME=pinky/map
   TF_WAIT_FLEET_MAP_TIMEOUT_SEC=120   # optional; default 120
   TF_WAIT_FLEET_FULL_CHAIN=false      # optional; if true, also require map->base_footprint
+  TF_WAIT_FLEET_POST_SETTLE_SEC=0    # optional; fleet: seconds to keep verifying map->base
 
 For namespaced setups, set:
   TF_WAIT_ODOM_FRAME=blinky/odom
@@ -225,6 +229,29 @@ def main() -> int:
                         "Set TF_WAIT_FLEET_FULL_CHAIN=false to skip this check."
                     )
                     return 4
+
+        post_settle = float(os.environ.get("TF_WAIT_FLEET_POST_SETTLE_SEC", "0.0"))
+        if post_settle > 0.0 and fleet_map_child:
+            node.get_logger().info(
+                f"Fleet TF post-settle: holding {post_settle:.1f}s while map->base "
+                "stays resolvable..."
+            )
+            deadline = time.time() + post_settle
+            while rclpy.ok() and time.time() < deadline:
+                lost = True
+                for base in base_candidates:
+                    b = base.strip()
+                    if not b:
+                        continue
+                    if node._buffer.can_transform("map", b, rclpy.time.Time()):
+                        lost = False
+                        break
+                if lost:
+                    node.get_logger().error(
+                        "Post-settle: map->base became unavailable (TF dropped / race)."
+                    )
+                    return 5
+                rclpy.spin_once(node, timeout_sec=0.1)
 
         node.get_logger().info("TF tree looks ready.")
         return 0

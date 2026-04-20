@@ -28,7 +28,7 @@
 # global TF + merged map so Nav2 goals in frame `map` match the central stack:
 #   fleet_mode:=true
 #
-# Optional: nav2_use_composition (default true), nav2_use_isolated_container (default false),
+# Optional: nav2_use_composition (default false on Pi), nav2_use_isolated_container (default false),
 # fleet_map_relay_hz, nav2_use_local_slam_map,
 # slam_toolbox_mode (async|sync). See README "Optional fleet tuning".
 
@@ -45,12 +45,15 @@ from launch.actions import (
     ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
+    LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
+    Shutdown,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
+from launch.events.process import ProcessExited
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
@@ -93,6 +96,36 @@ def _default_robot_name():
 
 
 DEFAULT_ROBOT_NAME = _default_robot_name()
+
+
+def _make_wait_tf_exit_handler(nav2_group, delay_sec: float):
+    """Start Nav2 only when wait_for_tf exits 0; otherwise shut the launch down."""
+
+    def _handler(event, context):
+        if not isinstance(event, ProcessExited):
+            return None
+        if event.returncode == 0:
+            if delay_sec > 0.0:
+                return [
+                    TimerAction(
+                        period=float(delay_sec),
+                        actions=[nav2_group],
+                    )
+                ]
+            return [nav2_group]
+        rc = int(event.returncode)
+        reason = (
+            f'wait_for_tf.py exited with code {rc} '
+            '(0=ok, 1=map-odom timeout, 2=odom-base timeout, '
+            '3=map_merge map->robot/map timeout, 4=full-chain timeout, '
+            '5=post-settle lost map->base). Nav2 will not start.'
+        )
+        return [
+            LogInfo(msg=reason),
+            Shutdown(reason=reason),
+        ]
+
+    return _handler
 
 
 def _rewrite_frame(d, key, old_val, new_val):
@@ -393,6 +426,9 @@ def _launch_setup(context):
     if fleet_active and ns and not fleet_auto_mode:
         wait_tf_env['TF_WAIT_FLEET_WORLD_MAP_FRAME'] = f'{ns}/map'
         wait_tf_env['TF_WAIT_FLEET_MAP_TIMEOUT_SEC'] = fleet_tf_map_wait_timeout_str
+        # Hold briefly while map->base stays valid so Nav2 lifecycle does not race a
+        # vanishing root `map` frame (see stabilize_fleet plan: activation race).
+        wait_tf_env['TF_WAIT_FLEET_POST_SETTLE_SEC'] = '2.0'
 
     # Gated Nav2 start: must reference the same ExecuteProcess below for OnProcessExit.
     wait_tf_proc = None
@@ -492,20 +528,13 @@ def _launch_setup(context):
             env=auto_wait_env,
         )
         actions.append(auto_wait_proc)
-        if wait_for_tf_str.lower() == 'true':
-            actions.append(RegisterEventHandler(
-                OnProcessExit(
-                    target_action=auto_wait_proc,
-                    on_exit=[TimerAction(period=3.0, actions=[nav2_group])],
-                )
-            ))
-        else:
-            actions.append(RegisterEventHandler(
-                OnProcessExit(
-                    target_action=auto_wait_proc,
-                    on_exit=[nav2_group],
-                )
-            ))
+        auto_delay = 3.0 if wait_for_tf_str.lower() == 'true' else 0.0
+        actions.append(RegisterEventHandler(
+            OnProcessExit(
+                target_action=auto_wait_proc,
+                on_exit=_make_wait_tf_exit_handler(nav2_group, auto_delay),
+            )
+        ))
     elif wait_for_tf_str.lower() == 'true' and wait_tf_proc is not None:
         # Nav2 must not start on a fixed delay from launch: TimerAction(3s) raced ahead
         # of wait_for_tf and let the Nav2 stack load/activate before TF was ready
@@ -513,7 +542,7 @@ def _launch_setup(context):
         actions.append(RegisterEventHandler(
             OnProcessExit(
                 target_action=wait_tf_proc,
-                on_exit=[TimerAction(period=1.0, actions=[nav2_group])],
+                on_exit=_make_wait_tf_exit_handler(nav2_group, 1.0),
             )
         ))
     else:
@@ -698,8 +727,11 @@ def generate_launch_description():
                 'merged /map. Set fleet_map_relay_hz:=0 when using this (relay forces merged map). '
                 'Helps when map->robot/map alignment is wrong; explorer goals still use world map.')),
         DeclareLaunchArgument(
-            'nav2_use_composition', default_value='true',
-            description='When fleet_mode is true: load Nav2 in one rclcpp component container.'),
+            'nav2_use_composition', default_value='false',
+            description=(
+                'When fleet_mode is true: if true, load Nav2 in one rclcpp component container '
+                '(higher segfault risk on Pi under load). Default false uses separate processes.'
+            )),
         DeclareLaunchArgument(
             'nav2_container_name', default_value='nav2_container',
             description='Component container name for Nav2 composition.'),
