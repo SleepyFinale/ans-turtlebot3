@@ -117,7 +117,8 @@ bt_navigator_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: False
-    controller_frequency: 15.0
+    # De-rate control loop on SBC to reduce missed-rate cascades under fleet load.
+    controller_frequency: 10.0
     min_x_velocity_threshold: 0.001
     # TurtleBot3 is differential drive (no y velocity). Keep this low so it
     # doesn't interfere with controller logic / progress checks.
@@ -157,7 +158,9 @@ controller_server:
       lookahead_time: 1.8
       rotate_to_heading_angular_vel: 1.0
       # Match SLAM / map–odom timing (same rationale as prior DWB block).
-      transform_tolerance: 1.5
+      # Fleet map->odom can lag several seconds under map_merge churn; allow
+      # extra tolerance so transient lag does not immediately abort control.
+      transform_tolerance: 3.0
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
@@ -185,13 +188,14 @@ controller_server_rclcpp_node:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 4.0
-      publish_frequency: 4.0
+      # Lower local costmap churn to reduce CPU pressure on Raspberry Pi.
+      update_frequency: 2.5
+      publish_frequency: 2.5
       global_frame: odom
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 1.5
+      transform_tolerance: 3.0
       transform_timeout: 0.5
       rolling_window: true
       width: 4
@@ -238,13 +242,14 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 4.0
-      publish_frequency: 4.0
+      # Lower global costmap update pressure; map is already throttled.
+      update_frequency: 2.0
+      publish_frequency: 2.0
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: False
       # Increased transform tolerance for SLAM (map->odom may update less frequently than AMCL)
-      transform_tolerance: 1.5
+      transform_tolerance: 3.0
       transform_timeout: 0.5
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways.
@@ -310,7 +315,8 @@ map_saver:
 planner_server:
   ros__parameters:
     # NavFn at 20Hz often can't keep up on TB3 + large SLAM maps.
-    expected_planner_frequency: 3.0
+    # Reduce planner cadence to avoid compute bursts during map oscillation.
+    expected_planner_frequency: 1.5
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
@@ -379,7 +385,7 @@ behavior_server:
       wait_duration: 2.0
     global_frame: odom
     robot_base_frame: base_footprint
-    transform_tolerance: 1.5
+    transform_tolerance: 3.0
     transform_timeout: 0.3
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
