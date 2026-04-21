@@ -38,7 +38,7 @@ import tempfile
 
 import yaml
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -343,18 +343,35 @@ def _launch_setup(context):
     ))
 
     if costmap_scan_relay:
-        actions.append(Node(
-            package='turtlebot3_navigation2',
-            executable='scan_costmap_relay.py',
-            name='scan_costmap_relay',
-            namespace=ns,
-            parameters=[{
-                'input_topic': 'scan_normalized',
-                'output_topic': 'scan_costmap',
-                'max_hz': scan_costmap_max_hz,
-            }],
-            output='screen',
-        ))
+        relay_exec = os.path.join(
+            get_package_prefix('turtlebot3_navigation2'),
+            'lib',
+            'turtlebot3_navigation2',
+            'scan_costmap_relay.py',
+        )
+        if os.path.exists(relay_exec):
+            actions.append(Node(
+                package='turtlebot3_navigation2',
+                executable='scan_costmap_relay.py',
+                name='scan_costmap_relay',
+                namespace=ns,
+                parameters=[{
+                    'input_topic': 'scan_normalized',
+                    'output_topic': 'scan_costmap',
+                    'max_hz': scan_costmap_max_hz,
+                }],
+                output='screen',
+            ))
+        else:
+            costmap_scan_relay = False
+            actions.append(LogInfo(
+                msg=(
+                    f'scan_costmap_max_hz={scan_costmap_max_hz:.2f} requested, but '
+                    'scan_costmap_relay.py is not installed in turtlebot3_navigation2. '
+                    'Continuing with scan_normalized for Nav2 costmaps. '
+                    'Rebuild/install turtlebot3_navigation2 to enable scan throttling.'
+                )
+            ))
 
     # Fleet Nav2 listens on global /tf; robot + SLAM publish on /{ns}/tf only.
     if ns and fleet_active:
