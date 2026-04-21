@@ -32,16 +32,10 @@ class StartupMapSeeder(Node):
         self.declare_parameter('forward_speed_m_s', 0.11)
         self.declare_parameter('reverse_speed_m_s', -0.08)
 
-        rotate_speed = float(self.get_parameter('rotate_speed_rad_s').value)
         forward_speed = float(self.get_parameter('forward_speed_m_s').value)
-        reverse_speed = float(self.get_parameter('reverse_speed_m_s').value)
 
         self._segments: List[Segment] = [
-            Segment(4.0, 0.0, rotate_speed, 'rotate-left'),
             Segment(3.0, forward_speed, 0.0, 'forward'),
-            Segment(4.0, 0.0, -rotate_speed, 'rotate-right'),
-            Segment(2.0, reverse_speed, 0.0, 'reverse'),
-            Segment(2.0, 0.0, 0.25, 'final-align'),
             Segment(1.0, 0.0, 0.0, 'stop'),
         ]
 
