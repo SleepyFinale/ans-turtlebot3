@@ -65,7 +65,7 @@ echo "To check status: sudo systemctl status $SERVICE_NAME"
 echo "To view logs: sudo journalctl -u $SERVICE_NAME"
 echo "To test now: sudo systemctl start $SERVICE_NAME"
 echo ""
-echo "Prereq: only one netplan file should configure wlan0. If \`switch_wifi.sh\` applies lab/star/azure,"
+echo "Prereq: only one netplan file should configure wlan0. If \`switch_wifi.sh\` applies lab/gcri/star/azure,"
 echo "  remove the wifis/wlan0 block from /etc/netplan/50-cloud-init.yaml (see scripts/wifi/switch_wifi.sh"
 echo "  header), then: sudo netplan apply"
 
