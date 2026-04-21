@@ -246,12 +246,12 @@ class LaserScanNormalizer(Node):
             end_idx = min(scan_len - 1, end_idx)
 
             # --- fill cone ---
-            # for i in range(start_idx, end_idx + 1):
-            #     # optional: taper edges (more realistic)
-            #     normalized_msg.ranges[i] = min(
-            #         normalized_msg.ranges[i],
-            #         dist
-            #     ) if not math.isinf(normalized_msg.ranges[i]) else dist
+            for i in range(start_idx, end_idx + 1):
+                # optional: taper edges (more realistic)
+                normalized_msg.ranges[i] = min(
+                    normalized_msg.ranges[i],
+                    dist
+                ) if not math.isinf(normalized_msg.ranges[i]) else dist
 
             
 
