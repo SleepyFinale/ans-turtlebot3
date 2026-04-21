@@ -29,8 +29,8 @@
 #   fleet_mode:=true
 #
 # Optional: nav2_use_composition (default false on Pi), nav2_use_isolated_container (default false),
-# fleet_map_relay_hz, nav2_use_local_slam_map,
-# slam_toolbox_mode (async|sync). See README "Optional fleet tuning".
+# fleet_map_relay_hz, nav2_use_local_slam_map, scan_costmap_max_hz (costmap-only scan throttle),
+# slam_toolbox_mode (async|sync). Robot-side README: ans-turtlebot3 repo root.
 
 import os
 import socket
@@ -144,6 +144,7 @@ def _generate_nav2_params(
     *,
     fleet_use_local_slam_map: bool = False,
     fleet_map_relay: bool = False,
+    costmap_scan_relay: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -173,7 +174,12 @@ def _generate_nav2_params(
         # relative laser topic "scan_normalized" would wrongly resolve to
         # /pinky/local_costmap/scan_normalized (no publisher). Normalizer and
         # SLAM publish at /pinky/scan_normalized — use an absolute topic.
-        scan_abs = f'/{namespace}/scan_normalized'
+        # Optional relay publishes scan_costmap at a lower rate for costmaps only.
+        scan_abs = (
+            f'/{namespace}/scan_costmap'
+            if costmap_scan_relay
+            else f'/{namespace}/scan_normalized'
+        )
         _rewrite_frame(params, 'topic', '/scan_normalized', scan_abs)
         _rewrite_frame(params, 'topic', 'scan_normalized', scan_abs)
         _rewrite_frame(params, 'scan_topic', '/scan_normalized', scan_abs)
@@ -256,6 +262,8 @@ def _launch_setup(context):
         'nav2_use_isolated_container').perform(context)
     fleet_tf_map_wait_timeout_str = LaunchConfiguration(
         'fleet_tf_map_wait_timeout_sec').perform(context)
+    scan_costmap_max_hz_str = LaunchConfiguration(
+        'scan_costmap_max_hz').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -274,6 +282,12 @@ def _launch_setup(context):
     fleet_map_relay = (
         fleet_active and bool(ns) and fleet_map_relay_hz > 0.0
         and not fleet_use_local_nav_map)
+
+    try:
+        scan_costmap_max_hz = float(scan_costmap_max_hz_str)
+    except ValueError:
+        scan_costmap_max_hz = 0.0
+    costmap_scan_relay = bool(ns) and scan_costmap_max_hz > 0.0
 
     nav2_bringup_launch_dir = os.path.join(
         get_package_share_directory('nav2_bringup'), 'launch')
@@ -327,6 +341,20 @@ def _launch_setup(context):
         parameters=[normalizer_params],
         output='screen',
     ))
+
+    if costmap_scan_relay:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='scan_costmap_relay.py',
+            name='scan_costmap_relay',
+            namespace=ns,
+            parameters=[{
+                'input_topic': 'scan_normalized',
+                'output_topic': 'scan_costmap',
+                'max_hz': scan_costmap_max_hz,
+            }],
+            output='screen',
+        ))
 
     # Fleet Nav2 listens on global /tf; robot + SLAM publish on /{ns}/tf only.
     if ns and fleet_active:
@@ -470,6 +498,7 @@ def _launch_setup(context):
         params_file, ns, fleet_active,
         fleet_use_local_slam_map=fleet_use_local_nav_map,
         fleet_map_relay=fleet_map_relay,
+        costmap_scan_relay=costmap_scan_relay,
     )
 
     if fleet_map_relay:
@@ -814,6 +843,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'slam_toolbox_mode', default_value='async',
             description='slam_toolbox node: async (default) or sync (mapper_params_online_sync).'),
+        DeclareLaunchArgument(
+            'scan_costmap_max_hz', default_value='0',
+            description=(
+                'Namespaced robots only: if > 0, relay scan_normalized -> scan_costmap at this '
+                'max rate (Hz) for Nav2 costmaps; SLAM stays on full-rate scan_normalized. '
+                '0 disables (default). Try 5–7.5 on Pi fleet to cut message_filters load.')),
         DeclareLaunchArgument(
             'effective_namespace', default_value=effective_namespace,
             description='(internal) resolved namespace'),
