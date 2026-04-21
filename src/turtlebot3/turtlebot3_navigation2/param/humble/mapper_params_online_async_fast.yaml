@@ -27,6 +27,9 @@ slam_toolbox:
     #map_start_at_dock: true
 
     debug_logging: false
+    # tf2_ros::MessageFilter queue for scan+odom TF (default in node is 1). At 1, any
+    # CPU spike (Nav2 composition, Wi-Fi, map relay) causes "queue is full" scan drops.
+    scan_queue_size: 40
     # Throttle scans to reduce queue overflow when TF isn't ready or processing is slow
     # Process every scan (1 = no throttle)
     throttle_scans: 1
@@ -37,9 +40,11 @@ slam_toolbox:
     min_laser_range: 0.0 #for rastering images
     max_laser_range: 20.0 #for rastering images
     # Balance CPU load with responsiveness; allow more frequent processing when the robot is moving
-    minimum_time_interval: 0.30
+    # Slightly faster pose graph steps so map->odom stays closer to scan/odom
+    # time when Nav2 + costmaps load the Pi (reduces "transform too old").
+    minimum_time_interval: 0.22
     transform_timeout: 0.25  # Increased timeout to handle TF delays better
-    tf_buffer_duration: 30.
+    tf_buffer_duration: 30.0
     stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
     enable_interactive_mode: true
 

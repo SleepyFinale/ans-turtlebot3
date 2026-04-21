@@ -29,6 +29,8 @@ import tf2_ros
 LETHAL_COST = 254
 HIGH_COST = 200
 UNKNOWN_COST = 255
+# action_msgs/msg/GoalStatus — value when FollowPath / navigate_to_pose is running.
+NAV2_GOAL_STATUS_EXECUTING = 2
 
 
 def _now_iso() -> str:
@@ -162,7 +164,12 @@ class Nav2MotionDebugLogger(Node):
     def _lookup_robot_pose_in_map(self) -> Optional[Tuple[float, float]]:
         for frame in self._base_frame_candidates:
             try:
-                t = self._tf_buffer.lookup_transform(self._map_frame, frame, rclpy.time.Time())
+                t = self._tf_buffer.lookup_transform(
+                    self._map_frame,
+                    frame,
+                    rclpy.time.Time(),
+                    timeout=Duration(seconds=0.2),
+                )
                 self._last_tf_pose_time_s = self.get_clock().now().nanoseconds * 1e-9
                 return (float(t.transform.translation.x), float(t.transform.translation.y))
             except Exception:
@@ -284,7 +291,16 @@ class Nav2MotionDebugLogger(Node):
         cmd_ang = float(self._last_cmd_vel.angular.z)
         if abs(cmd_lin - nav_lin) < 0.02 and abs(cmd_ang - nav_ang) < 0.10:
             return 'nav2_or_smoother'
-        if abs(cmd_lin) > 0.02 or abs(cmd_ang) > 0.15:
+        nav_active = abs(nav_lin) > 0.01 or abs(nav_ang) > 0.08
+        cmd_active = abs(cmd_lin) > 0.01 or abs(cmd_ang) > 0.08
+        # Nav2 composition + velocity_smoother: cmd_vel is filtered output; cmd_vel_nav is
+        # the controller topic — they often differ without any non-Nav2 publisher.
+        if nav_active and cmd_active:
+            same_lin = (cmd_lin * nav_lin) >= -1e-6
+            same_ang = (cmd_ang * nav_ang) >= -1e-6
+            if same_lin and same_ang:
+                return 'nav2_velocity_smoother_or_filtered'
+        if not nav_active and cmd_active:
             return 'non_nav2_override'
         return 'indeterminate'
 
@@ -335,7 +351,7 @@ class Nav2MotionDebugLogger(Node):
         if not self._is_fresh(age_costmap_s):
             anomalies.append('global_costmap_unavailable_or_stale')
         if cmd_source_hint == 'non_nav2_override':
-            anomalies.append('cmd_vel_mismatch_vs_cmd_vel_nav')
+            anomalies.append('cmd_vel_without_nav2_cmd_vel_nav')
         if goal_changes_10s >= 5:
             anomalies.append('high_goal_preemption_rate')
         if robot_cost is not None and robot_cost >= LETHAL_COST:
@@ -358,6 +374,15 @@ class Nav2MotionDebugLogger(Node):
         if dist_to_goal is not None and dist_to_goal < 0.1 and robot_cost is not None and \
                 robot_cost >= HIGH_COST:
             anomalies.append('goal_reached_near_obstacle')
+
+        nav_st = action_status.get('nav2_latest_status')
+        if (
+            nav_st == NAV2_GOAL_STATUS_EXECUTING
+            and self._last_plan_time_s is not None
+            and age_plan_s is not None
+            and age_plan_s > self._topic_stale_after_s
+        ):
+            anomalies.append('plan_stale_while_executing')
 
         payload = {
             'robot_pose_map_x': pose_map[0] if pose_map else None,
