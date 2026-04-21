@@ -70,8 +70,17 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        # Launch may already have shut down the default context when SIGINT stops
+        # the stack; avoid RCLError from a second rclpy.shutdown().
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
     return 0
 
 
