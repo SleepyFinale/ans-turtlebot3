@@ -10,7 +10,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from lifecycle_msgs.srv import GetState
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 
 @dataclass
@@ -50,7 +50,10 @@ class StartupMapSeeder(Node):
         self._wait_timeout_sec = max(1.0, float(self.get_parameter('wait_timeout_sec').value))
         self._publish_hz = max(2.0, float(self.get_parameter('publish_hz').value))
 
-        self._pub = self.create_publisher(Twist, cmd_topic, qos_profile_sensor_data)
+        # cmd_vel consumers (controller/velocity_smoother) generally use RELIABLE QoS.
+        # Using sensor-data (best-effort) here can silently drop all commands.
+        cmd_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        self._pub = self.create_publisher(Twist, cmd_topic, cmd_qos)
         self._service_name = f'/{self.get_namespace().strip("/")}/{controller_node}/get_state'
         self._service_name = self._service_name.replace('//', '/')
         self._state_client = self.create_client(GetState, self._service_name)
