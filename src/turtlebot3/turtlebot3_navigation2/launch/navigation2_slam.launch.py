@@ -264,6 +264,12 @@ def _launch_setup(context):
         'fleet_tf_map_wait_timeout_sec').perform(context)
     scan_costmap_max_hz_str = LaunchConfiguration(
         'scan_costmap_max_hz').perform(context)
+    enable_startup_map_seeding_str = LaunchConfiguration(
+        'enable_startup_map_seeding').perform(context)
+    startup_map_seed_wait_timeout_sec_str = LaunchConfiguration(
+        'startup_map_seed_wait_timeout_sec').perform(context)
+    startup_map_seed_publish_hz_str = LaunchConfiguration(
+        'startup_map_seed_publish_hz').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -372,6 +378,21 @@ def _launch_setup(context):
                     'Rebuild/install turtlebot3_navigation2 to enable scan throttling.'
                 )
             ))
+
+    if enable_startup_map_seeding_str.lower() in ('1', 'true', 'yes'):
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='startup_map_seeder.py',
+            name='startup_map_seeder',
+            namespace=ns if ns else None,
+            parameters=[{
+                'controller_server_node': 'controller_server',
+                'wait_timeout_sec': float(startup_map_seed_wait_timeout_sec_str),
+                'publish_hz': float(startup_map_seed_publish_hz_str),
+                'cmd_topic': 'cmd_vel',
+            }],
+            output='screen',
+        ))
 
     # Fleet Nav2 listens on global /tf; robot + SLAM publish on /{ns}/tf only.
     if ns and fleet_active:
@@ -866,6 +887,17 @@ def generate_launch_description():
                 'Namespaced robots only: if > 0, relay scan_normalized -> scan_costmap at this '
                 'max rate (Hz) for Nav2 costmaps; SLAM stays on full-rate scan_normalized. '
                 '0 disables (default). Try 5–7.5 on Pi fleet to cut message_filters load.')),
+        DeclareLaunchArgument(
+            'enable_startup_map_seeding', default_value='false',
+            description=(
+                'If true, run a one-shot startup cmd_vel seeding motion once '
+                'controller_server is ACTIVE. Recommended before central start.')),
+        DeclareLaunchArgument(
+            'startup_map_seed_wait_timeout_sec', default_value='60.0',
+            description='Max seconds startup_map_seeder waits for active controller_server.'),
+        DeclareLaunchArgument(
+            'startup_map_seed_publish_hz', default_value='10.0',
+            description='Twist publish rate (Hz) for startup_map_seeder motion sequence.'),
         DeclareLaunchArgument(
             'effective_namespace', default_value=effective_namespace,
             description='(internal) resolved namespace'),
