@@ -23,11 +23,14 @@ class LaserScanNormalizer(Node):
         # Publish every Nth scan to reduce SLAM Toolbox message filter queue overflow (1 = every scan)
         # Default 4 = ~2.5 Hz at 10 Hz lidar; prevents "queue is full" drops in SLAM
         self.declare_parameter('publish_every_n_scans', 1)
+        # For multi-robot: prefix for frame_id (e.g. "blinky" -> "blinky/base_scan"). Empty = use original.
+        self.declare_parameter('frame_id_prefix', '')
         
         target_readings = self.get_parameter('target_readings').value
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value
         self.publish_every_n = self.get_parameter('publish_every_n_scans').value
+        self._frame_id_prefix = self.get_parameter('frame_id_prefix').value
         self._scan_counter = 0
         
         # Subscribe to the original scan with sensor QoS (best effort, volatile)
@@ -64,6 +67,8 @@ class LaserScanNormalizer(Node):
         # Create a copy of the message
         normalized_msg = LaserScan()
         normalized_msg.header = msg.header
+        if self._frame_id_prefix:
+            normalized_msg.header.frame_id = f"{self._frame_id_prefix}/base_scan"
         normalized_msg.angle_min = msg.angle_min
         normalized_msg.angle_max = msg.angle_max
         normalized_msg.angle_increment = msg.angle_increment

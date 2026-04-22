@@ -45,15 +45,12 @@ else
   colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}"
 fi
 
-if [ -f "${WS_DIR}/install/setup.bash" ]; then
-  echo "Sourcing ${WS_DIR}/install/setup.bash"
-  source "${WS_DIR}/install/setup.bash"
-else
-  echo "Error: install/setup.bash not found. Build may have failed." >&2
-  exit 1
-fi
-
+export TURTLEBOT3_WS="${WS_DIR}"
+export WS_DIR="${WS_DIR}"
 export TURTLEBOT3_MODEL="${TURTLEBOT3_MODEL}"
-echo "TURTLEBOT3_MODEL=${TURTLEBOT3_MODEL}"
 
-echo "Done. Workspace is built and sourced. Use 'source ${WS_DIR}/install/setup.bash' in new shells."
+echo "Loading ROS 2 + workspace environment via scripts/ros_robot_env.bash..."
+source "${SCRIPT_DIR}/ros_robot_env.bash"
+
+echo "TURTLEBOT3_MODEL=${TURTLEBOT3_MODEL}"
+echo "Done. Workspace is built and sourced. Use 'source ${WS_DIR}/install/setup.bash' (or scripts/ros_robot_env.bash) in new shells."

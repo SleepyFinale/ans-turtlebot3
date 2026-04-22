@@ -71,9 +71,11 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(DIRECTORY params
-  DESTINATION share/${PROJECT_NAME}
-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/params")
+  install(DIRECTORY params
+    DESTINATION share/${PROJECT_NAME}
+  )
+endif()
 
 install(
   TARGETS ${PROJECT_NAME}_lib

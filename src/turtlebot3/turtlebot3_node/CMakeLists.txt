@@ -83,9 +83,11 @@ target_link_libraries(${EXECUTABLE_NAME}
 ################################################################################
 # Install
 ################################################################################
-install(DIRECTORY param
-  DESTINATION share/${PROJECT_NAME}
-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/param")
+  install(DIRECTORY param
+    DESTINATION share/${PROJECT_NAME}
+  )
+endif()
 
 install(TARGETS ${EXECUTABLE_NAME}
   DESTINATION lib/${PROJECT_NAME}
