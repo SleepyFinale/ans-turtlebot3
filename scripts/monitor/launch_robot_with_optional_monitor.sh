@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WITH_MONITOR=0
+WITH_MONITOR=1
 MONITOR_IFACE="wlan0"
 MONITOR_INTERVAL="1.0"
 MONITOR_OUTPUT=""
 MONITOR_LINK_MBPS=""
 ROS_LOG_OUTPUT=""
-LAUNCH_PACKAGE="turtlebot3_bringup"
-LAUNCH_FILE="robot.launch.py"
+LAUNCH_PACKAGE="turtlebot3_navigation2"
+LAUNCH_FILE="navigation2_slam.launch.py"
 
 usage() {
   cat <<'EOF'
@@ -16,28 +16,30 @@ Usage:
   launch_robot_with_optional_monitor.sh [options] [-- <ros2 launch args...>]
 
 Options:
-  --with-monitor           Enable bottleneck monitoring while robot.launch.py runs
+  --with-monitor           Enable bottleneck monitoring (default: on)
+  --no-monitor             Disable bottleneck monitoring
   --iface <name>           Monitor interface (default: wlan0)
   --interval <seconds>     Monitor sample interval (default: 1.0)
   --output <path>          Monitor CSV output path
   --link-mbps <value>      Monitor link speed override (Mbps)
   --ros-log-output <path>  Save ros2 launch console output to this file
-  --launch-package <pkg>   ros2 launch package (default: turtlebot3_bringup)
-  --launch-file <file>     ros2 launch file (default: robot.launch.py)
+  --launch-package <pkg>   ros2 launch package (default: turtlebot3_navigation2)
+  --launch-file <file>     ros2 launch file (default: navigation2_slam.launch.py)
   --help                   Show this help
 
 Examples:
-  # Normal bringup (no monitor)
+  # Default: Nav2 SLAM + bottleneck monitor (launch defaults match fleet SLAM README)
   ./scripts/monitor/launch_robot_with_optional_monitor.sh
 
-  # Bringup with monitor
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh --with-monitor
+  # Bringup without monitor
+  ./scripts/monitor/launch_robot_with_optional_monitor.sh --no-monitor \\
+    --launch-package turtlebot3_bringup --launch-file robot.launch.py
 
-  # Bringup with monitor and custom launch args
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh --with-monitor -- robot_name:=pinky
+  # SLAM with monitor and extra ros2 launch overrides
+  ./scripts/monitor/launch_robot_with_optional_monitor.sh -- robot_name:=pinky
 
-  # Nav2 SLAM with monitor + timing log
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh --with-monitor --launch-package turtlebot3_navigation2 --launch-file navigation2_slam.launch.py
+  # Explicit package/file (same as defaults)
+  ./scripts/monitor/launch_robot_with_optional_monitor.sh --launch-package turtlebot3_navigation2 --launch-file navigation2_slam.launch.py
 EOF
 }
 
@@ -46,6 +48,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --with-monitor)
       WITH_MONITOR=1
+      shift
+      ;;
+    --no-monitor)
+      WITH_MONITOR=0
       shift
       ;;
     --iface)
