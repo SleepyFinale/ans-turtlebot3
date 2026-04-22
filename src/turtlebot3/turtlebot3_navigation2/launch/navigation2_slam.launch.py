@@ -812,9 +812,10 @@ def generate_launch_description():
                 'Publish /<robot>/nav2_collision_ahead from controller_server '
                 'rosout lines (e.g. RPP collision ahead)')),
         DeclareLaunchArgument(
-            'fleet_mode', default_value='false',
+            'fleet_mode', default_value='true',
             description=('Fleet topology mode: true=merged /map + inject map TF from '
-                         'central, false=standalone namespaced map/TF (default), '
+                         'central (default for multi-robot + central PC), '
+                         'false=standalone namespaced map/TF, '
                          'auto=wait for central global TF/map before starting Nav2.')),
         DeclareLaunchArgument(
             'fleet_require_global_tf_before_nav2', default_value='false',
@@ -846,7 +847,7 @@ def generate_launch_description():
                 'Fleet only (fleet_mode true, not auto): after odom->base TF, max seconds to wait '
                 'for map_merge transform map->/<robot>/map on global /tf before starting Nav2.')),
         DeclareLaunchArgument(
-            'nav2_use_local_slam_map', default_value='false',
+            'nav2_use_local_slam_map', default_value='true',
             description=(
                 'Fleet only: if true, Nav2 costmaps use local /<robot>/map from SLAM instead of '
                 'merged /map (merged-map throttle relay is turned off automatically). '
@@ -882,13 +883,13 @@ def generate_launch_description():
             'slam_toolbox_mode', default_value='async',
             description='slam_toolbox node: async (default) or sync (mapper_params_online_sync).'),
         DeclareLaunchArgument(
-            'scan_costmap_max_hz', default_value='0',
+            'scan_costmap_max_hz', default_value='6.0',
             description=(
                 'Namespaced robots only: if > 0, relay scan_normalized -> scan_costmap at this '
                 'max rate (Hz) for Nav2 costmaps; SLAM stays on full-rate scan_normalized. '
-                '0 disables (default). Try 5–7.5 on Pi fleet to cut message_filters load.')),
+                '0 disables relay. Default 6.0 for Pi fleet load; try 5–7.5 if tuning.')),
         DeclareLaunchArgument(
-            'enable_startup_map_seeding', default_value='false',
+            'enable_startup_map_seeding', default_value='true',
             description=(
                 'If true, run a one-shot startup cmd_vel seeding motion once '
                 'controller_server is ACTIVE. Recommended before central start.')),
