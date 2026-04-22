@@ -74,7 +74,7 @@ RUN git clone -b v0.5.2 --depth 1 https://github.com/raspberrypi/libcamera.git &
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
     echo "source ${COLCON_WS}/install/setup.bash" >> ~/.bashrc && \
     echo "alias cb='colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release'" >> ~/.bashrc && \
-    echo "export ROS_DOMAIN_ID=30 # TURTLEBOT3" >> ~/.bashrc && \
+    echo "export ROS_DOMAIN_ID=50 # TURTLEBOT3" >> ~/.bashrc && \
     echo 'export LD_LIBRARY_PATH=/usr/local/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH' >> ~/.bashrc && \
     echo "# export TURTLEBOT3_MODEL= # burger, waffle, waffle_pi" >> ~/.bashrc && \
     echo "# export LDS_MODEL= # LDS-01, LDS-02, LDS-03" >> ~/.bashrc

@@ -17,14 +17,50 @@
 # Authors: Darby Lim
 
 import os
+import socket
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir
+from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
+
+
+_GENERIC_DEFAULT_HOSTNAMES = frozenset({
+    'ubuntu', 'raspberrypi', 'raspberry', 'debian', 'linaro-alip', 'localhost', 'omap',
+})
+
+
+def _default_robot_name():
+    """Default namespace when ``robot_name`` is not passed explicitly.
+
+    Use hostname when it identifies the robot; ignore stock image defaults so
+    ``USER`` selects the namespace when ``/etc/hostname`` is still ``ubuntu``.
+    """
+
+    def _short(raw):
+        if not raw:
+            return ''
+        return raw.split('.')[0].strip()
+
+    for key in ('HOSTNAME', 'HOST'):
+        h = _short(os.environ.get(key, ''))
+        if h and h.lower() not in _GENERIC_DEFAULT_HOSTNAMES:
+            return h
+    try:
+        k = _short(socket.gethostname())
+        if k and k.lower() not in _GENERIC_DEFAULT_HOSTNAMES:
+            return k
+    except OSError:
+        pass
+    if os.environ.get('USER') == 'root' and os.environ.get('SUDO_USER'):
+        return os.environ['SUDO_USER']
+    return os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
+
+
+DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
 def generate_launch_description():
@@ -33,9 +69,14 @@ def generate_launch_description():
     LDS_MODEL = os.environ['LDS_MODEL']
     LDS_LAUNCH_FILE = '/hlds_laser.launch.py'
 
+    robot_name = LaunchConfiguration('robot_name')
     namespace = LaunchConfiguration('namespace', default='')
 
-    usb_port = LaunchConfiguration('usb_port', default='/dev/ttyACM0')
+    effective_namespace = PythonExpression(
+        ['"', namespace, '" if "', namespace, '" != "" else "', robot_name, '"']
+    )
+
+    usb_port = LaunchConfiguration('usb_port', default='/dev/opencr')
 
     if ROS_DISTRO == 'humble':
         tb3_param_dir = LaunchConfiguration(
@@ -73,7 +114,7 @@ def generate_launch_description():
             default=os.path.join(get_package_share_directory('hls_lfcd_lds_driver'), 'launch'))
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
-    start_slam_with_normalizer = LaunchConfiguration('start_slam_with_normalizer', default='true')
+    start_slam_with_normalizer = LaunchConfiguration('start_slam_with_normalizer', default='false')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -92,29 +133,37 @@ def generate_launch_description():
             description='Full path to turtlebot3 parameter file to load'),
 
         DeclareLaunchArgument(
+            'robot_name',
+            default_value=DEFAULT_ROBOT_NAME,
+            description=(
+                'Namespace; default is hostname if not a stock image name '
+                '(ubuntu, raspberrypi, …), else login name (USER)'
+            )),
+
+        DeclareLaunchArgument(
             'namespace',
-            default_value=namespace,
-            description='Namespace for nodes'),
+            default_value='',
+            description='Explicit namespace (overrides robot_name if set)'),
 
         DeclareLaunchArgument(
             'start_slam_with_normalizer',
             default_value=start_slam_with_normalizer,
             description='If true, also run scripts/start_slam_with_normalizer.sh'),
 
-        PushRosNamespace(namespace),
+        PushRosNamespace(effective_namespace),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 [ThisLaunchFileDir(), '/turtlebot3_state_publisher.launch.py']),
             launch_arguments={'use_sim_time': use_sim_time,
-                              'namespace': namespace}.items(),
+                              'namespace': effective_namespace}.items(),
         ),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([lidar_pkg_dir, LDS_LAUNCH_FILE]),
             launch_arguments={'port': '/dev/ttyUSB0',
                               'frame_id': 'base_scan',
-                              'namespace': namespace}.items(),
+                              'namespace': effective_namespace}.items(),
         ),
 
         Node(
@@ -122,11 +171,11 @@ def generate_launch_description():
             executable='turtlebot3_ros',
             parameters=[
                 tb3_param_dir,
-                {'namespace': namespace}],
+                {'namespace': effective_namespace}],
             arguments=['-i', usb_port],
+            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
             output='screen'),
 
-        # Optionally start SLAM Toolbox with the laser scan normalizer script
         ExecuteProcess(
             condition=IfCondition(start_slam_with_normalizer),
             cmd=[

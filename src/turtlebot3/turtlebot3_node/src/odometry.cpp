@@ -41,7 +41,7 @@ Odometry::Odometry(
 
   nh_->declare_parameter<std::string>("odometry.frame_id");
   nh_->declare_parameter<std::string>("odometry.child_frame_id");
-  nh_->declare_parameter<std::string>("namespace");
+  nh_->declare_parameter<std::string>("namespace", "");
 
   nh_->declare_parameter<bool>("odometry.use_imu");
   nh_->declare_parameter<bool>("odometry.publish_tf");

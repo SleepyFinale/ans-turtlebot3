@@ -13,7 +13,9 @@ slam_toolbox:
     odom_frame: odom
     map_frame: map
     base_frame: base_footprint
-    scan_topic: /scan_normalized  # Use normalized scan to ensure consistent reading counts
+    # In namespaced setups, slam_toolbox runs inside the robot namespace.
+    # Use a relative topic so each instance subscribes to <namespace>/scan_normalized.
+    scan_topic: scan_normalized  # Use normalized scan to ensure consistent reading counts
     use_map_saver: true
     mode: mapping #localization
 
@@ -25,31 +27,35 @@ slam_toolbox:
     #map_start_at_dock: true
 
     debug_logging: false
+    # tf2_ros::MessageFilter queue for scan+odom TF (default in node is 1). At 1, any
+    # CPU spike (Nav2 composition, Wi-Fi, map relay) causes "queue is full" scan drops.
+    scan_queue_size: 40
     # Throttle scans to reduce queue overflow when TF isn't ready or processing is slow
     # Process every scan (1 = no throttle)
     throttle_scans: 1
     transform_publish_period: 0.02  # 50 Hz; if 0 never publishes map->odom
-    # Slower updates reduce oscillation (scan matcher bouncing between poses)
+    # Slightly faster map updates so the map grows more continuously as the robot moves
     map_update_interval: 0.35
     resolution: 0.05
     min_laser_range: 0.0 #for rastering images
     max_laser_range: 20.0 #for rastering images
-    # Increased minimum time interval to reduce queue overflow
-    # Increased from 0.2 to 0.25 to give SLAM more time to process each scan
-    minimum_time_interval: 0.30
+    # Balance CPU load with responsiveness; allow more frequent processing when the robot is moving
+    # Slightly faster pose graph steps so map->odom stays closer to scan/odom
+    # time when Nav2 + costmaps load the Pi (reduces "transform too old").
+    minimum_time_interval: 0.22
     transform_timeout: 0.25  # Increased timeout to handle TF delays better
-    tf_buffer_duration: 30.
+    tf_buffer_duration: 30.0
     stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
     enable_interactive_mode: true
 
     # General Parameters
     use_scan_matching: true
     use_scan_barycenter: true
-    # Higher thresholds = less frequent matching = less oscillation in ambiguous areas (doorways, halls)
-    # Slightly lower (0.15) for more frequent pose updates to reduce drift accumulation
+    # Thresholds chosen to keep pose updates reasonably frequent even with small motions
     minimum_travel_distance: 0.15
     minimum_travel_heading: 0.15
-    scan_buffer_size: 10
+    # Larger buffer reduces "queue is full" drops when Nav2 + costmaps load the Pi.
+    scan_buffer_size: 20
     scan_buffer_maximum_scan_distance: 10.0
     # Require stronger scan match to reduce oscillation between ambiguous poses
     link_match_minimum_response_fine: 0.2
@@ -58,7 +64,7 @@ slam_toolbox:
     loop_search_maximum_distance: 8.0
     # Loop closure: can cause pose oscillation when robot is stationary
     # (ROS Answers #369118). Reduces jumps in doorways/hallways; map may drift in large loops.
-    do_loop_closing: true
+    do_loop_closing: true # true for original, false for no loop closing
     loop_match_minimum_chain_size: 10           
     loop_match_maximum_variance_coarse: 3.0  
     # Stricter loop closure to avoid false matches in symmetric areas (doorways, halls)

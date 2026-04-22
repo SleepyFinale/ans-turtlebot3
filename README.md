@@ -1,11 +1,13 @@
-# TurtleBot3 Burger Setup Notes
+# TurtleBot3 fleet workspace (robot source)
 
-This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot; you choose the correct **ROS_DOMAIN_ID** and connect using that robot’s hostname or IP.
+This tree is the **canonical** copy of namespaced SLAM + Nav2 launch and parameters for the ANS TurtleBot3 fleet. Deploy and **`colcon build`** on each Raspberry Pi when you change packages; sshfs from a dev machine is fine for editing but local builds on the Pi are the reliable path.
 
-## References (authoritative)
+## Key entry points
 
-- **TurtleBot3 SBC setup (Robotis e-Manual)**: `https://emanual.robotis.com/docs/en/platform/turtlebot3/sbc_setup/`
-- **ROS 2 Humble install (Ubuntu debs)**: `https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html`
+- **SLAM + Nav2:** `src/turtlebot3/turtlebot3_navigation2/launch/navigation2_slam.launch.py`
+- **SLAM tuning:** `src/turtlebot3/turtlebot3_navigation2/param/humble/mapper_params_online_async_fast.yaml` (and siblings)
+- **Optional Pi load relief:** launch arg `scan_costmap_max_hz` (e.g. `6.0`) — costmaps subscribe to throttled `scan_costmap` while SLAM stays on full-rate `scan_normalized`.
+- **Startup map seeding automation:** launch arg `enable_startup_map_seeding:=true` in `navigation2_slam.launch.py` (run before central start)
 
 ## Goal of this document
 
@@ -20,20 +22,22 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 ## Robot fleet reference
 
-Use this table when configuring a given robot. Set **ROS_DOMAIN_ID** on that robot (and on any Remote PC talking to it) to the value below. SSH using the hostname or IP for that robot.
+Use this table when configuring a given robot. SSH using the hostname or IP for that robot. All robots and any Remote PCs or central computers talking to them should share **ROS_DOMAIN_ID=50**.
 
-| Robot  | ROS_DOMAIN_ID | Hostname (Lab)       | Hostname (Azure)    |
-| ------ | ------------- | -------------------- | --------------------|
-| Blinky | 30            | blinky@192.168.0.158 | blinky@172.20.10.13 |
-| Pinky  | 31            | pinky@192.168.0.194  | pinky@172.20.10.14  |
-| Inky   | 32            | inky@\<IP\>          | inky@\<IP\>         |
-| Clyde  | 33            | clyde@\<IP\>         | clyde@\<IP\>        |
+| Robot  | SNS (lab)             | GCRI_LAB (gcri)      | ANS_starlink (star)  | RaspAP (rpi)        | Azure (azure)       |
+| ------ | --------------------- | -------------------- | -------------------- | ------------------- | --------------------|
+| Blinky | blinky@192.168.0.158  | blinky@192.168.50.158| blinky@192.168.1.158 | blinky@10.3.141.158 | blinky@172.20.10.13 |
+| Pinky  | pinky@192.168.0.194   | pinky@192.168.50.194 | pinky@192.168.1.194  | pinky@10.3.141.194  | pinky@172.20.10.14  |
+| Inky   | inky@192.168.0.139    | inky@192.168.50.139  | inky@192.168.1.139   | inky@10.3.141.139   | inky@172.20.10.15   |
+| Clyde  | clyde@192.168.0.236   | clyde@192.168.50.236 | clyde@192.168.1.236  | clyde@10.3.141.236  | clyde@172.20.10.16  |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
 - **ROS distro**: Humble Hawksbill (Ubuntu 22.04 / Jammy)
 
-When following this README, substitute your robot’s hostname/IP and ROS_DOMAIN_ID where indicated.
+When following this README, substitute your robot’s hostname/IP where indicated.
+
+For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), the central PC and all robots are distinguished by per-robot namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
 
 ---
 
@@ -201,11 +205,11 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
 
 ---
 
-## Wi‑Fi switching and static IPs (`scripts/switch_wifi.sh`)
+## Wi‑Fi switching and static IPs (`scripts/wifi/switch_wifi.sh`)
 
 This repo includes a helper script to switch the robot’s Wi‑Fi network and apply consistent IP settings using **netplan**.
 
-- Script path: `scripts/switch_wifi.sh`
+- Script path: `scripts/wifi/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
 
 ### One‑time prerequisite
@@ -222,7 +226,7 @@ Comment out or remove the `wifis:` / `wlan0:` block from `50-cloud-init.yaml`, l
 sudo netplan apply
 ```
 
-From this point on, Wi‑Fi is managed by `scripts/switch_wifi.sh`.
+From this point on, Wi‑Fi is managed by `scripts/wifi/switch_wifi.sh`.
 
 ### Static IPs on the SNS lab Wi‑Fi
 
@@ -230,17 +234,44 @@ When connected to the **SNS** lab Wi‑Fi, each robot uses a fixed IP (based on 
 
 - **Blinky** (user `blinky`) → `192.168.0.158`
 - **Pinky** (user `pinky`) → `192.168.0.194`
+- **Inky** (user `inky`) → `192.168.0.139`
+- **Clyde** (user `clyde`) → `192.168.0.236`
 
-Gateway for SNS is assumed to be `192.168.0.1` with prefix `/24`.
+### Static IPs on the GCRI_LAB gcri Wi‑Fi
 
-### Static IPs on the Azure hotspot
+When connected to **GCRI_LAB**, each robot uses the same **last octet** as on the SNS lab network, on subnet `192.168.50.0/24`:
+
+- **Blinky** (user `blinky`) → `192.168.50.158`
+- **Pinky** (user `pinky`) → `192.168.50.194`
+- **Inky** (user `inky`) → `192.168.50.139`
+- **Clyde** (user `clyde`) → `192.168.50.236`
+
+### Static IPs on the ANS_starlink star Wi‑Fi
+
+When connected to **ANS_starlink**, each robot uses the same **last octet** as on the SNS lab network, on subnet `192.168.1.0/24`:
+
+- **Blinky** (user `blinky`) → `192.168.1.158`
+- **Pinky** (user `pinky`) → `192.168.1.194`
+- **Inky** (user `inky`) → `192.168.1.139`
+- **Clyde** (user `clyde`) → `192.168.1.236`
+
+### Static IPs on the Azure azure hotspot
 
 When connected to the **Azure** mobile hotspot, each robot also uses a fixed IP:
 
-- **Blinky** (user `blinky`) → `172.20.10.13/28`
-- **Pinky** (user `pinky`) → `172.20.10.14/28`
+- **Blinky** (user `blinky`) → `172.20.10.13`
+- **Pinky** (user `pinky`) → `172.20.10.14`
+- **Inky** (user `inky`) → `172.20.10.15`
+- **Clyde** (user `clyde`) → `172.20.10.16`
 
-Gateway for Azure is assumed to be `172.20.10.1` with prefix `/28` (typical iOS hotspot range).
+### Static IPs on RaspAP rpi Wi-Fi
+
+When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/wifi/switch_wifi.sh`):
+
+- **Blinky** → `10.3.141.158`
+- **Pinky** → `10.3.141.194`
+- **Inky** → `10.3.141.139`
+- **Clyde** → `10.3.141.236`
 
 ### Usage
 
@@ -250,61 +281,65 @@ From `~/turtlebot3_ws` on the robot:
 cd ~/turtlebot3_ws
 
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
-sudo ./scripts/switch_wifi.sh lab
+sudo ./scripts/wifi/switch_wifi.sh lab
+
+# Connect to GCRI_LAB with static IP (per robot/user)
+sudo ./scripts/wifi/switch_wifi.sh gcri
+
+# Connect to Starlink (ANS_starlink) with static IP (per robot/user)
+sudo ./scripts/wifi/switch_wifi.sh star
 
 # Connect to Azure mobile hotspot with static IP (per robot/user)
-sudo ./scripts/switch_wifi.sh azure
+sudo ./scripts/wifi/switch_wifi.sh azure
+
+# Connect to RaspAP with static IP (per robot/user)
+sudo ./scripts/wifi/switch_wifi.sh rpi
 
 # Show current Wi‑Fi SSID and wlan0 IP
-./scripts/switch_wifi.sh status
+./scripts/wifi/switch_wifi.sh status
 ```
 
 The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly (e.g. when logged in as a different account):
 
 ```bash
-sudo ./scripts/switch_wifi.sh lab pinky
-sudo ./scripts/switch_wifi.sh lab blinky
+sudo ./scripts/wifi/switch_wifi.sh lab pinky
+sudo ./scripts/wifi/switch_wifi.sh lab blinky
+sudo ./scripts/wifi/switch_wifi.sh lab inky
+sudo ./scripts/wifi/switch_wifi.sh lab clyde
 
 # or
-ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh lab
-ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh lab
+ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh lab
 ```
 
-You can use the same override pattern for Azure:
+If you change the SNS, GCRI_LAB, ANS_starlink, RaspAP, or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
 
-```bash
-sudo ./scripts/switch_wifi.sh azure pinky
-sudo ./scripts/switch_wifi.sh azure blinky
-
-# or
-ROBOT_NAME=pinky sudo ./scripts/switch_wifi.sh azure
-ROBOT_NAME=blinky sudo ./scripts/switch_wifi.sh azure
-```
-
-If you change the SNS or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/switch_wifi.sh` accordingly.
-
-### Automatic WiFi connection on boot (`scripts/boot_wifi.sh`)
+### Automatic WiFi connection on boot (`scripts/wifi/boot_wifi.sh`)
 
 To prevent the robot from being stuck without WiFi when it boots (e.g., if it was connected to the Azure hotspot before shutdown and the hotspot is not nearby), a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
 
 **Behavior:**
 
-- On boot, the robot **first attempts to connect to SNS (lab WiFi)**
-- If SNS is unavailable or connection fails, it **automatically falls back to Azure (hotspot)**
-- This ensures the robot can connect to WiFi even if the hotspot is not nearby when it boots
+- On boot, the robot **first attempts to connect to SNS (lab)**.
+- If that fails, it tries **GCRI_LAB (gcri)**.
+- If that fails, it tries **ANS_starlink (star)**.
+- If that fails, it tries **Azure (azure)**.
+- This order helps the robot come up on lab or field WiFi before relying on the phone hotspot.
 
 **Installation (one-time setup per robot):**
 
 ```bash
 cd ~/turtlebot3_ws
-sudo ./scripts/install_boot_wifi.sh
+sudo ./scripts/wifi/install_boot_wifi.sh
 ```
 
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
 
 - Detects the robot name from the hostname
-- Attempts to connect to SNS first (waits up to 30 seconds)
-- If SNS fails, switches to Azure and waits for connection
+- Attempts SNS first (waits up to 30 seconds per network)
+- Then GCRI_LAB, then ANS_starlink, then Azure, each with the same timeout behavior
 - Logs all connection attempts to the systemd journal
 
 **Checking boot WiFi status:**
@@ -328,10 +363,12 @@ sudo journalctl -u boot-wifi.service -f
 You can test the boot WiFi script manually (without rebooting):
 
 ```bash
-sudo ./scripts/boot_wifi.sh
+sudo ./scripts/wifi/boot_wifi.sh
 # or specify robot name explicitly:
-sudo ./scripts/boot_wifi.sh pinky
-sudo ./scripts/boot_wifi.sh blinky
+sudo ./scripts/wifi/boot_wifi.sh pinky
+sudo ./scripts/wifi/boot_wifi.sh blinky
+sudo ./scripts/wifi/boot_wifi.sh inky
+sudo ./scripts/wifi/boot_wifi.sh clyde
 ```
 
 **Disabling boot WiFi (if needed):**
@@ -352,33 +389,131 @@ sudo systemctl start boot-wifi.service
 
 ### USB port settings for OpenCR
 
-After the workspace is built, set udev rules so the OpenCR is accessible:
+The OpenCR enumerates as a USB serial device (`ttyACM*`). udev can recognize it by USB vendor and product ID (STM32 Virtual ComPort: `0483` / `5740`) and create a stable symlink **`/dev/opencr`**, so bringup and scripts do not depend on `ttyACM0` vs `ttyACM1` ordering. Bringup in this workspace defaults to `usb_port:=/dev/opencr`.
+
+#### Step 1 — Create the rules file
 
 ```bash
-sudo cp $(ros2 pkg prefix turtlebot3_bringup)/share/turtlebot3_bringup/script/99-turtlebot3-cdc.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo nano /etc/udev/rules.d/99-opencr.rules
 ```
+
+#### Step 2 — Add this content
+
+The comment line in the file reminds you which rules file you are editing.
+
+```text
+# /etc/udev/rules.d/99-opencr.rules
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="opencr", MODE:="0666"
+```
+
+#### Step 3 — Reload and verify
+
+Run `udevadm` to reload rules and re-trigger `tty` devices, then list `/dev/opencr`. Replug the OpenCR USB cable if the symlink is not created until the device is seen again.
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=tty
+ls -l /dev/opencr
+```
+
+`ls -l` should show `opencr` pointing at the underlying `ttyACM*` node.
+
+**Note:** Robotis ships `99-turtlebot3-cdc.rules` in `turtlebot3_bringup` (symlink `tb3_lidar`, `ID_MM_DEVICE_IGNORE` for several USB IDs, permissions). Keeping **both** that file (copied to `/etc/udev/rules.d/`) and `99-opencr.rules` is normal: matching rules stack, and `99-opencr.rules` adds the **`opencr`** name for `0483:5740`. If you install **only** the snippet above and ModemManager ever claims the port, add `ENV{ID_MM_DEVICE_IGNORE}="1",` on the same rule line (Robotis does this for `5740` in their file).
 
 ### ROS_DOMAIN_ID
 
-On each robot, set **ROS_DOMAIN_ID** to the value for that robot (see [Robot fleet reference](#robot-fleet-reference)). The Remote PC that controls or monitors the robot must use the **same** ROS_DOMAIN_ID.
+This fleet supports two operating modes:
 
-On the robot (SBC):
+- `shared_domain` (legacy): all robots + central share one domain (typically `50`)
+- `bridged_domains` (recommended): each robot uses its own domain and central bridges the contract topics/actions
 
-```bash
-echo 'export ROS_DOMAIN_ID=<ID>' >> ~/.bashrc   # use 30, 31, 32, or 33 for Blinky, Pinky, Inky, Clyde
-source ~/.bashrc
-```
-
-On the Remote PC, set the same value so they can communicate:
+For bridged mode, load a robot domain profile before launching bringup/Nav2:
 
 ```bash
-export ROS_DOMAIN_ID=<ID>
-# or add to ~/.bashrc
+cd ~/turtlebot3_ws
+source scripts/ros_domain_profile.bash
+echo $ROS_DOMAIN_ID
 ```
 
-**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another robot or PC on the same network, or ROS 2 traffic will conflict.
+You can also pass a robot name explicitly if hostnames differ:
+
+```bash
+source scripts/ros_domain_profile.bash pinky
+```
+
+Domain assignments are defined on central in `ans-central-computer/config/fleet_domain_map.yaml` and must stay in sync with robot hostnames.
+
+### Multi-robot and central computer
+
+For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), robots remain namespaced (`/blinky`, `/pinky`, `/inky`, `/clyde`). In `bridged_domains` mode, central bridges only the explicit fleet contract topics/actions; this reduces DDS noise and keeps Nav2 local on each robot.
+
+To check TF and connectivity from the central PC, run (from the central workspace):  
+`ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
+(The script lives in the central repo.) After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
+
+#### High-level changes
+
+#### 1. Per-robot bringup with namespaces
+
+Use the standard bringup launch file in `turtlebot3_bringup`, which now **automatically determines the robot name and applies a matching namespace** (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`):
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+export LDS_MODEL=LDS-02
+
+# Bring up the robot (runs under /<robot_name>, e.g. /blinky)
+ros2 launch turtlebot3_bringup robot.launch.py
+```
+
+#### 2. Namespaced SLAM + Nav2 on each robot
+
+Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name.
+
+**With the central PC** (`./scripts/start_central.sh` on the remote machine): you **must** enable fleet mode so Nav2 uses global `/tf`, `/tf_static`, and `/map` (merged map from `map_merge`, or a relay of `/<robot>/map` when only one robot runs). Use exactly this pattern:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+  use_sim_time:=false \
+  use_rviz:=false \
+  fleet_mode:=true \
+  nav2_use_local_slam_map:=true
+```
+
+**Path 2 (recommended with the current `ans-central-computer` stack):** `nav2_use_local_slam_map:=true` keeps Nav2’s global costmap on each robot’s **`/<robot>/map`** (SLAM) while still using **global** `/tf` from the central relay / `map_merge`. The central **`multi_robot_explorer`** transforms `NavigateToPose` / `compute_path_to_pose` goals into **`<robot>/map`**; omit `nav2_use_local_slam_map` only if you intentionally want Nav2 to consume the merged **`/map`** on the fleet graph instead.
+
+By default, `robot.launch.py` and `navigation2_slam.launch.py` use `HOSTNAME` as the robot namespace (for example host `pinky` -> namespace `pinky`), so `robot_name:=...` is optional unless you want to override it manually. This uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
+
+**Robot only** (bench test, no central stack): omit `fleet_mode` or set `fleet_mode:=false` (default). Nav2 then uses `/<robot>/tf` and the global costmap subscribes to `/<robot>/map` (see `burger.yaml`). `navigation2_slam.launch.py` starts `standalone_world_map_tf.py` so frame `map` matches `/<robot>/map` for goals.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
+```
+
+**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `fleet_mode:=true`, Nav2’s costmaps use **`/map` on the network**: multi-robot **merged** map from the central PC, or **single-robot** relay from `/<robot>/map` started by `start_central.sh`. With `fleet_mode:=false`, the global costmap static layer uses `/<robot>/map` only. On the robot, `navigation2_slam.launch.py` starts a namespaced static TF `map` → `<robot>/map` (identity) in standalone mode so Nav2 and default goals that use frame `map` match SLAM’s `<robot>/map` frame.
+
+**Optional fleet tuning (Wi‑Fi, CPU):** Keep **Chrony** in sync on every Pi and the central PC (`scripts/chrony/setup_chrony_fleet_client.sh`; check with `scripts/chrony/verify_chrony_fleet.sh`). With **`fleet_mode:=true`**, `navigation2_slam.launch.py` supports **`nav2_use_composition:=true`** (default) to run Nav2 in one component container; **`fleet_map_relay_hz:=1.5`** (example) to throttle merged `/map` to `/map_relay` for Nav2; **`nav2_use_local_slam_map:=true`** so Nav2 costmaps use local `/<robot>/map` from SLAM instead of the network `/map` (then send goals in `/<robot>/map` or ensure your central stack transforms goals into that frame); and **`slam_toolbox_mode:=sync`** to try the synchronous SLAM Toolbox node. If both `fleet_map_relay_hz` and `nav2_use_local_slam_map` are set, the relay takes precedence.
+
+> **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
+
+#### 3. Central computer behavior with namespaces
+
+With this single-domain + namespace setup (standard `robot.launch.py` and `navigation2_slam.launch.py` creating per-robot namespaces automatically):
+
+- The central computer also uses **ROS_DOMAIN_ID=50**.
+- Multi-robot tools (RViZ, explorers, custom coordination nodes) can subscribe directly to:
+  - `/blinky/scan_normalized`, `/blinky/map`, `/blinky/tf`, `/blinky/cmd_vel`
+  - `/pinky/…`, `/inky/…`, `/clyde/…`
+- You no longer *need* per-robot domains or domain bridges; robots are distinguished by their namespaces instead of `ROS_DOMAIN_ID`.
 
 ### LDS configuration
 
@@ -391,13 +526,15 @@ source ~/.bashrc
 
 ### OpenCR setup
 
-Connect the OpenCR to the Raspberry Pi via micro USB, then on the robot (SBC) run:
+Connect the OpenCR to the Raspberry Pi via micro USB. Use **`/dev/opencr`** for the serial port; that path requires the udev rules in [USB port settings for OpenCR](#usb-port-settings-for-opencr) (replug USB after applying them if the symlink is missing).
+
+On the robot (SBC) run:
 
 ```bash
 sudo dpkg --add-architecture armhf
 sudo apt-get update
 sudo apt-get install libc6:armhf
-export OPENCR_PORT=/dev/ttyACM0
+export OPENCR_PORT=/dev/opencr
 export OPENCR_MODEL=burger
 rm -rf ./opencr_update.tar.bz2
 wget https://github.com/ROBOTIS-GIT/OpenCR-Binaries/raw/master/turtlebot3/ROS2/latest/opencr_update.tar.bz2
@@ -407,3 +544,139 @@ cd ./opencr_update
 ```
 
 If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release in order. After a successful upload, use the OpenCR test (PUSH SW 1 = move forward, PUSH SW 2 = rotate 180°) to verify assembly.
+
+### Troubleshooting (Nav2 + SLAM on robot)
+
+- **Planner: `source_frame` / frame `map` does not exist / "Could not transform the start or goal pose in the costmap frame":**
+  - **Robot only** (no central PC): launch with **`fleet_mode:=false`** (default) and rebuild/install so `standalone_world_map_tf.py` runs. Check logs for `standalone_world_map_tf: Publishing static TF map -> <robot>/map`.
+  - **If you use `fleet_mode:=true`:** Nav2 listens on **global** `/tf` and **`/map` must be available on the DDS graph** — start **`start_central.sh`** on the PC (multi-robot: `map_merge`; single-robot: `single_robot_map_relay.py` republishes `/<robot>/map` → `/map`). Running `fleet_mode:=true` on the robot **without** the central stack (no relay, no merge) will fail with missing `map` / costmap data.
+- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
+- **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
+- **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
+- **`Starting point in lethal space` / robot gets stuck near inflated obstacles:** The robot Nav2 behavior tree now runs an explicit lethal-escape sequence on planner failure (short backup -> local/global costmap clear -> replan) before falling back to wider recoveries. This does not change costmap area definitions; it changes recovery priority so the robot actively exits lethal cells and retries planning.
+  - Verify this path by watching for `GridBased: failed to create plan, invalid use: Starting point in lethal space!` followed by visible reverse motion and a new path publication on `/<robot>/plan`.
+  - Keep `fleet_mode:=true` when using `start_central.sh` so recovery and replanning use the same global `/tf` and `/map` graph as the central explorer.
+
+#### Stability tuning profile (Mar 2026)
+
+These values are tuned to reduce false `Failed to make progress` aborts when using the central explorer:
+
+- `controller_server.progress_checker.required_movement_radius: 0.10`
+- `controller_server.progress_checker.movement_time_allowance: 45.0`
+- `controller_server.FollowPath.min_speed_theta: 0.10`
+- `local_costmap.local_costmap.transform_timeout: 0.5`
+- `global_costmap.global_costmap.transform_timeout: 0.5`
+- `local_costmap.local_costmap.width/height: 4.0`
+- `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.25`
+
+Use this with `fleet_mode:=true` when `start_central.sh` is running.
+
+#### A/B/C validation sequence
+
+Use short 8-12 minute runs with comparable space/starting pose:
+
+1. **Run A (topology only)**: keep old parameters, but launch with `fleet_mode:=true` and explicit `robot_name:=...`.
+2. **Run B (A + robot tuning)**: apply only robot `burger.yaml` tuning from this section.
+3. **Run C (B + central tuning)**: apply central `multi_robot_explorer.yaml` anti-thrashing tuning.
+
+For each run, record:
+
+- count of `Failed to make progress` in robot Nav2 logs
+- count of `Goal canceled` in central explorer logs
+- average time from goal completion/cancel to next goal assignment
+- rough map growth (coverage) over the same duration
+
+### Nav2 motion debug capture (robot side)
+
+Use this when a robot appears to drive into obstacles even when the assigned goal and global plan look safe.
+
+1. Start robot bringup in terminal 1:
+
+   ```bash
+   source /opt/ros/humble/setup.bash
+   source ~/turtlebot3_ws/install/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   ros2 launch turtlebot3_bringup robot.launch.py
+   ```
+
+2. Start SLAM + Nav2 with structured debug logging in terminal 2:
+
+   ```bash
+   source /opt/ros/humble/setup.bash
+   source ~/turtlebot3_ws/install/setup.bash
+   export TURTLEBOT3_MODEL=burger
+   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+     use_sim_time:=false \
+     use_rviz:=false \
+     enable_debug_logging:=true \
+     debug_log_dir:=~/turtlebot3_ws/logs \
+     debug_log_rate_hz:=5.0
+   ```
+
+3. Start rosbag capture in terminal 3:
+
+   ```bash
+   cd ~/turtlebot3_ws
+   ./scripts/start_nav2_debug_capture.sh
+   # Optional explicit robot name:
+   # ./scripts/start_nav2_debug_capture.sh pinky
+   ```
+
+#### Files produced
+
+- JSONL timeline: `~/turtlebot3_ws/logs/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
+- rosbag2 capture: `~/turtlebot3_ws/logs/<robot>/bag-YYYYmmdd-HHMMSS/`
+
+#### What gets recorded
+
+- Raw topics (bag): map, map updates, local/global costmap (+ updates), plan, cmd_vel, cmd_vel_nav, odom, tf, action status/feedback/result, and /rosout.
+- Derived JSONL metrics (at `debug_log_rate_hz`):
+  - robot pose in map frame
+  - robot costmap cell value at current pose
+  - goal and robot-to-goal distance
+  - plan length, plan endpoint, and plan points outside global costmap bounds
+  - cmd_vel vs cmd_vel_nav vs odom twist
+  - latest NavigateToPose action status
+  - anomaly flags
+
+#### Quick triage checklist
+
+- `robot_in_lethal_cost` or `robot_in_high_cost`: robot position entered high-cost/lethal cells.
+- `plan_has_out_of_global_costmap_points`: global plan includes points outside current global costmap bounds.
+- `robot_in_high_cost_while_plan_low_cost`: local execution diverged from what the global plan/costmap suggested.
+- `forward_cmd_in_high_cost`: motion command remained forward while the robot was already in high-cost area.
+- Compare `cmd_vel_nav` vs `cmd_vel` vs `odom_twist` to separate planner/controller intent from robot motion response.
+
+#### Stop-while-active analyzer (bag only)
+
+Use this when a robot appears to "freeze" while Nav2 still has an active goal:
+
+```bash
+cd ~/turtlebot3_ws
+python3 scripts/analyze_nav2_bag_stop.py \
+  logs/<robot>/bag-YYYYmmdd-HHMMSS \
+  --robot <robot> \
+  --start <unix_start_s> \
+  --end <unix_end_s>
+```
+
+What this flags:
+
+- plan still exists (`plan_poses` above threshold),
+- controller commands rotate-only / near-zero linear velocity,
+- odom linear speed remains near zero,
+- `distance_remaining` trend across the interval.
+
+#### Rosout clue extractor (same bag window)
+
+Use this on the stop interval to pull likely controller/planner reasons from `/rosout`:
+
+```bash
+cd ~/turtlebot3_ws
+python3 scripts/analyze_nav2_bag_rosout.py \
+  logs/<robot>/bag-YYYYmmdd-HHMMSS \
+  --start <interval_start_unix_s> \
+  --end <interval_end_unix_s>
+```
+
+Tip: pair this with the interval printed by `analyze_nav2_bag_stop.py`.
