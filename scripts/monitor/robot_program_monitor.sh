@@ -13,7 +13,7 @@ LAUNCH_FILE="navigation2_slam.launch.py"
 usage() {
   cat <<'EOF'
 Usage:
-  launch_robot_with_optional_monitor.sh [options] [-- <ros2 launch args...>]
+  robot_program_monitor.sh [options] [-- <ros2 launch args...>]
 
 Options:
   --with-monitor           Enable bottleneck monitoring (default: on)
@@ -29,17 +29,17 @@ Options:
 
 Examples:
   # Default: Nav2 SLAM + bottleneck monitor (launch defaults match fleet SLAM README)
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh
+  ./scripts/monitor/robot_program_monitor.sh
 
   # Bringup without monitor
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh --no-monitor \\
+  ./scripts/monitor/robot_program_monitor.sh --no-monitor \
     --launch-package turtlebot3_bringup --launch-file robot.launch.py
 
   # SLAM with monitor and extra ros2 launch overrides
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh -- robot_name:=pinky
+  ./scripts/monitor/robot_program_monitor.sh -- robot_name:=pinky
 
   # Explicit package/file (same as defaults)
-  ./scripts/monitor/launch_robot_with_optional_monitor.sh --launch-package turtlebot3_navigation2 --launch-file navigation2_slam.launch.py
+  ./scripts/monitor/robot_program_monitor.sh --launch-package turtlebot3_navigation2 --launch-file navigation2_slam.launch.py
 EOF
 }
 
@@ -181,7 +181,7 @@ fi
 
 if [ "$WITH_MONITOR" -eq 1 ]; then
   echo "Analyze with:"
-  echo "  ./scripts/monitor/analyze_bottleneck_log.py $(basename "$MONITOR_OUTPUT") --ros-log $(basename "$ROS_LOG_OUTPUT")"
+  echo "  ./scripts/monitor/analyze_log.py"
 fi
 
 exit "$LAUNCH_EXIT_CODE"
