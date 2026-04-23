@@ -22,9 +22,15 @@ find_package(ament_cmake REQUIRED)
 ################################################################################
 install(
   DIRECTORY launch param script
+  
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  PROGRAMS
+    turtlebot3_bringup/auto_gps_fusion.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 ################################################################################
 # Macro for ament package
 ################################################################################
