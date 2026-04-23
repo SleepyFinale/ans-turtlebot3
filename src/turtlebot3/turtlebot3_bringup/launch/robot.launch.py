@@ -21,11 +21,13 @@ import socket
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
+import glob
+import serial
 
 
 _GENERIC_DEFAULT_HOSTNAMES = frozenset({
@@ -62,6 +64,52 @@ def _default_robot_name():
 
 DEFAULT_ROBOT_NAME = _default_robot_name()
 
+def detect_gps_ports():
+    ports = glob.glob('/dev/ttyUSB*')
+    gps_ports = []
+
+    for p in ports:
+        try:
+            ser = serial.Serial(p, 115200, timeout=0.5)
+
+            for _ in range(5):
+                line = ser.readline().decode(errors='ignore')
+
+                if line.startswith('$GP') or line.startswith('$GN'):
+                    gps_ports.append(p)
+                    break
+
+            ser.close()
+        except:
+            pass
+
+    return gps_ports
+
+def launch_gps_nodes(context, *args, **kwargs):
+
+    gps_ports = detect_gps_ports()
+    nodes = []
+
+    for i, port in enumerate(gps_ports[:2]):
+
+        nodes.append(
+            Node(
+                package='nmea_navsat_driver',
+                executable='nmea_serial_driver',
+                name=f'gps_{i+1}',
+                parameters=[{
+                    'port': port,
+                    'baud': 115200,
+                    'frame_id': 'blinky/gps_link'
+                }],
+                remappings=[
+                    ('fix', f'gps{i+1}/fix')
+                ],
+                output='screen'
+            )
+        )
+
+    return nodes
 
 def generate_launch_description():
     TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
@@ -168,10 +216,12 @@ def generate_launch_description():
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([lidar_pkg_dir, LDS_LAUNCH_FILE]),
-            launch_arguments={'port': '/dev/ttyUSB1',
+            launch_arguments={'port': '/dev/ttyUSB2',
                               'frame_id': 'base_scan',
                               'namespace': effective_namespace}.items(),
         ),
+
+        OpaqueFunction(function=launch_gps_nodes),
 
         Node(
             package='turtlebot3_node',
@@ -201,15 +251,11 @@ def generate_launch_description():
         ),
 
         Node(
-            package='nmea_navsat_driver',
-            executable='nmea_serial_driver',
+            package='turtlebot3_bringup',
+            executable='auto_gps_fusion.py',
             name='gps_driver',
             output='screen',
-            parameters=[{
-                'port': '/dev/ttyUSB0',
-                'baud': 115200,
-                'frame_id': 'blinky/gps_link'
-            }]
+            parameters=[{'namespace': namespace}],
         ),
         Node(
             package='robot_localization',
