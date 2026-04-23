@@ -638,6 +638,44 @@ For each run, record:
 - average time from goal completion/cancel to next goal assignment
 - rough map growth (coverage) over the same duration
 
+#### Ultrasonic fusion baseline + A/B/C extension (Apr 2026)
+
+Current baseline in this repo:
+
+- OpenCR publishes `ultrasonic_l`, `ultrasonic_f`, `ultrasonic_r` (`sensor_msgs/Range`) from `turtlebot3_node`.
+- `normalize_laser_scan.py` fuses those ranges into `scan_normalized`, and Nav2 consumes `scan_normalized` in costmaps.
+- Default launch profile is now `ultrasonic_profile:=safe` (conservative overwrite of lidar).
+
+Recommended experiment runs on one robot (e.g. Pinky), then repeat on fleet:
+
+1. **Run A (baseline)**: `ultrasonic_profile:=off nav2_enable_range_layer:=false`
+2. **Run B (new default fusion)**: `ultrasonic_profile:=safe nav2_enable_range_layer:=false`
+3. **Run C (optional direct range layer)**: `ultrasonic_profile:=safe nav2_enable_range_layer:=true`
+
+Use the same route/start pose and keep run durations equal (8-12 min).
+
+Robot launch examples:
+
+```bash
+cd ~/turtlebot3_ws
+./scripts/minimal_rebuild.sh
+
+source /opt/ros/humble/setup.bash
+source ~/turtlebot3_ws/install/setup.bash
+export TURTLEBOT3_MODEL=burger
+
+ros2 launch turtlebot3_bringup robot.launch.py
+
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+  use_sim_time:=false \
+  use_rviz:=false \
+  fleet_mode:=true \
+  ultrasonic_profile:=safe \
+  nav2_enable_range_layer:=false
+```
+
+When you pull or edit params/launch in this repo, rebuild on the Pi before relaunching Nav2.
+
 ### Nav2 motion debug capture (robot side)
 
 Use this when a robot appears to drive into obstacles even when the assigned goal and global plan look safe.

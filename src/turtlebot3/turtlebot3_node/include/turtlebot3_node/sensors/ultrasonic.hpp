@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <array>
 
 #include <sensor_msgs/msg/range.hpp>
 
@@ -49,6 +50,12 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_right_pub_;
 
   std::string name_space_;
+  float min_valid_range_ = 0.02f;
+  float max_valid_range_ = 3.0f;
+  float max_delta_per_cycle_ = 0.35f;
+  bool use_jump_filter_ = true;
+  std::array<float, 3> range_offsets_{{0.0f, 0.0f, 0.0f}};  // [left, front, right]
+  std::array<float, 3> previous_ranges_{{-1.0f, -1.0f, -1.0f}};
 };
 }  // namespace sensors
 }  // namespace turtlebot3

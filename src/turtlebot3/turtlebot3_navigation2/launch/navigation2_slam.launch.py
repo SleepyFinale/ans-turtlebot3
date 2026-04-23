@@ -154,6 +154,7 @@ def _generate_nav2_params(
     fleet_use_local_slam_map: bool = False,
     fleet_map_relay: bool = False,
     costmap_scan_relay: bool = False,
+    nav2_enable_range_layer: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -222,6 +223,28 @@ def _generate_nav2_params(
         _rewrite_frame(params, 'map_topic', '/map', '/map_relay')
         _rewrite_frame(params, 'map_topic', 'map', '/map_relay')
 
+    if nav2_enable_range_layer:
+        for costmap_root in ('local_costmap', 'global_costmap'):
+            costmap_node = params.get(costmap_root, {}).get(costmap_root, {}).get('ros__parameters', {})
+            if not isinstance(costmap_node, dict):
+                continue
+            plugins = costmap_node.get('plugins')
+            if isinstance(plugins, list) and 'range_layer' not in plugins:
+                plugins.append('range_layer')
+            elif not isinstance(plugins, list):
+                costmap_node['plugins'] = ['obstacle_layer', 'inflation_layer', 'range_layer']
+            costmap_node['range_layer'] = {
+                'plugin': 'nav2_costmap_2d::RangeSensorLayer',
+                'enabled': True,
+                'topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
+                'clear_threshold': 0.20,
+                'mark_threshold': 0.80,
+                'clear_on_max_reading': True,
+                'no_readings_timeout': 0.5,
+                'phi': 1.2,
+                'inflate_cone': 1.0,
+            }
+
     # Use a custom navigate-to-pose tree that proactively clears costmaps
     # around planner/controller failures and keeps backup/spin/wait recoveries.
     bt_tree_path = os.path.join(
@@ -286,6 +309,10 @@ def _launch_setup(context):
         'startup_map_seed_wait_timeout_sec').perform(context)
     startup_map_seed_publish_hz_str = LaunchConfiguration(
         'startup_map_seed_publish_hz').perform(context)
+    ultrasonic_profile_str = LaunchConfiguration(
+        'ultrasonic_profile').perform(context)
+    nav2_enable_range_layer_str = LaunchConfiguration(
+        'nav2_enable_range_layer').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -348,12 +375,37 @@ def _launch_setup(context):
     actions = []
 
     # --- Laser scan normalizer ---
+    ultrasonic_profile = ultrasonic_profile_str.strip().lower()
+    if ultrasonic_profile not in ('safe', 'aggressive', 'off'):
+        ultrasonic_profile = 'safe'
+
     normalizer_params = {
         'input_topic': 'scan',
         'output_topic': 'scan_normalized',
         'range_topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
-        'range_frame_ids': ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right']
+        'range_frame_ids': ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right'],
+        # Small temporal/median filtering on HC-SR04-style readings reduces
+        # transient echoes from glossy surfaces and stale obstacle ghosts.
+        'ultrasonic_window_size': 3,
+        'ultrasonic_max_age_sec': 0.40,
+        'ultrasonic_min_valid_range': 0.02,
+        'ultrasonic_max_valid_range': 3.0,
+        'ultrasonic_fusion_enabled': ultrasonic_profile != 'off',
+        'ultrasonic_lidar_min_override_delta': 0.10,
+        'ultrasonic_max_delta_per_update': 0.45,
+        'ultrasonic_hysteresis_m': 0.03,
+        'ultrasonic_cone_scale': 1.0,
     }
+    if ultrasonic_profile == 'aggressive':
+        normalizer_params['ultrasonic_lidar_min_override_delta'] = 0.04
+        normalizer_params['ultrasonic_max_delta_per_update'] = 0.70
+        normalizer_params['ultrasonic_hysteresis_m'] = 0.01
+        normalizer_params['ultrasonic_cone_scale'] = 1.25
+    elif ultrasonic_profile == 'safe':
+        normalizer_params['ultrasonic_lidar_min_override_delta'] = 0.12
+        normalizer_params['ultrasonic_max_delta_per_update'] = 0.35
+        normalizer_params['ultrasonic_hysteresis_m'] = 0.04
+        normalizer_params['ultrasonic_cone_scale'] = 0.85
     if ns:
         normalizer_params['frame_id_prefix'] = ns
 
@@ -556,6 +608,8 @@ def _launch_setup(context):
         fleet_use_local_slam_map=fleet_use_local_nav_map,
         fleet_map_relay=fleet_map_relay,
         costmap_scan_relay=costmap_scan_relay,
+        nav2_enable_range_layer=(
+            nav2_enable_range_layer_str.lower() in ('1', 'true', 'yes')),
     )
 
     if fleet_map_relay:
@@ -907,6 +961,16 @@ def generate_launch_description():
                 'Namespaced robots only: if > 0, relay scan_normalized -> scan_costmap at this '
                 'max rate (Hz) for Nav2 costmaps; SLAM stays on full-rate scan_normalized. '
                 '0 disables relay. Default 6.0 for Pi fleet load; try 5–7.5 if tuning.')),
+        DeclareLaunchArgument(
+            'ultrasonic_profile', default_value='safe',
+            description=(
+                'Ultrasonic+l lidar fusion profile for normalize_laser_scan.py: '
+                'safe (default), aggressive, or off.')),
+        DeclareLaunchArgument(
+            'nav2_enable_range_layer', default_value='false',
+            description=(
+                'If true, inject Nav2 RangeSensorLayer (ultrasonic topics) into local/global '
+                'costmaps for A/B testing. Default false keeps scan-fusion-only behavior.')),
         DeclareLaunchArgument(
             'enable_startup_map_seeding', default_value='true',
             description=(
