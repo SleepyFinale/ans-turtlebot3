@@ -11,8 +11,20 @@ Why:
 
 This script blocks until those transforms are available (or times out).
 
+Exit codes: 0 ok; 1 map->odom; 2 odom->base; 3 map->robot/map; 4 full chain;
+5 post-settle lost map->base; 130 interrupt.
+
 Env: TF_WAIT_ODOM_ONLY=true to only wait for odom->base_* (robot). Use when
 the launch starts SLAM itself so map->odom appears after SLAM Toolbox starts.
+
+Fleet (central map_merge): after odom->base succeeds, optionally wait for
+world_frame -> <robot>/map on global /tf so Nav2's ``map`` frame exists before
+lifecycle activation::
+
+  TF_WAIT_FLEET_WORLD_MAP_FRAME=pinky/map
+  TF_WAIT_FLEET_MAP_TIMEOUT_SEC=120   # optional; default 120
+  TF_WAIT_FLEET_FULL_CHAIN=false      # optional; if true, also require map->base_footprint
+  TF_WAIT_FLEET_POST_SETTLE_SEC=0    # optional; fleet: seconds to keep verifying map->base
 
 For namespaced setups, set:
   TF_WAIT_ODOM_FRAME=blinky/odom
@@ -170,6 +182,76 @@ def main() -> int:
                 "Check robot bringup is publishing base TF and ROS_DOMAIN_ID matches."
             )
             return 2
+
+        fleet_map_child = os.environ.get("TF_WAIT_FLEET_WORLD_MAP_FRAME", "").strip()
+        if fleet_map_child:
+            fleet_timeout = float(
+                os.environ.get("TF_WAIT_FLEET_MAP_TIMEOUT_SEC", "120.0"))
+            node.get_logger().info(
+                f"Waiting for fleet world TF: map -> {fleet_map_child} "
+                f"(map_merge on central). Timeout: {fleet_timeout:.1f}s"
+            )
+            ok_map = node.wait_for("map", fleet_map_child, timeout_sec=fleet_timeout)
+            if not ok_map:
+                node.get_logger().error(
+                    f"Timed out waiting for map -> {fleet_map_child}. "
+                    "Start central start_central.sh (map_merge) before Nav2, or use "
+                    "fleet_mode:=auto to block until the chain appears."
+                )
+                return 3
+
+            full_chain = os.environ.get(
+                "TF_WAIT_FLEET_FULL_CHAIN", "true").lower() in (
+                    "1", "true", "yes")
+            if full_chain:
+                ok_full = False
+                deadline = time.time() + fleet_timeout
+                for base in base_candidates:
+                    base = base.strip()
+                    if not base:
+                        continue
+                    remaining = max(0.0, deadline - time.time())
+                    node.get_logger().info(
+                        f"Waiting for full TF chain: map -> {base} "
+                        f"(map_merge + SLAM + odom). Remaining: {remaining:.1f}s"
+                    )
+                    if remaining > 0.0 and node.wait_for(
+                            "map", base, timeout_sec=remaining):
+                        node.get_logger().info(
+                            f"TF ready: map -> {base} (full chain to base frame)"
+                        )
+                        ok_full = True
+                        break
+                if not ok_full:
+                    node.get_logger().error(
+                        "Timed out waiting for map -> base frame (full chain). "
+                        "Need map_merge, slam_toolbox map->odom, and robot odom->base. "
+                        "Set TF_WAIT_FLEET_FULL_CHAIN=false to skip this check."
+                    )
+                    return 4
+
+        post_settle = float(os.environ.get("TF_WAIT_FLEET_POST_SETTLE_SEC", "0.0"))
+        if post_settle > 0.0 and fleet_map_child:
+            node.get_logger().info(
+                f"Fleet TF post-settle: holding {post_settle:.1f}s while map->base "
+                "stays resolvable..."
+            )
+            deadline = time.time() + post_settle
+            while rclpy.ok() and time.time() < deadline:
+                lost = True
+                for base in base_candidates:
+                    b = base.strip()
+                    if not b:
+                        continue
+                    if node._buffer.can_transform("map", b, rclpy.time.Time()):
+                        lost = False
+                        break
+                if lost:
+                    node.get_logger().error(
+                        "Post-settle: map->base became unavailable (TF dropped / race)."
+                    )
+                    return 5
+                rclpy.spin_once(node, timeout_sec=0.1)
 
         node.get_logger().info("TF tree looks ready.")
         return 0

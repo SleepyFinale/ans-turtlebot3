@@ -1,0 +1,26 @@
+fleet_bridge_contract:
+  version: 1
+  role: "Robot-side publication and command budget for fleet mode."
+
+  defaults:
+    map_wire_max_hz: 1.0
+    map_wire_compression_level: 3
+    map_relay_max_hz: 1.5
+
+  publish_to_central:
+    - "/{robot}/map_wire_z"
+    - "/{robot}/nav2_collision_ahead"
+    - "/{robot}/nav2_retrace_active"
+    - "/{robot}/navigate_to_pose/_action/status"
+    - "/{robot}/navigate_to_pose/_action/feedback"
+    - "/{robot}/navigate_to_pose/_action/result"
+
+  accept_from_central:
+    - "/{robot}/navigate_to_pose"
+    - "/{robot}/navigate_to_pose/_action/cancel_goal"
+
+  avoid_cross_network_if_possible:
+    - "/tf"
+    - "/tf_static"
+    - "/{robot}/scan"
+    - "/{robot}/scan_normalized"

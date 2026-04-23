@@ -292,7 +292,7 @@ fi
 echo "Monitor stopped. Log written to: $CSV_BASENAME"
 echo "Analyze with:"
 if [[ -n "$ROS_LOG_BASENAME" ]]; then
-  echo "  ./scripts/monitor/analyze_bottleneck_log.py $CSV_BASENAME --ros-log $ROS_LOG_BASENAME"
+  echo "  ./scripts/monitor/analyze_log.py $CSV_BASENAME --ros-log $ROS_LOG_BASENAME"
 else
-  echo "  ./scripts/monitor/analyze_bottleneck_log.py $CSV_BASENAME"
+  echo "  ./scripts/monitor/analyze_log.py $CSV_BASENAME"
 fi

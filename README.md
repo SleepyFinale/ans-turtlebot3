@@ -1,11 +1,13 @@
-# TurtleBot3 Burger Setup Notes
+# TurtleBot3 fleet workspace (robot source)
 
-This repo is used to track configuration and code changes across multiple TurtleBot3 Burger robots. The same setup steps apply to each robot to connect to them.
+This tree is the **canonical** copy of namespaced SLAM + Nav2 launch and parameters for the ANS TurtleBot3 fleet. Deploy and **`colcon build`** on each Raspberry Pi when you change packages; sshfs from a dev machine is fine for editing but local builds on the Pi are the reliable path.
 
-## References (authoritative)
+## Key entry points
 
-- **TurtleBot3 SBC setup (Robotis e-Manual)**: `https://emanual.robotis.com/docs/en/platform/turtlebot3/sbc_setup/`
-- **ROS 2 Humble install (Ubuntu debs)**: `https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html`
+- **SLAM + Nav2:** `src/turtlebot3/turtlebot3_navigation2/launch/navigation2_slam.launch.py`
+- **SLAM tuning:** `src/turtlebot3/turtlebot3_navigation2/param/humble/mapper_params_online_async_fast.yaml` (and siblings)
+- **Optional Pi load relief:** launch arg `scan_costmap_max_hz` (e.g. `6.0`) — costmaps subscribe to throttled `scan_costmap` while SLAM stays on full-rate `scan_normalized`.
+- **Startup map seeding automation:** launch arg `enable_startup_map_seeding:=true` in `navigation2_slam.launch.py` (run before central start)
 
 ## Goal of this document
 
@@ -387,30 +389,63 @@ sudo systemctl start boot-wifi.service
 
 ### USB port settings for OpenCR
 
-After the workspace is built, set udev rules so the OpenCR is accessible:
+The OpenCR enumerates as a USB serial device (`ttyACM*`). udev can recognize it by USB vendor and product ID (STM32 Virtual ComPort: `0483` / `5740`) and create a stable symlink **`/dev/opencr`**, so bringup and scripts do not depend on `ttyACM0` vs `ttyACM1` ordering. Bringup in this workspace defaults to `usb_port:=/dev/opencr`.
+
+#### Step 1 — Create the rules file
 
 ```bash
-sudo cp $(ros2 pkg prefix turtlebot3_bringup)/share/turtlebot3_bringup/script/99-turtlebot3-cdc.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo nano /etc/udev/rules.d/99-opencr.rules
 ```
+
+#### Step 2 — Add this content
+
+The comment line in the file reminds you which rules file you are editing.
+
+```text
+# /etc/udev/rules.d/99-opencr.rules
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="opencr", MODE:="0666"
+```
+
+#### Step 3 — Reload and verify
+
+Run `udevadm` to reload rules and re-trigger `tty` devices, then list `/dev/opencr`. Replug the OpenCR USB cable if the symlink is not created until the device is seen again.
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=tty
+ls -l /dev/opencr
+```
+
+`ls -l` should show `opencr` pointing at the underlying `ttyACM*` node.
+
+**Note:** Robotis ships `99-turtlebot3-cdc.rules` in `turtlebot3_bringup` (symlink `tb3_lidar`, `ID_MM_DEVICE_IGNORE` for several USB IDs, permissions). Keeping **both** that file (copied to `/etc/udev/rules.d/`) and `99-opencr.rules` is normal: matching rules stack, and `99-opencr.rules` adds the **`opencr`** name for `0483:5740`. If you install **only** the snippet above and ModemManager ever claims the port, add `ENV{ID_MM_DEVICE_IGNORE}="1",` on the same rule line (Robotis does this for `5740` in their file).
 
 ### ROS_DOMAIN_ID
 
-In this fleet, **all robots and all Remote PCs/central computers share a single ROS domain: `ROS_DOMAIN_ID=50`**. Every machine that needs to talk to the robots should use this same value.
+This fleet supports two operating modes:
 
-On the robot (SBC):
+- `shared_domain` (legacy): all robots + central share one domain (typically `50`)
+- `bridged_domains` (recommended): each robot uses its own domain and central bridges the contract topics/actions
+
+For bridged mode, load a robot domain profile before launching bringup/Nav2:
 
 ```bash
-echo 'export ROS_DOMAIN_ID=50' >> ~/.bashrc
-source ~/.bashrc
+cd ~/turtlebot3_ws
+source scripts/ros_domain_profile.bash
+echo $ROS_DOMAIN_ID
 ```
 
-**Warning (e-Manual):** Do not use the same ROS_DOMAIN_ID as another unrelated robot or PC on the same network, or ROS 2 traffic will conflict. Within this fleet we intentionally standardize on **50** across all machines.
+You can also pass a robot name explicitly if hostnames differ:
+
+```bash
+source scripts/ros_domain_profile.bash pinky
+```
+
+Domain assignments are defined on central in `ans-central-computer/config/fleet_domain_map.yaml` and must stay in sync with robot hostnames.
 
 ### Multi-robot and central computer
 
-For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), the **central PC** and all robots are distinguished by their namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`). Domain bridges are no longer required in the standard setup; see the central repo for the multi-robot SLAM workflow and diagnostic commands: [ans-central-computer (multi-robot-slam branch)](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam).
+For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), robots remain namespaced (`/blinky`, `/pinky`, `/inky`, `/clyde`). In `bridged_domains` mode, central bridges only the explicit fleet contract topics/actions; this reduces DDS noise and keeps Nav2 local on each robot.
 
 To check TF and connectivity from the central PC, run (from the central workspace):  
 `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
@@ -446,8 +481,11 @@ export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
   use_sim_time:=false \
   use_rviz:=false \
-  fleet_mode:=true
+  fleet_mode:=true \
+  nav2_use_local_slam_map:=true
 ```
+
+**Path 2 (recommended with the current `ans-central-computer` stack):** `nav2_use_local_slam_map:=true` keeps Nav2’s global costmap on each robot’s **`/<robot>/map`** (SLAM) while still using **global** `/tf` from the central relay / `map_merge`. The central **`multi_robot_explorer`** transforms `NavigateToPose` / `compute_path_to_pose` goals into **`<robot>/map`**; omit `nav2_use_local_slam_map` only if you intentionally want Nav2 to consume the merged **`/map`** on the fleet graph instead.
 
 By default, `robot.launch.py` and `navigation2_slam.launch.py` use `HOSTNAME` as the robot namespace (for example host `pinky` -> namespace `pinky`), so `robot_name:=...` is optional unless you want to override it manually. This uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
 
@@ -488,13 +526,15 @@ source ~/.bashrc
 
 ### OpenCR setup
 
-Connect the OpenCR to the Raspberry Pi via micro USB, then on the robot (SBC) run:
+Connect the OpenCR to the Raspberry Pi via micro USB. Use **`/dev/opencr`** for the serial port; that path requires the udev rules in [USB port settings for OpenCR](#usb-port-settings-for-opencr) (replug USB after applying them if the symlink is missing).
+
+On the robot (SBC) run:
 
 ```bash
 sudo dpkg --add-architecture armhf
 sudo apt-get update
 sudo apt-get install libc6:armhf
-export OPENCR_PORT=/dev/ttyACM0
+export OPENCR_PORT=/dev/opencr
 export OPENCR_MODEL=burger
 rm -rf ./opencr_update.tar.bz2
 wget https://github.com/ROBOTIS-GIT/OpenCR-Binaries/raw/master/turtlebot3/ROS2/latest/opencr_update.tar.bz2

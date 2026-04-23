@@ -33,11 +33,71 @@ class Thresholds:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze Raspberry Pi bottleneck CSV log")
-    parser.add_argument("log_csv", type=Path, help="Path to monitor CSV log")
-    parser.add_argument("--ros-log", type=Path, help="Optional ROS launch console log for pipeline timing analysis")
+    parser.add_argument(
+        "log_csv",
+        type=Path,
+        nargs="?",
+        help="Path to monitor CSV log (default: newest scripts/monitor/logs/pi_bottleneck_*.csv)",
+    )
+    parser.add_argument(
+        "--ros-log",
+        type=Path,
+        help="Optional ROS launch console log (default: newest scripts/monitor/logs/*.log)",
+    )
     parser.add_argument("--json-output", type=Path, help="Optional JSON report output path")
     parser.add_argument("--sustained-seconds", type=float, default=10.0, help="Window length for sustained pressure")
     return parser.parse_args()
+
+
+def _resolve_logs_dir() -> Path:
+    return Path("scripts/monitor/logs")
+
+
+def _latest_matching_file(glob_pattern: str, base_dir: Path | None = None) -> Path | None:
+    if base_dir is None:
+        base_dir = _resolve_logs_dir()
+    if not base_dir.exists():
+        return None
+    matches = [p for p in base_dir.glob(glob_pattern) if p.is_file()]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
+def resolve_log_csv(path: Path | None) -> Path:
+    if path is None:
+        latest = _latest_matching_file("pi_bottleneck_*.csv")
+        if latest:
+            return latest
+        raise FileNotFoundError(
+            "No CSV provided and no matching logs found under scripts/monitor/logs "
+            "(expected pi_bottleneck_*.csv)."
+        )
+
+    if path.exists():
+        return path
+
+    if not path.is_absolute():
+        alt = _resolve_logs_dir() / path.name
+        if alt.exists():
+            return alt
+
+    raise FileNotFoundError(
+        f"Log file not found: {path}. "
+        "Try using the full path, e.g. scripts/monitor/logs/<your_log>.csv"
+    )
+
+
+def resolve_optional_log(path: Path | None) -> Path | None:
+    if path is None:
+        return _latest_matching_file("*.log")
+    if path.exists():
+        return path
+    if not path.is_absolute():
+        alt = _resolve_logs_dir() / path.name
+        if alt.exists():
+            return alt
+    return None
 
 
 def _to_float(row: Dict[str, str], key: str) -> float:
@@ -53,35 +113,12 @@ def _to_float(row: Dict[str, str], key: str) -> float:
 
 
 def load_rows(path: Path) -> List[Dict[str, str]]:
-    if not path.exists() and not path.is_absolute():
-        alt = Path("scripts/monitor/logs") / path.name
-        if alt.exists():
-            path = alt
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Log file not found: {path}. "
-            "Try using the full path, e.g. scripts/monitor/logs/<your_log>.csv"
-        )
-
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
     if not rows:
         raise ValueError("Log has no data rows.")
     return rows
-
-
-def resolve_optional_log(path: Path | None) -> Path | None:
-    if path is None:
-        return None
-    if path.exists():
-        return path
-    if not path.is_absolute():
-        alt = Path("scripts/monitor/logs") / path.name
-        if alt.exists():
-            return alt
-    return None
 
 
 def avg_sample_period(rows: List[Dict[str, str]]) -> float:
@@ -474,7 +511,8 @@ def print_report(
 
 def main() -> None:
     args = parse_args()
-    rows = load_rows(args.log_csv)
+    resolved_csv = resolve_log_csv(args.log_csv)
+    rows = load_rows(resolved_csv)
     th = Thresholds(sustained_seconds=args.sustained_seconds)
     period = avg_sample_period(rows)
     events = build_events(rows, th, period)
@@ -487,6 +525,12 @@ def main() -> None:
         )
     if resolved_ros_log:
         ros_summary = analyze_ros_pipeline_log(resolved_ros_log)
+
+    print(f"Using CSV log: {resolved_csv}")
+    if resolved_ros_log:
+        print(f"Using ROS log: {resolved_ros_log}")
+    else:
+        print("Using ROS log: (none found)")
 
     report = print_report(rows, events, period, ros_summary)
 
