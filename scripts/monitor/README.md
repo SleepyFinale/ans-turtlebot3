@@ -3,7 +3,7 @@
 This monitoring workflow has two scripts:
 
 - `pi_bottleneck_monitor.sh`: collects runtime system and network metrics into CSV.
-- `analyze_bottleneck_log.py`: scans the CSV and reports potential bottlenecks.
+- `analyze_log.py`: scans the CSV and reports potential bottlenecks.
 - `plot_bottleneck_metric.py`: plots any selected numeric metric over time.
 
 ## Why this is useful for ROS 2 robots
@@ -31,16 +31,22 @@ From repository root (`/home/pinky/turtlebot3_ws`):
 
 Press `Ctrl+C` to stop. The script prints the CSV path when it exits.
 
-Then analyze:
+Then analyze (defaults to newest CSV and newest ROS `.log` in `scripts/monitor/logs`):
 
 ```bash
-./scripts/monitor/analyze_bottleneck_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv
+./scripts/monitor/analyze_log.py
+```
+
+Or analyze an explicit CSV:
+
+```bash
+./scripts/monitor/analyze_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv
 ```
 
 Optional JSON report:
 
 ```bash
-./scripts/monitor/analyze_bottleneck_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --json-output scripts/monitor/logs/last_report.json
+./scripts/monitor/analyze_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --json-output scripts/monitor/logs/last_report.json
 ```
 
 ## Optional monitor with robot bringup
@@ -49,16 +55,16 @@ Use the wrapper below to keep your normal bringup flow, and optionally enable mo
 
 ```bash
 # Same behavior as plain bringup (monitor off)
-./scripts/monitor/launch_robot_with_optional_monitor.sh
+./scripts/monitor/robot_program_monitor.sh
 
 # Bringup + monitor together
-./scripts/monitor/launch_robot_with_optional_monitor.sh --with-monitor
+./scripts/monitor/robot_program_monitor.sh --with-monitor
 
 # Bringup + monitor + launch args
-./scripts/monitor/launch_robot_with_optional_monitor.sh --with-monitor -- robot_name:=pinky
+./scripts/monitor/robot_program_monitor.sh --with-monitor -- robot_name:=pinky
 
 # Nav2 SLAM + monitor + pipeline timing capture
-./scripts/monitor/launch_robot_with_optional_monitor.sh --with-monitor --launch-package turtlebot3_navigation2 --launch-file navigation2_slam.launch.py
+./scripts/monitor/robot_program_monitor.sh --with-monitor --launch-package turtlebot3_navigation2 --launch-file navigation2_slam.launch.py
 ```
 
 You can also pass monitor options through the wrapper (for example `--iface eth0`, `--interval 0.5`, or `--output ...`).
@@ -78,7 +84,7 @@ When `--with-monitor` is enabled, the wrapper also saves ROS launch console outp
 ## Analyzer options
 
 ```bash
-./scripts/monitor/analyze_bottleneck_log.py --help
+./scripts/monitor/analyze_log.py --help
 ```
 
 - `--sustained-seconds`: window for sustained-threshold alerts (default `10`).
@@ -88,7 +94,7 @@ When `--with-monitor` is enabled, the wrapper also saves ROS launch console outp
 Example with ROS timing analysis:
 
 ```bash
-./scripts/monitor/analyze_bottleneck_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --ros-log scripts/monitor/logs/ros_launch_YYYYmmdd_HHMMSS.log
+./scripts/monitor/analyze_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --ros-log scripts/monitor/logs/ros_launch_YYYYmmdd_HHMMSS.log
 ```
 
 ## Plot metric over time
