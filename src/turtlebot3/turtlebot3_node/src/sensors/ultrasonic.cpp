@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <cmath>
 
 
 using robotis::turtlebot3::sensors::Ultrasonic;
@@ -33,10 +34,32 @@ Ultrasonic::Ultrasonic(
   ultrasonic_front_pub_ = nh->create_publisher<sensor_msgs::msg::Range>(ultrasonic_topic_name+"_f", this->qos_);
   ultrasonic_right_pub_ = nh->create_publisher<sensor_msgs::msg::Range>(ultrasonic_topic_name+"_r", this->qos_);
 
+  nh_->declare_parameter<float>("ultrasonic.min_valid_range", min_valid_range_);
+  nh_->declare_parameter<float>("ultrasonic.max_valid_range", max_valid_range_);
+  nh_->declare_parameter<bool>("ultrasonic.use_jump_filter", use_jump_filter_);
+  nh_->declare_parameter<float>("ultrasonic.max_delta_per_cycle", max_delta_per_cycle_);
+  nh_->declare_parameter<float>("ultrasonic.left_offset", range_offsets_[0]);
+  nh_->declare_parameter<float>("ultrasonic.front_offset", range_offsets_[1]);
+  nh_->declare_parameter<float>("ultrasonic.right_offset", range_offsets_[2]);
+
   nh_->get_parameter_or<std::string>(
     "namespace",
     name_space_,
     std::string(""));
+  nh_->get_parameter_or<float>("ultrasonic.min_valid_range", min_valid_range_, min_valid_range_);
+  nh_->get_parameter_or<float>("ultrasonic.max_valid_range", max_valid_range_, max_valid_range_);
+  nh_->get_parameter_or<bool>("ultrasonic.use_jump_filter", use_jump_filter_, use_jump_filter_);
+  nh_->get_parameter_or<float>("ultrasonic.max_delta_per_cycle", max_delta_per_cycle_, max_delta_per_cycle_);
+  nh_->get_parameter_or<float>("ultrasonic.left_offset", range_offsets_[0], range_offsets_[0]);
+  nh_->get_parameter_or<float>("ultrasonic.front_offset", range_offsets_[1], range_offsets_[1]);
+  nh_->get_parameter_or<float>("ultrasonic.right_offset", range_offsets_[2], range_offsets_[2]);
+
+  if (min_valid_range_ < 0.0f) {
+    min_valid_range_ = 0.0f;
+  }
+  if (max_valid_range_ <= min_valid_range_) {
+    max_valid_range_ = 3.0f;
+  }
 
   if (name_space_ != "") {
     frame_id_ = name_space_ + "/" + frame_id_;
@@ -49,20 +72,50 @@ void Ultrasonic::publish(
   const rclcpp::Time & now,
   std::shared_ptr<DynamixelSDKWrapper> & dxl_sdk_wrapper)
 {
-  auto ultrasonic_msg = std::make_unique<sensor_msgs::msg::Range>();
-  float sdist[3];
+  float raw_dist[3];
+  std::array<float, 3> filtered_dist;
   const float coneAngle = 15 * (3.145926/180);
 
-  sdist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
+  raw_dist[2] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_l.addr,
     extern_control_table.ultrasonic_l.length);
-  sdist[1] = dxl_sdk_wrapper->get_data_from_device<float>(
+  raw_dist[1] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_f.addr,
     extern_control_table.ultrasonic_f.length);
-  sdist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
+  raw_dist[0] = dxl_sdk_wrapper->get_data_from_device<float>(
     extern_control_table.ultrasonic_r.addr,
     extern_control_table.ultrasonic_r.length);
-  
+
+  for (size_t i = 0; i < filtered_dist.size(); ++i) {
+    float dist = raw_dist[i] + range_offsets_[i];
+    bool valid = std::isfinite(dist) && dist >= min_valid_range_ && dist <= max_valid_range_;
+
+    if (valid && use_jump_filter_ && previous_ranges_[i] > 0.0f) {
+      const float prev = previous_ranges_[i];
+      const float delta = dist - prev;  // negative means "closer" (fast approach)
+
+      // Reject one-tick *increases* that are too large (often multipath/echoes),
+      // but never reject large *decreases* — that is the normal signature of
+      // a suddenly appearing close obstacle in front of the robot.
+      if (delta > max_delta_per_cycle_) {
+        valid = false;
+      }
+    }
+
+    if (!valid) {
+      // When we drop a bad reading, keep the previous "good" value so a transient
+      // outlier doesn't make the system think the world just opened up.
+      if (previous_ranges_[i] > 0.0f) {
+        filtered_dist[i] = previous_ranges_[i];
+      } else {
+        filtered_dist[i] = max_valid_range_;
+      }
+    } else {
+      filtered_dist[i] = dist;
+      previous_ranges_[i] = dist;
+    }
+  }
+
   auto make_range_msg = [&](float dist, const std::string & msg_frame_id)
   {
     sensor_msgs::msg::Range msg;
@@ -74,8 +127,8 @@ void Ultrasonic::publish(
 
     msg.field_of_view = coneAngle;
 
-    msg.min_range = 0.00;
-    msg.max_range = 3.0;
+    msg.min_range = min_valid_range_;
+    msg.max_range = max_valid_range_;
 
     // Handle invalid readings
     if (dist <= msg.min_range || dist > msg.max_range)
@@ -91,13 +144,13 @@ void Ultrasonic::publish(
   };
 
   ultrasonic_left_pub_->publish(
-    make_range_msg(sdist[2], frame_id_ + "_left"));
+    make_range_msg(filtered_dist[2], frame_id_ + "_left"));
 
   ultrasonic_front_pub_->publish(
-    make_range_msg(sdist[1], frame_id_ + "_front"));
+    make_range_msg(filtered_dist[1], frame_id_ + "_front"));
 
   ultrasonic_right_pub_->publish(
-    make_range_msg(sdist[0], frame_id_ + "_right"));
+    make_range_msg(filtered_dist[0], frame_id_ + "_right"));
 
 }
 
