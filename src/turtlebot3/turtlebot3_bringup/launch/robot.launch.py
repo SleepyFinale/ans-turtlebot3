@@ -17,6 +17,7 @@
 # Authors: Darby Lim
 
 import os
+import socket
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -27,10 +28,35 @@ from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonE
 from launch_ros.actions import Node, PushRosNamespace
 
 
+_GENERIC_DEFAULT_HOSTNAMES = frozenset({
+    'ubuntu', 'raspberrypi', 'raspberry', 'debian', 'linaro-alip', 'localhost', 'omap',
+})
+
+
 def _default_robot_name():
-    hostname = os.environ.get('HOSTNAME') or os.environ.get('HOST')
-    if hostname:
-        return hostname.split('.')[0]
+    """Default namespace when ``robot_name`` is not passed explicitly.
+
+    Use hostname when it identifies the robot; ignore stock image defaults so
+    ``USER`` selects the namespace when ``/etc/hostname`` is still ``ubuntu``.
+    """
+
+    def _short(raw):
+        if not raw:
+            return ''
+        return raw.split('.')[0].strip()
+
+    for key in ('HOSTNAME', 'HOST'):
+        h = _short(os.environ.get(key, ''))
+        if h and h.lower() not in _GENERIC_DEFAULT_HOSTNAMES:
+            return h
+    try:
+        k = _short(socket.gethostname())
+        if k and k.lower() not in _GENERIC_DEFAULT_HOSTNAMES:
+            return k
+    except OSError:
+        pass
+    if os.environ.get('USER') == 'root' and os.environ.get('SUDO_USER'):
+        return os.environ['SUDO_USER']
     return os.environ.get('USER') or os.environ.get('LOGNAME') or 'robot'
 
 
@@ -109,7 +135,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'robot_name',
             default_value=DEFAULT_ROBOT_NAME,
-            description='Robot name used as namespace for multi-robot (e.g. blinky, pinky)'),
+            description=(
+                'Namespace; default is hostname if not a stock image name '
+                '(ubuntu, raspberrypi, …), else login name (USER)'
+            )),
 
         DeclareLaunchArgument(
             'namespace',
