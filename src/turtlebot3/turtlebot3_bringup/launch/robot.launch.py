@@ -26,8 +26,6 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
-import glob
-import serial
 
 
 _GENERIC_DEFAULT_HOSTNAMES = frozenset({
@@ -39,7 +37,10 @@ def _default_robot_name():
     """Default namespace when ``robot_name`` is not passed explicitly.
 
     Use hostname when it identifies the robot; ignore stock image defaults so
-    ``USER`` selects the namespace when ``/etc/hostname`` is still ``ubuntu``.
+    ``USER`` selects the namespace when ``/etc/hostname`` is still ``ubuntu``.export TURTLEBOT3_MODEL=burger
+source scripts/ros_domain_profile.bash
+source scripts/ros_robot_env.bash
+ros2 launch turtlebot3_bringup robot.launch.py
     """
 
     def _short(raw):
@@ -63,33 +64,30 @@ def _default_robot_name():
 
 
 DEFAULT_ROBOT_NAME = _default_robot_name()
-
-def detect_gps_ports():
-    ports = glob.glob('/dev/ttyUSB*')
-    gps_ports = []
-
-    for p in ports:
-        try:
-            ser = serial.Serial(p, 115200, timeout=0.5)
-
-            for _ in range(5):
-                line = ser.readline().decode(errors='ignore')
-
-                if line.startswith('$GP') or line.startswith('$GN'):
-                    gps_ports.append(p)
-                    break
-
-            ser.close()
-        except:
-            pass
-
-    return gps_ports
+LIDAR_USB_PORT = '/dev/tb3_lidar'
 
 def launch_gps_nodes(context, *args, **kwargs):
+    robot_name = LaunchConfiguration('robot_name').perform(context)
+    namespace_override = LaunchConfiguration('namespace').perform(context)
+    effective_ns = namespace_override if namespace_override else robot_name
+    gps_port_1 = LaunchConfiguration('gps_port_1').perform(context).strip()
+    gps_port_2 = LaunchConfiguration('gps_port_2').perform(context).strip()
+    gps_baud_1 = int(LaunchConfiguration('gps_baud_1').perform(context))
+    gps_baud_2 = int(LaunchConfiguration('gps_baud_2').perform(context))
 
-    gps_ports = detect_gps_ports()
+    gps_ports = []
+    if gps_port_1:
+        gps_ports.append(gps_port_1)
+    if gps_port_2:
+        gps_ports.append(gps_port_2)
     nodes = []
+    if not gps_ports:
+        print('[robot.launch.py] WARNING: No GPS serial ports configured; starting without nmea_serial_driver nodes.')
+    else:
+        print(f'[robot.launch.py] GPS ports selected: {gps_ports}')
+        print(f'[robot.launch.py] GPS baud rates selected: {[gps_baud_1, gps_baud_2][:len(gps_ports)]}')
 
+    gps_bauds = [gps_baud_1, gps_baud_2]
     for i, port in enumerate(gps_ports[:2]):
 
         nodes.append(
@@ -99,8 +97,8 @@ def launch_gps_nodes(context, *args, **kwargs):
                 name=f'gps_{i+1}',
                 parameters=[{
                     'port': port,
-                    'baud': 115200,
-                    'frame_id': 'blinky/gps_link'
+                    'baud': gps_bauds[i],
+                    'frame_id': f'{effective_ns}/gps_link'
                 }],
                 remappings=[
                     ('fix', f'gps{i+1}/fix')
@@ -125,6 +123,7 @@ def generate_launch_description():
     )
 
     usb_port = LaunchConfiguration('usb_port', default='/dev/opencr')
+    lidar_port = LaunchConfiguration('lidar_port', default=LIDAR_USB_PORT)
 
     if ROS_DISTRO == 'humble':
         tb3_param_dir = LaunchConfiguration(
@@ -181,6 +180,26 @@ def generate_launch_description():
             'usb_port',
             default_value=usb_port,
             description='Connected USB port with OpenCR'),
+        DeclareLaunchArgument(
+            'lidar_port',
+            default_value=lidar_port,
+            description='Connected USB port for lidar (recommended: /dev/tb3_lidar)'),
+        DeclareLaunchArgument(
+            'gps_port_1',
+            default_value='/dev/gps1',
+            description='GPS 1 serial device path (recommended: /dev/gps1)'),
+        DeclareLaunchArgument(
+            'gps_port_2',
+            default_value='/dev/gps2',
+            description='GPS 2 serial device path (recommended: /dev/gps2)'),
+        DeclareLaunchArgument(
+            'gps_baud_1',
+            default_value='115200',
+            description='GPS 1 baud rate (tested default: 115200)'),
+        DeclareLaunchArgument(
+            'gps_baud_2',
+            default_value='115200',
+            description='GPS 2 baud rate (tested default: 115200)'),
 
         DeclareLaunchArgument(
             'tb3_param_dir',
@@ -216,7 +235,7 @@ def generate_launch_description():
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([lidar_pkg_dir, LDS_LAUNCH_FILE]),
-            launch_arguments={'port': '/dev/ttyUSB2',
+            launch_arguments={'port': lidar_port,
                               'frame_id': 'base_scan',
                               'namespace': effective_namespace}.items(),
         ),

@@ -2,6 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.time import Time
 from sensor_msgs.msg import NavSatFix
 import copy
 
@@ -16,10 +17,12 @@ class AutoGPSFusion(Node):
         output_topic = self.get_parameter('output_topic').value
         self.declare_parameter('namespace','')
         self.namespace = self.get_parameter('namespace').value
+        self.declare_parameter('stale_timeout_sec', 1.5)
+        self.stale_timeout_sec = float(self.get_parameter('stale_timeout_sec').value)
 
         self.publisher = self.create_publisher(NavSatFix, output_topic, 10)
 
-        # Storage for incoming GPS messages
+        # Storage for incoming GPS messages (index -> (msg, receive_time_sec))
         self.gps_msgs = {}
 
         self.get_logger().info("GPS fusion node started")
@@ -32,11 +35,11 @@ class AutoGPSFusion(Node):
     # Callbacks
     # -------------------------
     def cb1(self, msg):
-        self.gps_msgs[0] = msg
+        self.gps_msgs[0] = (msg, self.get_clock().now().nanoseconds / 1e9)
         self.publish_fused()
 
     def cb2(self, msg):
-        self.gps_msgs[1] = msg
+        self.gps_msgs[1] = (msg, self.get_clock().now().nanoseconds / 1e9)
         self.publish_fused()
 
     # -------------------------
@@ -47,7 +50,21 @@ class AutoGPSFusion(Node):
         if len(self.gps_msgs) == 0:
             return
 
-        msgs = list(self.gps_msgs.values())
+        now_sec = self.get_clock().now().nanoseconds / 1e9
+        fresh_msgs = []
+        for idx, (msg, recv_sec) in list(self.gps_msgs.items()):
+            if (now_sec - recv_sec) <= self.stale_timeout_sec:
+                fresh_msgs.append(msg)
+            else:
+                # Drop stale source so a dead/noisy receiver does not keep biasing fusion.
+                self.gps_msgs.pop(idx, None)
+
+        msgs = [m for m in fresh_msgs if m.status.status >= 0]
+        if len(msgs) == 0:
+            # Fallback: if both are reporting NO_FIX, pass through freshest anyway.
+            msgs = fresh_msgs
+        if len(msgs) == 0:
+            return
 
         # 1 GPS → passthrough
         if len(msgs) == 1:
@@ -58,8 +75,9 @@ class AutoGPSFusion(Node):
         m1, m2 = msgs[:2]
 
         fused = NavSatFix()
-        fused.header.stamp = self.get_clock().now().to_msg()
-        fused.header.frame_id = f"{self.namespace}/gps_link"
+        newest = max(msgs[:2], key=lambda m: Time.from_msg(m.header.stamp).nanoseconds)
+        fused.header.stamp = newest.header.stamp
+        fused.header.frame_id = newest.header.frame_id or f"{self.namespace}/gps_link"
 
         # simple covariance weighting
         try:

@@ -38,7 +38,7 @@ slam_toolbox:
     map_update_interval: 0.35
     resolution: 0.05
     min_laser_range: 0.0 #for rastering images
-    max_laser_range: 20.0 #for rastering images
+    max_laser_range: 8.0 # LDS-02 capability; avoid over-range warnings/noise
     # Balance CPU load with responsiveness; allow more frequent processing when the robot is moving
     # Slightly faster pose graph steps so map->odom stays closer to scan/odom
     # time when Nav2 + costmaps load the Pi (reduces "transform too old").

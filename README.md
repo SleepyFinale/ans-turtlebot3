@@ -420,6 +420,58 @@ ls -l /dev/opencr
 
 **Note:** Robotis ships `99-turtlebot3-cdc.rules` in `turtlebot3_bringup` (symlink `tb3_lidar`, `ID_MM_DEVICE_IGNORE` for several USB IDs, permissions). Keeping **both** that file (copied to `/etc/udev/rules.d/`) and `99-opencr.rules` is normal: matching rules stack, and `99-opencr.rules` adds the **`opencr`** name for `0483:5740`. If you install **only** the snippet above and ModemManager ever claims the port, add `ENV{ID_MM_DEVICE_IGNORE}="1",` on the same rule line (Robotis does this for `5740` in their file).
 
+### Stable named ports for sensors (OpenCR + LiDAR + dual GPS)
+
+This workspace standardizes robot serial devices to fixed names:
+
+- OpenCR: `/dev/opencr`
+- LiDAR: `/dev/tb3_lidar`
+- GPS #1: `/dev/gps1`
+- GPS #2: `/dev/gps2`
+
+`robot.launch.py` now defaults to these names, so bringup does not scan `ttyUSB*` order.
+
+#### Apply udev rules from this repository
+
+```bash
+cd ~/turtlebot3_ws
+source /opt/ros/humble/setup.bash
+
+# Install turtlebot3_bringup udev rules into /etc/udev/rules.d/
+sudo src/turtlebot3/turtlebot3_bringup/script/create_udev_rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=tty
+```
+
+#### Verify the named ports
+
+```bash
+ls -l /dev/opencr /dev/tb3_lidar /dev/gps1 /dev/gps2
+```
+
+Each symlink should point to the expected underlying `ttyACM*`/`ttyUSB*` node.
+
+#### How GPS naming works (serial first, path fallback)
+
+The `99-turtlebot3-cdc.rules` file supports a serial-first strategy and a physical-path fallback:
+
+- If each USB-UART adapter has a unique serial, use `ENV{ID_SERIAL_SHORT}` rules.
+- If serial values are duplicated/missing (common with CP2102 clones), map by `ENV{ID_PATH}`.
+
+Inspect identifiers for each connected serial device:
+
+```bash
+udevadm info -q property -n /dev/ttyUSB0 | rg "ID_SERIAL_SHORT|ID_PATH"
+udevadm info -q property -n /dev/ttyUSB1 | rg "ID_SERIAL_SHORT|ID_PATH"
+udevadm info -q property -n /dev/ttyUSB2 | rg "ID_SERIAL_SHORT|ID_PATH"
+```
+
+Then update the GPS/LiDAR entries in:
+
+- `src/turtlebot3/turtlebot3_bringup/script/99-turtlebot3-cdc.rules`
+
+to match your hardware wiring.
+
 ### ROS_DOMAIN_ID
 
 This fleet supports two operating modes:
