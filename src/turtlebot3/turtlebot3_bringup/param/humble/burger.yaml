@@ -31,6 +31,8 @@
         max_valid_range: 3.0
         use_jump_filter: true
         max_delta_per_cycle: 0.35
+        max_hold_cycles: 12
+        release_step_per_cycle: 0.08
         left_offset: 0.0
         front_offset: 0.0
         right_offset: 0.0

@@ -119,7 +119,7 @@ class TPMGatekeeper(Node):
             # Launch the robot using the custom namespaced launch file.
             # os.path.expanduser resolves '~' so this works regardless of the username.
             launch_file = os.path.expanduser(
-                '~/turtlebot3_ws/src/turtlebot3/turtlebot3_bringup/launch/robot.launch.py'
+                '~/turtlebot3/src/turtlebot3/turtlebot3_bringup/launch/robot.launch.py'
             )
             subprocess.Popen(['ros2', 'launch', launch_file])
 

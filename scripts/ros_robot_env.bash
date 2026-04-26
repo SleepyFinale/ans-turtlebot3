@@ -10,7 +10,7 @@ else
 fi
 
 # Workspace overlay
-WS_DIR="${WS_DIR:-$HOME/turtlebot3_ws}"
+WS_DIR="${WS_DIR:-$HOME/turtlebot3}"
 if [ -f "${WS_DIR}/install/setup.bash" ]; then
   # shellcheck disable=SC1091
   source "${WS_DIR}/install/setup.bash"

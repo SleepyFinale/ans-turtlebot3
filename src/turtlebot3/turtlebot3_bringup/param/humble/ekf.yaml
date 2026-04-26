@@ -1,8 +1,8 @@
 /**:
   ekf_filter_node:
     ros__parameters:
-      frequency: 5.0
-      sensor_timeout: 0.1
+      frequency: 4.0
+      sensor_timeout: 0.2
       two_d_mode: true
       transform_time_offset: 0.0
       transform_timeout: 0.0
@@ -57,5 +57,5 @@
       world_frame: blinky/odom   # match EKF
       publish_filtered_gps: true
       wait_for_datum: false
-      frequency: 5.0
+      frequency: 4.0
       zero_altitude: true

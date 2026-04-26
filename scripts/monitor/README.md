@@ -23,7 +23,7 @@ ROS 2 navigation/control can degrade when the Pi is thermally constrained, CPU s
 
 ## Quick start
 
-From repository root (`/home/pinky/turtlebot3_ws`):
+From repository root (`/home/pinky/turtlebot3`):
 
 ```bash
 ./scripts/monitor/pi_bottleneck_monitor.sh --iface wlan0 --interval 1.0

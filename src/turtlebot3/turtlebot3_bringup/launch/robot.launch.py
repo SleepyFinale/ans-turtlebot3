@@ -18,6 +18,7 @@
 
 import os
 import socket
+import stat
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -66,42 +67,102 @@ ros2 launch turtlebot3_bringup robot.launch.py
 DEFAULT_ROBOT_NAME = _default_robot_name()
 LIDAR_USB_PORT = '/dev/tb3_lidar'
 
+def validate_opencr_port(context, *args, **kwargs):
+    port = LaunchConfiguration('usb_port').perform(context).strip()
+    if not port:
+        print('[robot.launch.py] WARNING: usb_port is empty; turtlebot3_node may fail to connect to OpenCR.')
+        return []
+
+    if not os.path.exists(port):
+        print(f'[robot.launch.py] WARNING: OpenCR port does not exist: {port}')
+        print('[robot.launch.py]          Verify udev rules and that /dev/opencr points to a live ttyACM device.')
+        return []
+
+    real_port = os.path.realpath(port)
+    try:
+        mode = os.stat(real_port).st_mode
+        if not stat.S_ISCHR(mode):
+            print(f'[robot.launch.py] WARNING: OpenCR target is not a character device: {real_port}')
+    except OSError as exc:
+        print(f'[robot.launch.py] WARNING: OpenCR stat failed for {real_port}: {exc}')
+    return []
+
 def launch_gps_nodes(context, *args, **kwargs):
     robot_name = LaunchConfiguration('robot_name').perform(context)
     namespace_override = LaunchConfiguration('namespace').perform(context)
     effective_ns = namespace_override if namespace_override else robot_name
     gps_port_1 = LaunchConfiguration('gps_port_1').perform(context).strip()
     gps_port_2 = LaunchConfiguration('gps_port_2').perform(context).strip()
+    gps_enable_1 = LaunchConfiguration('gps_enable_1').perform(context).strip().lower() in ('1', 'true', 'yes', 'on')
+    gps_enable_2 = LaunchConfiguration('gps_enable_2').perform(context).strip().lower() in ('1', 'true', 'yes', 'on')
     gps_baud_1 = int(LaunchConfiguration('gps_baud_1').perform(context))
     gps_baud_2 = int(LaunchConfiguration('gps_baud_2').perform(context))
+    outdoor_mode = LaunchConfiguration('outdoor').perform(context).strip().lower() in ('1', 'true', 'yes', 'on')
 
+    if not outdoor_mode:
+        print('[robot.launch.py] Outdoor mode disabled (outdoor:=false); skipping all GPS serial drivers.')
+        return []
+
+    configured_ports = [
+        (1, gps_port_1, gps_baud_1, gps_enable_1),
+        (2, gps_port_2, gps_baud_2, gps_enable_2),
+    ]
     gps_ports = []
-    if gps_port_1:
-        gps_ports.append(gps_port_1)
-    if gps_port_2:
-        gps_ports.append(gps_port_2)
+    seen_real_targets = {}
+    for gps_idx, port, baud, enabled in configured_ports:
+        if not enabled:
+            print(f'[robot.launch.py] GPS {gps_idx} disabled by launch arg gps_enable_{gps_idx}:={enabled}.')
+            continue
+        if not port:
+            print(f'[robot.launch.py] GPS {gps_idx} port is empty; skipping.')
+            continue
+        if not os.path.exists(port):
+            print(f'[robot.launch.py] WARNING: GPS {gps_idx} port does not exist: {port}; skipping.')
+            continue
+
+        real_port = os.path.realpath(port)
+        try:
+            mode = os.stat(real_port).st_mode
+            if not stat.S_ISCHR(mode):
+                print(f'[robot.launch.py] WARNING: GPS {gps_idx} target is not a serial character device: {real_port}; skipping.')
+                continue
+        except OSError as exc:
+            print(f'[robot.launch.py] WARNING: GPS {gps_idx} stat failed for {real_port}: {exc}; skipping.')
+            continue
+
+        dup_idx = seen_real_targets.get(real_port)
+        if dup_idx is not None:
+            print(
+                f'[robot.launch.py] WARNING: GPS {gps_idx} ({port}) resolves to the same device as '
+                f'GPS {dup_idx} ({real_port}). Skipping GPS {gps_idx} to avoid serial contention.'
+            )
+            continue
+        seen_real_targets[real_port] = gps_idx
+        gps_ports.append((gps_idx, port, real_port, baud))
+
     nodes = []
     if not gps_ports:
         print('[robot.launch.py] WARNING: No GPS serial ports configured; starting without nmea_serial_driver nodes.')
     else:
-        print(f'[robot.launch.py] GPS ports selected: {gps_ports}')
-        print(f'[robot.launch.py] GPS baud rates selected: {[gps_baud_1, gps_baud_2][:len(gps_ports)]}')
+        selected_ports = [f'gps{idx}:{port} -> {real_port}' for idx, port, real_port, _ in gps_ports]
+        selected_bauds = [f'gps{idx}:{baud}' for idx, _, _, baud in gps_ports]
+        print(f'[robot.launch.py] GPS ports selected: {selected_ports}')
+        print(f'[robot.launch.py] GPS baud rates selected: {selected_bauds}')
 
-    gps_bauds = [gps_baud_1, gps_baud_2]
-    for i, port in enumerate(gps_ports[:2]):
+    for gps_idx, port, _, baud in gps_ports[:2]:
 
         nodes.append(
             Node(
                 package='nmea_navsat_driver',
                 executable='nmea_serial_driver',
-                name=f'gps_{i+1}',
+                name=f'gps_{gps_idx}',
                 parameters=[{
                     'port': port,
-                    'baud': gps_bauds[i],
+                    'baud': baud,
                     'frame_id': f'{effective_ns}/gps_link'
                 }],
                 remappings=[
-                    ('fix', f'gps{i+1}/fix')
+                    ('fix', f'gps{gps_idx}/fix')
                 ],
                 output='screen'
             )
@@ -168,6 +229,7 @@ def generate_launch_description():
             default=os.path.join(get_package_share_directory('hls_lfcd_lds_driver'), 'launch'))
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    outdoor = LaunchConfiguration('outdoor', default='false')
     start_slam_with_normalizer = LaunchConfiguration('start_slam_with_normalizer', default='false')
 
     return LaunchDescription([
@@ -175,6 +237,10 @@ def generate_launch_description():
             'use_sim_time',
             default_value=use_sim_time,
             description='Use simulation (Gazebo) clock if true'),
+        DeclareLaunchArgument(
+            'outdoor',
+            default_value=outdoor,
+            description='If true, enable all GPS-related nodes for outdoor operation'),
 
         DeclareLaunchArgument(
             'usb_port',
@@ -200,6 +266,22 @@ def generate_launch_description():
             'gps_baud_2',
             default_value='115200',
             description='GPS 2 baud rate (tested default: 115200)'),
+        DeclareLaunchArgument(
+            'gps_enable_1',
+            default_value='true',
+            description='Enable GPS 1 nmea_serial_driver node'),
+        DeclareLaunchArgument(
+            'gps_enable_2',
+            default_value='true',
+            description='Enable GPS 2 nmea_serial_driver node'),
+        DeclareLaunchArgument(
+            'ekf_frequency',
+            default_value='4.0',
+            description='EKF output frequency (Hz)'),
+        DeclareLaunchArgument(
+            'navsat_frequency',
+            default_value='4.0',
+            description='navsat_transform frequency (Hz)'),
 
         DeclareLaunchArgument(
             'tb3_param_dir',
@@ -240,6 +322,7 @@ def generate_launch_description():
                               'namespace': effective_namespace}.items(),
         ),
 
+        OpaqueFunction(function=validate_opencr_port),
         OpaqueFunction(function=launch_gps_nodes),
 
         Node(
@@ -258,7 +341,7 @@ def generate_launch_description():
                 'bash',
                 os.path.join(
                     os.path.expanduser('~'),
-                    'turtlebot3_ws',
+                    'turtlebot3',
                     'scripts',
                     'start_slam_with_normalizer.sh'
                 )
@@ -273,6 +356,7 @@ def generate_launch_description():
             package='turtlebot3_bringup',
             executable='auto_gps_fusion.py',
             name='gps_driver',
+            condition=IfCondition(outdoor),
             output='screen',
             parameters=[{'namespace': namespace}],
         ),
@@ -282,14 +366,21 @@ def generate_launch_description():
             name='ekf_filter_node',
             output='screen',
             remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
-            parameters=[ekf_param_dir,{'namespace': namespace}],
+            parameters=[ekf_param_dir, {
+                'namespace': namespace,
+                'frequency': LaunchConfiguration('ekf_frequency'),
+            }],
         ),
         Node(
             package='robot_localization',
             executable='navsat_transform_node',
             name='navsat_transform',
+            condition=IfCondition(outdoor),
             output='screen',
             remappings=[('gps/fix','fix'), ('/tf', 'tf'), ('/tf_static', 'tf_static')],
-            parameters=[ekf_param_dir,{'namespace': namespace}],
+            parameters=[ekf_param_dir, {
+                'namespace': namespace,
+                'frequency': LaunchConfiguration('navsat_frequency'),
+            }],
         ),
     ])

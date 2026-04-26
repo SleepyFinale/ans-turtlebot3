@@ -27,6 +27,8 @@ install(
     scripts/scan_costmap_relay.py
     scripts/startup_map_seeder.py
     scripts/normalize_laser_scan.py
+    scripts/ultrasonic_triangulation_blob.py
+    scripts/ultrasonic_debug_logger.py
     scripts/nav2_motion_debug_logger.py
     scripts/nav2_lethal_watch.py
     scripts/nav2_retrace_escape.py

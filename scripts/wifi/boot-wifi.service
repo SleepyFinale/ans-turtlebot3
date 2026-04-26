@@ -15,7 +15,7 @@ RemainAfterExit=yes
 #   which writes an authoritative unit to /etc/systemd/system/boot-wifi.service
 #   with the correct absolute workspace path.
 #
-ExecStart=%h/turtlebot3_ws/scripts/wifi/boot_wifi.sh
+ExecStart=%h/turtlebot3/scripts/wifi/boot_wifi.sh
 StandardOutput=journal
 StandardError=journal
 

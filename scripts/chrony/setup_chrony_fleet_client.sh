@@ -26,7 +26,7 @@ if [[ ! -f "${CHRONY_CONF}.bak" ]]; then
 fi
 
 cat >"$CHRONY_CONF" <<EOF
-# Managed by turtlebot3_ws scripts/chrony/setup_chrony_fleet_client.sh
+# Managed by turtlebot3 scripts/chrony/setup_chrony_fleet_client.sh
 # FLEET_TIME_SERVER=${FLEET_TIME_SERVER}
 
 # Use fleet server or public NTP pool

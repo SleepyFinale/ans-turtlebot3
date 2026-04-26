@@ -133,7 +133,7 @@ def generate_launch_description():
         ('tf_static', '/tf_static'),
     ]
 
-    workspace_dir = os.path.expanduser('~/turtlebot3_ws')
+    workspace_dir = os.path.expanduser('~/turtlebot3')
     wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf_multirobot.py')
 
     wait_for_tf = LaunchConfiguration('wait_for_tf', default='true')

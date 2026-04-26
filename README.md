@@ -16,7 +16,7 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 - Robotis SBC setup (Ubuntu Server, Wi‑Fi/SSH, stability tweaks)
 - ROS 2 Humble install and **Install and Build ROS Packages** (SBC setup Step 3.2.5, Step 2)
 
-**Workspace = cloned repo:** Clone [ans-turtlebot3](https://github.com/SleepyFinale/ans-turtlebot3) into `~/turtlebot3_ws` on the Pi; that repo contains the TurtleBot3/LDS/Coin D4 packages and other files needed for the workspace. After building, any changes you make in `src/` can be committed and pushed. Build/install/log are in `.gitignore`.
+**Workspace = cloned repo:** Clone [ans-turtlebot3](https://github.com/SleepyFinale/ans-turtlebot3) into `~/turtlebot3` on the Pi; that repo contains the TurtleBot3/LDS/Coin D4 packages and other files needed for the workspace. After building, any changes you make in `src/` can be committed and pushed. Build/install/log are in `.gitignore`.
 
 ---
 
@@ -159,12 +159,12 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
 
 ### On the Raspberry Pi
 
-1. **Clone the TurtleBot3 workspace repo** into `turtlebot3_ws` (this repo contains the packages needed for TurtleBot3 Burger):
+1. **Clone the TurtleBot3 workspace repo** into `turtlebot3` (this repo contains the packages needed for TurtleBot3 Burger):
 
    ```bash
    cd ~
-   git clone https://github.com/SleepyFinale/ans-turtlebot3.git turtlebot3_ws
-   cd turtlebot3_ws
+   git clone https://github.com/SleepyFinale/ans-turtlebot3.git turtlebot3
+   cd turtlebot3
    ```
 
 2. **Install dependencies and build** (use wall power; build can take over an hour):
@@ -177,18 +177,18 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    sudo apt install ros-humble-dynamixel-sdk
    sudo apt install ros-humble-xacro
    sudo apt install libudev-dev
-   cd ~/turtlebot3_ws/
+   cd ~/turtlebot3/
    echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
    source ~/.bashrc
    colcon build --symlink-install --parallel-workers 1
-   echo 'source ~/turtlebot3_ws/install/setup.bash' >> ~/.bashrc
+   echo 'source ~/turtlebot3/install/setup.bash' >> ~/.bashrc
    source ~/.bashrc
    ```
 
 3. **Source the workspace** (or open a new shell):
 
    ```bash
-   source ~/turtlebot3_ws/install/setup.bash
+   source ~/turtlebot3/install/setup.bash
    ```
 
 4. **Rebuild scripts:** After the initial build:
@@ -196,12 +196,12 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    - **Full clean rebuild:** `scripts/clean_rebuild.sh` removes `build/`, `install/`, and `log/`, runs a full colcon build, and sources the workspace. Use `--no-clean` to build without cleaning, or `--source` to only source the existing install.
 
    ```bash
-   cd ~/turtlebot3_ws
+   cd ~/turtlebot3
    ./scripts/minimal_rebuild.sh    # fast: only what robot.launch.py needs
    ./scripts/clean_rebuild.sh      # full clean + build
    ```
 
-   Both scripts use all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running. If scripts aren’t executable: `chmod +x ~/turtlebot3_ws/scripts/minimal_rebuild.sh ~/turtlebot3_ws/scripts/clean_rebuild.sh`
+   Both scripts use all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running. If scripts aren’t executable: `chmod +x ~/turtlebot3/scripts/minimal_rebuild.sh ~/turtlebot3/scripts/clean_rebuild.sh`
 
 ---
 
@@ -275,10 +275,10 @@ When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixe
 
 ### Usage
 
-From `~/turtlebot3_ws` on the robot:
+From `~/turtlebot3` on the robot:
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
 sudo ./scripts/wifi/switch_wifi.sh lab
@@ -331,7 +331,7 @@ To prevent the robot from being stuck without WiFi when it boots (e.g., if it wa
 **Installation (one-time setup per robot):**
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 sudo ./scripts/wifi/install_boot_wifi.sh
 ```
 
@@ -434,7 +434,7 @@ This workspace standardizes robot serial devices to fixed names:
 #### Apply udev rules from this repository
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 source /opt/ros/humble/setup.bash
 
 # Install turtlebot3_bringup udev rules into /etc/udev/rules.d/
@@ -472,6 +472,51 @@ Then update the GPS/LiDAR entries in:
 
 to match your hardware wiring.
 
+#### Diagnose GPS checksum corruption quickly
+
+If `robot.launch.py` shows repeated `nmea_serial_driver` invalid-checksum warnings, run the robot-side serial diagnostic before changing Nav2/SLAM settings:
+
+```bash
+cd ~/turtlebot3
+./scripts/debug/diagnose_robot_serial_gps.sh --seconds 8
+```
+
+This checks:
+
+- `/dev/gps1` and `/dev/gps2` symlink targets
+- duplicate symlink targets (both aliases pointing at one `ttyUSB*`)
+- udev identity fields (`ID_PATH`, `ID_SERIAL_SHORT`)
+- short raw NMEA samples for both receivers
+
+To isolate one receiver at a time during bringup:
+
+```bash
+ros2 launch turtlebot3_bringup robot.launch.py gps_enable_2:=false
+# or
+ros2 launch turtlebot3_bringup robot.launch.py gps_enable_1:=false
+```
+
+To probe likely baud rates and pick the best candidate:
+
+```bash
+python3 scripts/debug/probe_gps_baud.py /dev/gps1 --seconds 5
+python3 scripts/debug/probe_gps_baud.py /dev/gps2 --seconds 5
+```
+
+Then relaunch bringup with explicit baud overrides:
+
+```bash
+ros2 launch turtlebot3_bringup robot.launch.py \
+  gps_baud_1:=9600 gps_baud_2:=9600
+```
+
+If serial data becomes clean but EKF logs still show `Failed to meet update rate`, temporarily lower rates from launch args:
+
+```bash
+ros2 launch turtlebot3_bringup robot.launch.py \
+  ekf_frequency:=4.0 navsat_frequency:=4.0
+```
+
 ### ROS_DOMAIN_ID
 
 This fleet supports two operating modes:
@@ -482,7 +527,7 @@ This fleet supports two operating modes:
 For bridged mode, load a robot domain profile before launching bringup/Nav2:
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 source scripts/ros_domain_profile.bash
 echo $ROS_DOMAIN_ID
 ```
@@ -511,7 +556,7 @@ Use the standard bringup launch file in `turtlebot3_bringup`, which now **automa
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/turtlebot3_ws/install/setup.bash
+source ~/turtlebot3/install/setup.bash
 export TURTLEBOT3_MODEL=burger
 export LDS_MODEL=LDS-02
 
@@ -527,7 +572,7 @@ Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **r
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/turtlebot3_ws/install/setup.bash
+source ~/turtlebot3/install/setup.bash
 export TURTLEBOT3_MODEL=burger
 
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
@@ -545,7 +590,7 @@ By default, `robot.launch.py` and `navigation2_slam.launch.py` use `HOSTNAME` as
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/turtlebot3_ws/install/setup.bash
+source ~/turtlebot3/install/setup.bash
 export TURTLEBOT3_MODEL=burger
 
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
@@ -575,6 +620,8 @@ We use **LDS-02**. On the robot (SBC):
 echo 'export LDS_MODEL=LDS-02' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+`LDS-02` provides **360-degree coverage**, but that does not mean ROS always receives exactly 360 rays per scan in this driver path. The sensor uses a fixed sampling stream and the driver assembles/bins points into `LaserScan`, so beam count can vary by RPM and packet timing. In this repo, `normalize_laser_scan.py` now auto-detects a stable beam count during startup and locks `scan_normalized` to that value for SLAM/Nav2 consistency (with `target_readings` as fallback/override).
 
 ### OpenCR setup
 
@@ -644,6 +691,8 @@ Current baseline in this repo:
 
 - OpenCR publishes `ultrasonic_l`, `ultrasonic_f`, `ultrasonic_r` (`sensor_msgs/Range`) from `turtlebot3_node`.
 - `normalize_laser_scan.py` fuses those ranges into `scan_normalized`, and Nav2 consumes `scan_normalized` in costmaps.
+- `normalize_laser_scan.py` auto-locks a stable target beam count from startup scans (`auto_target_readings:=true` by default), then keeps `scan_normalized` fixed-size for SLAM/Nav2.
+- During auto-lock warmup, `scan_normalized` publish is briefly delayed until target count is locked, preventing SLAM from latching one beam count and later seeing a different one.
 - Default launch profile is now `ultrasonic_profile:=safe` (conservative overwrite of lidar).
 
 Recommended experiment runs on one robot (e.g. Pinky), then repeat on fleet:
@@ -657,11 +706,11 @@ Use the same route/start pose and keep run durations equal (8-12 min).
 Robot launch examples:
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 ./scripts/minimal_rebuild.sh
 
 source /opt/ros/humble/setup.bash
-source ~/turtlebot3_ws/install/setup.bash
+source ~/turtlebot3/install/setup.bash
 export TURTLEBOT3_MODEL=burger
 
 ros2 launch turtlebot3_bringup robot.launch.py
@@ -676,6 +725,21 @@ ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
 
 When you pull or edit params/launch in this repo, rebuild on the Pi before relaunching Nav2.
 
+Quick scan-normalizer verification (robot side):
+
+```bash
+# Compare raw scan length variability vs normalized fixed length
+ros2 topic echo /<robot>/scan --once --field ranges | wc -w
+ros2 topic echo /<robot>/scan_normalized --once --field ranges | wc -w
+
+# Check rates (raw and normalized should both be alive)
+ros2 topic hz /<robot>/scan
+ros2 topic hz /<robot>/scan_normalized
+
+# Confirm auto-lock/fallback logs from the normalizer
+ros2 topic echo /rosout | rg "laser_scan_normalizer|Auto target lock|fallback"
+```
+
 ### Nav2 motion debug capture (robot side)
 
 Use this when a robot appears to drive into obstacles even when the assigned goal and global plan look safe.
@@ -684,7 +748,7 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 
    ```bash
    source /opt/ros/humble/setup.bash
-   source ~/turtlebot3_ws/install/setup.bash
+   source ~/turtlebot3/install/setup.bash
    export TURTLEBOT3_MODEL=burger
    ros2 launch turtlebot3_bringup robot.launch.py
    ```
@@ -693,20 +757,20 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 
    ```bash
    source /opt/ros/humble/setup.bash
-   source ~/turtlebot3_ws/install/setup.bash
+   source ~/turtlebot3/install/setup.bash
    export TURTLEBOT3_MODEL=burger
    ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
      use_sim_time:=false \
      use_rviz:=false \
      enable_debug_logging:=true \
-     debug_log_dir:=~/turtlebot3_ws/logs \
+     debug_log_dir:=~/turtlebot3/logs \
      debug_log_rate_hz:=5.0
    ```
 
 3. Start rosbag capture in terminal 3:
 
    ```bash
-   cd ~/turtlebot3_ws
+   cd ~/turtlebot3
    ./scripts/start_nav2_debug_capture.sh
    # Optional explicit robot name:
    # ./scripts/start_nav2_debug_capture.sh pinky
@@ -714,8 +778,8 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 
 #### Files produced
 
-- JSONL timeline: `~/turtlebot3_ws/logs/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
-- rosbag2 capture: `~/turtlebot3_ws/logs/<robot>/bag-YYYYmmdd-HHMMSS/`
+- JSONL timeline: `~/turtlebot3/logs/<robot>/session-YYYYmmdd-HHMMSS.jsonl`
+- rosbag2 capture: `~/turtlebot3/logs/<robot>/bag-YYYYmmdd-HHMMSS/`
 
 #### What gets recorded
 
@@ -742,7 +806,7 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 Use this when a robot appears to "freeze" while Nav2 still has an active goal:
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 python3 scripts/analyze_nav2_bag_stop.py \
   logs/<robot>/bag-YYYYmmdd-HHMMSS \
   --robot <robot> \
@@ -762,7 +826,7 @@ What this flags:
 Use this on the stop interval to pull likely controller/planner reasons from `/rosout`:
 
 ```bash
-cd ~/turtlebot3_ws
+cd ~/turtlebot3
 python3 scripts/analyze_nav2_bag_rosout.py \
   logs/<robot>/bag-YYYYmmdd-HHMMSS \
   --start <interval_start_unix_s> \
@@ -770,3 +834,122 @@ python3 scripts/analyze_nav2_bag_rosout.py \
 ```
 
 Tip: pair this with the interval printed by `analyze_nav2_bag_stop.py`.
+
+### Ultrasonic diagnostics capture (robot side)
+
+Use this when ultrasonic topics are publishing but obstacle behavior still looks wrong (flat values, no fusion effect, or Nav2 range-layer starvation).
+
+1. Start bringup and `navigation2_slam.launch.py` as usual.
+1. In another terminal, run:
+
+```bash
+cd ~/turtlebot3
+./scripts/debug/start_ultrasonic_debug_capture.sh
+# Optional explicit robot name:
+# ./scripts/debug/start_ultrasonic_debug_capture.sh blinky
+```
+
+1. Run your obstacle test, then stop capture with Ctrl+C.
+
+#### File produced
+
+- JSONL diagnostics: `~/turtlebot3/logs/<robot>/ultrasonic-session-YYYYmmdd-HHMMSS.jsonl`
+
+#### Key event types in JSONL
+
+- `range_sample`: raw ultrasonic values (`l/f/r`), message age, frame_id, stale/flatline hints.
+- `range_health`: per-sensor rate, inter-arrival gap, message counts, flatline streak.
+- `tf_snapshot`: `base_scan -> ultrasonic_frame` lookup status and failure counters.
+- `scan_compare`: raw `/scan` vs `/scan_normalized` cone-window mins per sensor.
+- `fusion_effect`: estimated count of cones where normalized scan moved closer than raw.
+- `nav_context`: costmap freshness, `/rosout` warning counters, latest `cmd_vel`, latest `odom` twist, and `nav2_collision_ahead` state/age.
+- `anomaly`: explicit flags such as `range_stale_*`, `range_flatlined_*`, `tf_lookup_failed_*`, `fusion_no_effect_*`, `range_layer_no_input_warn`.
+
+#### Quick interpretation
+
+- Frequent `range_flatlined_*` with healthy rate suggests sensor or transport values are stuck.
+- Repeated `tf_lookup_failed_*` means fusion cannot project ultrasonic cones reliably.
+- Persistent `fusion_no_effect_*` indicates ultrasonics are not changing `scan_normalized`.
+- `range_layer_no_input_warn` ties directly to Nav2 logs that range layer is not receiving usable readings.
+
+#### Post-run analyzer
+
+Use this to get an immediate summary from one ultrasonic diagnostics JSONL:
+
+```bash
+cd ~/turtlebot3
+python3 scripts/debug/analyze_ultrasonic_debug_session.py \
+  logs/<robot>/ultrasonic-session-YYYYmmdd-HHMMSS.jsonl
+```
+
+This reports per-sensor rates/ages/stale counts, flatline streak maxima, fusion-effect counts, aggregate anomaly counts, and recent anomaly rows.
+
+#### Add map + costmap rosbag for hard cases
+
+For "stopped then drove into bar" episodes, collect a rosbag in parallel with ultrasonic JSONL:
+
+```bash
+cd ~/turtlebot3
+./scripts/debug/start_nav2_debug_capture.sh
+# Optional explicit robot name:
+# ./scripts/debug/start_nav2_debug_capture.sh blinky
+```
+
+This captures `/map`, local/global costmaps, plan, `cmd_vel`, `odom`, TF, and Nav2 action status so you can align controller intent with obstacle marking over time.
+
+### Ultrasonic triangulated costmap blob (Apr 2026)
+
+For overlapping ultrasonic cones, enable triangulation-to-blob and keep a hard short-range cap:
+
+```bash
+cd ~/turtlebot3
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
+  nav2_enable_range_layer:=false \
+  ultrasonic_profile:=safe \
+  ultrasonic_hard_max_range_m:=0.50 \
+  ultrasonic_triangulation_enabled:=true \
+  nav2_enable_ultrasonic_blob_layer:=true \
+  ultrasonic_triangulation_similarity_m:=0.06 \
+  ultrasonic_triangulation_similarity_scale_per_m:=0.18 \
+  ultrasonic_triangulation_similarity_max_m:=0.14 \
+  ultrasonic_triangulation_blob_radius_m:=0.08 \
+  ultrasonic_triangulation_max_age_sec:=0.15 \
+  ultrasonic_triangulation_require_pair_agreement:=true \
+  ultrasonic_disable_scan_fusion_when_blob:=true \
+  ultrasonic_front_emergency_range_m:=0.38 \
+  ultrasonic_front_emergency_required_streak:=1 \
+  ultrasonic_front_emergency_blob_radius_m:=0.16 \
+  ultrasonic_triangulation_blob_hold_sec:=0.90
+```
+
+Notes:
+
+- `ultrasonic_hard_max_range_m` is enforced for scan fusion and triangulation input.
+- Triangulation publishes `ultrasonic_blob_scan` and `ultrasonic_triangulation_debug`.
+- Nav2 obstacle layers can consume this dedicated blob source via `nav2_enable_ultrasonic_blob_layer:=true`.
+- `ultrasonic_front_emergency_*` adds a close-range front-only fail-safe if pair matching drops.
+- `ultrasonic_triangulation_blob_hold_sec` prevents brief dropouts from immediately unmarking close obstacles.
+- `ultrasonic_triangulation_similarity_*` supports distance-scaled pair/triple matching (more tolerant far, tighter near).
+
+#### A/B validation matrix
+
+Use the same route/object placement for all runs:
+
+1. Baseline fusion only:
+   - `ultrasonic_triangulation_enabled:=false`
+   - `nav2_enable_ultrasonic_blob_layer:=false`
+2. Triangulated blob only:
+   - `ultrasonic_triangulation_enabled:=true`
+   - `nav2_enable_ultrasonic_blob_layer:=true`
+   - `ultrasonic_profile:=off`
+3. Triangulated blob + front-only fusion:
+   - `ultrasonic_use_left:=false ultrasonic_use_front:=true ultrasonic_use_right:=false`
+4. Triangulated blob + all fusion (stress):
+   - `ultrasonic_use_left:=true ultrasonic_use_front:=true ultrasonic_use_right:=true`
+
+Compare:
+
+- planner warnings (`Starting point in lethal space`)
+- recovery loop frequency (spin/backup/wait)
+- goal completion rate
+- analyzer triangulation summary (`triangulation_decision` clusters and blob distance stats)

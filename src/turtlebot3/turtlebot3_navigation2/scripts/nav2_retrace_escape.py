@@ -377,7 +377,7 @@ def main(args=None):
     node = Nav2RetraceEscape()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
+    except (KeyboardInterrupt, SystemExit, RuntimeError):
         pass
     finally:
         try:

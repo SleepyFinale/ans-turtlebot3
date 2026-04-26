@@ -155,6 +155,7 @@ def _generate_nav2_params(
     fleet_map_relay: bool = False,
     costmap_scan_relay: bool = False,
     nav2_enable_range_layer: bool = False,
+    nav2_enable_ultrasonic_blob_layer: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -233,16 +234,47 @@ def _generate_nav2_params(
                 plugins.append('range_layer')
             elif not isinstance(plugins, list):
                 costmap_node['plugins'] = ['obstacle_layer', 'inflation_layer', 'range_layer']
+            range_topics = ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r']
+            if namespace:
+                range_topics = [
+                    f'/{namespace}/ultrasonic_l',
+                    f'/{namespace}/ultrasonic_f',
+                    f'/{namespace}/ultrasonic_r',
+                ]
             costmap_node['range_layer'] = {
                 'plugin': 'nav2_costmap_2d::RangeSensorLayer',
                 'enabled': True,
-                'topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
+                'topics': range_topics,
                 'clear_threshold': 0.20,
                 'mark_threshold': 0.80,
                 'clear_on_max_reading': True,
                 'no_readings_timeout': 0.5,
                 'phi': 1.2,
                 'inflate_cone': 1.0,
+            }
+
+    if nav2_enable_ultrasonic_blob_layer:
+        for costmap_root in ('local_costmap', 'global_costmap'):
+            costmap_node = params.get(costmap_root, {}).get(costmap_root, {}).get('ros__parameters', {})
+            if not isinstance(costmap_node, dict):
+                continue
+            obstacle = costmap_node.get('obstacle_layer')
+            if not isinstance(obstacle, dict):
+                continue
+            obs_sources = str(obstacle.get('observation_sources', 'scan')).split()
+            if 'ultrasonic_blob' not in obs_sources:
+                obs_sources.append('ultrasonic_blob')
+            obstacle['observation_sources'] = ' '.join(obs_sources)
+            obstacle['ultrasonic_blob'] = {
+                'topic': 'ultrasonic_blob_scan',
+                'max_obstacle_height': 2.0,
+                'clearing': False,
+                'marking': True,
+                'data_type': 'LaserScan',
+                'raytrace_max_range': 0.55,
+                'raytrace_min_range': 0.02,
+                'obstacle_max_range': 0.55,
+                'obstacle_min_range': 0.02,
             }
 
     # Use a custom navigate-to-pose tree that proactively clears costmaps
@@ -313,6 +345,46 @@ def _launch_setup(context):
         'ultrasonic_profile').perform(context)
     nav2_enable_range_layer_str = LaunchConfiguration(
         'nav2_enable_range_layer').perform(context)
+    ultrasonic_use_left_str = LaunchConfiguration(
+        'ultrasonic_use_left').perform(context)
+    ultrasonic_use_front_str = LaunchConfiguration(
+        'ultrasonic_use_front').perform(context)
+    ultrasonic_use_right_str = LaunchConfiguration(
+        'ultrasonic_use_right').perform(context)
+    ultrasonic_overlap_arbitration_enabled_str = LaunchConfiguration(
+        'ultrasonic_overlap_arbitration_enabled').perform(context)
+    ultrasonic_overlap_similarity_m_str = LaunchConfiguration(
+        'ultrasonic_overlap_similarity_m').perform(context)
+    ultrasonic_overlap_side_pair_front_scale_str = LaunchConfiguration(
+        'ultrasonic_overlap_side_pair_front_scale').perform(context)
+    ultrasonic_hard_max_range_m_str = LaunchConfiguration(
+        'ultrasonic_hard_max_range_m').perform(context)
+    ultrasonic_triangulation_enabled_str = LaunchConfiguration(
+        'ultrasonic_triangulation_enabled').perform(context)
+    ultrasonic_triangulation_similarity_m_str = LaunchConfiguration(
+        'ultrasonic_triangulation_similarity_m').perform(context)
+    ultrasonic_triangulation_blob_radius_m_str = LaunchConfiguration(
+        'ultrasonic_triangulation_blob_radius_m').perform(context)
+    nav2_enable_ultrasonic_blob_layer_str = LaunchConfiguration(
+        'nav2_enable_ultrasonic_blob_layer').perform(context)
+    ultrasonic_triangulation_max_age_sec_str = LaunchConfiguration(
+        'ultrasonic_triangulation_max_age_sec').perform(context)
+    ultrasonic_triangulation_require_pair_agreement_str = LaunchConfiguration(
+        'ultrasonic_triangulation_require_pair_agreement').perform(context)
+    ultrasonic_disable_scan_fusion_when_blob_str = LaunchConfiguration(
+        'ultrasonic_disable_scan_fusion_when_blob').perform(context)
+    ultrasonic_front_emergency_range_m_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_range_m').perform(context)
+    ultrasonic_front_emergency_required_streak_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_required_streak').perform(context)
+    ultrasonic_triangulation_blob_hold_sec_str = LaunchConfiguration(
+        'ultrasonic_triangulation_blob_hold_sec').perform(context)
+    ultrasonic_front_emergency_blob_radius_m_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_blob_radius_m').perform(context)
+    ultrasonic_triangulation_similarity_scale_per_m_str = LaunchConfiguration(
+        'ultrasonic_triangulation_similarity_scale_per_m').perform(context)
+    ultrasonic_triangulation_similarity_max_m_str = LaunchConfiguration(
+        'ultrasonic_triangulation_similarity_max_m').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -355,7 +427,7 @@ def _launch_setup(context):
         slam_toolbox_executable = 'async_slam_toolbox_node'
 
     workspace_dir = os.path.expanduser(
-        os.environ.get('TURTLEBOT3_WS', '~/turtlebot3_ws'))
+        os.environ.get('TURTLEBOT3_WS', '~/turtlebot3'))
     repo_logs_dir = os.path.join(workspace_dir, 'logs')
     wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
     expanded_debug_log_dir = os.path.expanduser(debug_log_dir)
@@ -382,20 +454,49 @@ def _launch_setup(context):
     normalizer_params = {
         'input_topic': 'scan',
         'output_topic': 'scan_normalized',
+        # LDS-02 beam count is not guaranteed to be 360 in this driver path.
+        # Auto mode samples startup scan lengths and locks a stable target.
+        'auto_target_readings': True,
+        'auto_target_sample_scans': 30,
+        'auto_target_min_samples': 12,
+        'auto_target_outlier_tolerance': 12,
+        # Fixed fallback/override when auto lock cannot be determined.
+        'target_readings': 228,
         'range_topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
-        'range_frame_ids': ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right'],
+        'range_frame_ids': (
+            [f'{ns}/ultrasonic_link_left', f'{ns}/ultrasonic_link_front', f'{ns}/ultrasonic_link_right']
+            if ns else
+            ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right']
+        ),
         # Small temporal/median filtering on HC-SR04-style readings reduces
         # transient echoes from glossy surfaces and stale obstacle ghosts.
         'ultrasonic_window_size': 3,
         'ultrasonic_max_age_sec': 0.40,
         'ultrasonic_min_valid_range': 0.02,
-        'ultrasonic_max_valid_range': 3.0,
+        'ultrasonic_max_valid_range': float(ultrasonic_hard_max_range_m_str),
         'ultrasonic_fusion_enabled': ultrasonic_profile != 'off',
         'ultrasonic_lidar_min_override_delta': 0.10,
         'ultrasonic_max_delta_per_update': 0.45,
         'ultrasonic_hysteresis_m': 0.03,
+        'ultrasonic_max_hold_sec': 1.2,
+        'ultrasonic_hold_epsilon_m': 0.008,
         'ultrasonic_cone_scale': 1.0,
+        'ultrasonic_use_left': ultrasonic_use_left_str.lower() in ('1', 'true', 'yes'),
+        'ultrasonic_use_front': ultrasonic_use_front_str.lower() in ('1', 'true', 'yes'),
+        'ultrasonic_use_right': ultrasonic_use_right_str.lower() in ('1', 'true', 'yes'),
+        'ultrasonic_overlap_arbitration_enabled': (
+            ultrasonic_overlap_arbitration_enabled_str.lower() in ('1', 'true', 'yes')
+        ),
+        'ultrasonic_overlap_similarity_m': float(ultrasonic_overlap_similarity_m_str),
+        'ultrasonic_overlap_side_pair_front_scale': float(
+            ultrasonic_overlap_side_pair_front_scale_str
+        ),
     }
+    if (
+        nav2_enable_ultrasonic_blob_layer_str.lower() in ('1', 'true', 'yes')
+        and ultrasonic_disable_scan_fusion_when_blob_str.lower() in ('1', 'true', 'yes')
+    ):
+        normalizer_params['ultrasonic_fusion_enabled'] = False
     if ultrasonic_profile == 'aggressive':
         normalizer_params['ultrasonic_lidar_min_override_delta'] = 0.04
         normalizer_params['ultrasonic_max_delta_per_update'] = 0.70
@@ -406,6 +507,12 @@ def _launch_setup(context):
         normalizer_params['ultrasonic_max_delta_per_update'] = 0.35
         normalizer_params['ultrasonic_hysteresis_m'] = 0.04
         normalizer_params['ultrasonic_cone_scale'] = 0.85
+        normalizer_params['ultrasonic_overlap_similarity_m'] = max(
+            float(ultrasonic_overlap_similarity_m_str), 0.10
+        )
+        normalizer_params['ultrasonic_overlap_side_pair_front_scale'] = min(
+            float(ultrasonic_overlap_side_pair_front_scale_str), 0.60
+        )
     if ns:
         normalizer_params['frame_id_prefix'] = ns
 
@@ -415,6 +522,42 @@ def _launch_setup(context):
         name='laser_scan_normalizer',
         namespace=ns if ns else None,
         parameters=[normalizer_params],
+        remappings=tf_remappings,
+        output='screen',
+    ))
+
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='ultrasonic_triangulation_blob.py',
+        name='ultrasonic_triangulation_blob',
+        namespace=ns if ns else None,
+        parameters=[{
+            'range_topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
+            'range_frame_ids': (
+                [f'{ns}/ultrasonic_link_left', f'{ns}/ultrasonic_link_front', f'{ns}/ultrasonic_link_right']
+                if ns else
+                ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right']
+            ),
+            'base_scan_frame': f'{ns}/base_scan' if ns else 'base_scan',
+            'output_scan_topic': 'ultrasonic_blob_scan',
+            'debug_topic': 'ultrasonic_triangulation_debug',
+            'triangulation_enabled': (
+                ultrasonic_triangulation_enabled_str.lower() in ('1', 'true', 'yes')
+            ),
+            'max_valid_range_m': float(ultrasonic_hard_max_range_m_str),
+            'similarity_m': float(ultrasonic_triangulation_similarity_m_str),
+            'similarity_scale_per_m': float(ultrasonic_triangulation_similarity_scale_per_m_str),
+            'similarity_max_m': float(ultrasonic_triangulation_similarity_max_m_str),
+            'blob_radius_m': float(ultrasonic_triangulation_blob_radius_m_str),
+            'max_age_sec': float(ultrasonic_triangulation_max_age_sec_str),
+            'require_pair_agreement': (
+                ultrasonic_triangulation_require_pair_agreement_str.lower() in ('1', 'true', 'yes')
+            ),
+            'front_emergency_range_m': float(ultrasonic_front_emergency_range_m_str),
+            'front_emergency_required_streak': int(ultrasonic_front_emergency_required_streak_str),
+            'front_emergency_blob_radius_m': float(ultrasonic_front_emergency_blob_radius_m_str),
+            'blob_hold_sec': float(ultrasonic_triangulation_blob_hold_sec_str),
+        }],
         remappings=tf_remappings,
         output='screen',
     ))
@@ -610,6 +753,8 @@ def _launch_setup(context):
         costmap_scan_relay=costmap_scan_relay,
         nav2_enable_range_layer=(
             nav2_enable_range_layer_str.lower() in ('1', 'true', 'yes')),
+        nav2_enable_ultrasonic_blob_layer=(
+            nav2_enable_ultrasonic_blob_layer_str.lower() in ('1', 'true', 'yes')),
     )
 
     if fleet_map_relay:
@@ -866,7 +1011,7 @@ def generate_launch_description():
             'enable_debug_logging', default_value='false',
             description='Enable structured Nav2 motion debug logger'),
         DeclareLaunchArgument(
-            'debug_log_dir', default_value='~/turtlebot3_ws/logs',
+            'debug_log_dir', default_value='~/turtlebot3/logs',
             description='Directory for nav2_motion_debug_logger JSONL output'),
         DeclareLaunchArgument(
             'debug_log_rate_hz', default_value='5.0',
@@ -971,6 +1116,72 @@ def generate_launch_description():
             description=(
                 'If true, inject Nav2 RangeSensorLayer (ultrasonic topics) into local/global '
                 'costmaps for A/B testing. Default false keeps scan-fusion-only behavior.')),
+        DeclareLaunchArgument(
+            'ultrasonic_use_left', default_value='true',
+            description='Enable left ultrasonic in scan fusion.'),
+        DeclareLaunchArgument(
+            'ultrasonic_use_front', default_value='true',
+            description='Enable front ultrasonic in scan fusion.'),
+        DeclareLaunchArgument(
+            'ultrasonic_use_right', default_value='true',
+            description='Enable right ultrasonic in scan fusion.'),
+        DeclareLaunchArgument(
+            'ultrasonic_overlap_arbitration_enabled', default_value='true',
+            description=(
+                'If true, arbitrate overlapping ultrasonic detections to reduce '
+                'duplicate cone inflation (front-vs-side classification).')),
+        DeclareLaunchArgument(
+            'ultrasonic_overlap_similarity_m', default_value='0.10',
+            description=(
+                'Meters threshold for treating two ultrasonic readings as the same obstacle.')),
+        DeclareLaunchArgument(
+            'ultrasonic_overlap_side_pair_front_scale', default_value='0.60',
+            description=(
+                'When front+side agree, scale front cone width by this factor (0..1).')),
+        DeclareLaunchArgument(
+            'ultrasonic_hard_max_range_m', default_value='0.50',
+            description='Hard max ultrasonic range for fusion/triangulation (meters).'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_enabled', default_value='true',
+            description='Enable ultrasonic triangulation blob publisher.'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_similarity_m', default_value='0.08',
+            description='Triangulation pair/triple similarity threshold (meters).'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_similarity_scale_per_m', default_value='0.18',
+            description=(
+                'Additional triangulation similarity tolerance per meter of front range '
+                '(supports distance-scaled agreement).')),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_similarity_max_m', default_value='0.14',
+            description='Upper bound for triangulation similarity threshold (meters).'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_blob_radius_m', default_value='0.10',
+            description='Blob radius for triangulated ultrasonic obstacle (meters).'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_max_age_sec', default_value='0.15',
+            description='Max age of ultrasonic samples used for triangulation (seconds).'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_require_pair_agreement', default_value='true',
+            description='If true, only publish blobs when front+side pair agreement exists.'),
+        DeclareLaunchArgument(
+            'ultrasonic_disable_scan_fusion_when_blob', default_value='true',
+            description='If true, disable legacy ultrasonic scan fusion when blob layer is enabled.'),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_range_m', default_value='0.38',
+            description='Enable front-only emergency blob when front range is below this distance (m).'),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_required_streak', default_value='1',
+            description='Consecutive front emergency samples required before publishing emergency blob.'),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_blob_radius_m', default_value='0.16',
+            description='Blob radius used for front emergency obstacle marking (meters).'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_blob_hold_sec', default_value='0.90',
+            description='How long to keep last triangulated blob when agreement drops briefly (s).'),
+        DeclareLaunchArgument(
+            'nav2_enable_ultrasonic_blob_layer', default_value='true',
+            description='Inject ultrasonic_blob_scan into Nav2 obstacle_layer sources.'),
         DeclareLaunchArgument(
             'enable_startup_map_seeding', default_value='true',
             description=(
