@@ -28,7 +28,7 @@ echo "Workspace directory: $WORKSPACE_DIR"
 BOOT_WIFI_SCRIPT="$WORKSPACE_DIR/scripts/wifi/boot_wifi.sh"
 if [ ! -f "$BOOT_WIFI_SCRIPT" ]; then
   echo "Error: Expected boot WiFi script not found at: $BOOT_WIFI_SCRIPT"
-  echo "Please ensure you are running this from a valid turtlebot3_ws checkout."
+  echo "Please ensure you are running this from a valid turtlebot3 checkout."
   exit 1
 fi
 

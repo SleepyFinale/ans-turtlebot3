@@ -38,6 +38,8 @@ Ultrasonic::Ultrasonic(
   nh_->declare_parameter<float>("ultrasonic.max_valid_range", max_valid_range_);
   nh_->declare_parameter<bool>("ultrasonic.use_jump_filter", use_jump_filter_);
   nh_->declare_parameter<float>("ultrasonic.max_delta_per_cycle", max_delta_per_cycle_);
+  nh_->declare_parameter<int>("ultrasonic.max_hold_cycles", max_hold_cycles_);
+  nh_->declare_parameter<float>("ultrasonic.release_step_per_cycle", release_step_per_cycle_);
   nh_->declare_parameter<float>("ultrasonic.left_offset", range_offsets_[0]);
   nh_->declare_parameter<float>("ultrasonic.front_offset", range_offsets_[1]);
   nh_->declare_parameter<float>("ultrasonic.right_offset", range_offsets_[2]);
@@ -50,6 +52,8 @@ Ultrasonic::Ultrasonic(
   nh_->get_parameter_or<float>("ultrasonic.max_valid_range", max_valid_range_, max_valid_range_);
   nh_->get_parameter_or<bool>("ultrasonic.use_jump_filter", use_jump_filter_, use_jump_filter_);
   nh_->get_parameter_or<float>("ultrasonic.max_delta_per_cycle", max_delta_per_cycle_, max_delta_per_cycle_);
+  nh_->get_parameter_or<int>("ultrasonic.max_hold_cycles", max_hold_cycles_, max_hold_cycles_);
+  nh_->get_parameter_or<float>("ultrasonic.release_step_per_cycle", release_step_per_cycle_, release_step_per_cycle_);
   nh_->get_parameter_or<float>("ultrasonic.left_offset", range_offsets_[0], range_offsets_[0]);
   nh_->get_parameter_or<float>("ultrasonic.front_offset", range_offsets_[1], range_offsets_[1]);
   nh_->get_parameter_or<float>("ultrasonic.right_offset", range_offsets_[2], range_offsets_[2]);
@@ -59,6 +63,12 @@ Ultrasonic::Ultrasonic(
   }
   if (max_valid_range_ <= min_valid_range_) {
     max_valid_range_ = 3.0f;
+  }
+  if (max_hold_cycles_ < 0) {
+    max_hold_cycles_ = 0;
+  }
+  if (release_step_per_cycle_ <= 0.0f) {
+    release_step_per_cycle_ = 0.05f;
   }
 
   if (name_space_ != "") {
@@ -103,14 +113,24 @@ void Ultrasonic::publish(
     }
 
     if (!valid) {
-      // When we drop a bad reading, keep the previous "good" value so a transient
-      // outlier doesn't make the system think the world just opened up.
+      // Hold a previously valid close reading for a bounded number of cycles,
+      // then gradually release toward max range to avoid permanent "ghost"
+      // obstacles when the sensor stream becomes sticky/noisy.
       if (previous_ranges_[i] > 0.0f) {
-        filtered_dist[i] = previous_ranges_[i];
+        hold_cycles_[i] += 1;
+        if (hold_cycles_[i] <= max_hold_cycles_) {
+          filtered_dist[i] = previous_ranges_[i];
+        } else {
+          previous_ranges_[i] = std::min(
+            previous_ranges_[i] + release_step_per_cycle_,
+            max_valid_range_);
+          filtered_dist[i] = previous_ranges_[i];
+        }
       } else {
         filtered_dist[i] = max_valid_range_;
       }
     } else {
+      hold_cycles_[i] = 0;
       filtered_dist[i] = dist;
       previous_ranges_[i] = dist;
     }

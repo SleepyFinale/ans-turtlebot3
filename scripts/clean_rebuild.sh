@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clean, build, and source turtlebot3_ws (ROS 2 Humble).
+# Clean, build, and source turtlebot3 (ROS 2 Humble).
 # Default: remove build/install/log, run colcon build, then source install/setup.bash.
 # Usage:
 #   ./scripts/clean_rebuild.sh          # clean, build, then source

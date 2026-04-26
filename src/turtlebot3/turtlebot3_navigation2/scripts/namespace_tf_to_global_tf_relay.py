@@ -67,7 +67,7 @@ def main() -> int:
         return 1
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, RuntimeError):
         pass
     finally:
         # Launch may already have shut down the default context when SIGINT stops

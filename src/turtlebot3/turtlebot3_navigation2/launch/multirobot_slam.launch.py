@@ -15,7 +15,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    workspace_dir = os.path.expanduser('~/turtlebot3_ws')
+    workspace_dir = os.path.expanduser('~/turtlebot3')
     param_dir = os.path.join(
         get_package_share_directory('turtlebot3_navigation2'),
         'param', 'humble')
