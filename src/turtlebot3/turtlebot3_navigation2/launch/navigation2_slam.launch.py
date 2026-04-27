@@ -261,12 +261,15 @@ def _generate_nav2_params(
             obstacle = costmap_node.get('obstacle_layer')
             if not isinstance(obstacle, dict):
                 continue
+            blob_topic = 'ultrasonic_blob_scan'
+            if namespace:
+                blob_topic = f'/{namespace}/ultrasonic_blob_scan'
             obs_sources = str(obstacle.get('observation_sources', 'scan')).split()
             if 'ultrasonic_blob' not in obs_sources:
                 obs_sources.append('ultrasonic_blob')
             obstacle['observation_sources'] = ' '.join(obs_sources)
             obstacle['ultrasonic_blob'] = {
-                'topic': 'ultrasonic_blob_scan',
+                'topic': blob_topic,
                 'max_obstacle_height': 2.0,
                 'clearing': False,
                 'marking': True,
@@ -275,6 +278,8 @@ def _generate_nav2_params(
                 'raytrace_min_range': 0.02,
                 'obstacle_max_range': 0.55,
                 'obstacle_min_range': 0.02,
+                'observation_persistence': 0.20,
+                'expected_update_rate': 0.0
             }
 
     # Use a custom navigate-to-pose tree that proactively clears costmaps
@@ -306,6 +311,12 @@ def _launch_setup(context):
     enable_retrace_escape_str = LaunchConfiguration('enable_retrace_escape').perform(context)
     enable_controller_collision_watch_str = LaunchConfiguration(
         'enable_controller_collision_watch').perform(context)
+    enable_ultrasonic_cmd_vel_enforcer_str = LaunchConfiguration(
+        'enable_ultrasonic_cmd_vel_enforcer').perform(context)
+    ultrasonic_stop_hold_sec_str = LaunchConfiguration(
+        'ultrasonic_stop_hold_sec').perform(context)
+    ultrasonic_stop_guarded_max_blob_dist_m_str = LaunchConfiguration(
+        'ultrasonic_stop_guarded_max_blob_dist_m').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
@@ -917,7 +928,13 @@ def _launch_setup(context):
                 'nav2_status_topic': 'navigate_to_pose/_action/status',
                 'nav2_cancel_service': 'navigate_to_pose/_action/cancel_goal',
                 'lethal_topic': 'nav2_lethal_inflation',
+                'collision_ahead_topic': 'nav2_collision_ahead',
                 'retrace_active_topic': 'nav2_retrace_active',
+                'enable_collision_retry_guard': True,
+                'collision_retry_window_sec': 8.0,
+                'collision_retry_min_events': 5,
+                'collision_retry_min_goal_age_sec': 6.0,
+                'collision_retry_cooldown_sec': 12.0,
             },
         ],
         output='screen',
@@ -940,6 +957,38 @@ def _launch_setup(context):
         }],
         output='screen',
         condition=IfCondition(enable_controller_collision_watch_str),
+    ))
+
+    # --- Hard-stop cmd_vel override from ultrasonic hazard clusters ---
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='ultrasonic_cmd_vel_enforcer.py',
+        name='ultrasonic_cmd_vel_enforcer',
+        namespace=ns if ns else None,
+        parameters=[{
+            'triangulation_debug_topic': 'ultrasonic_triangulation_debug',
+            'cmd_vel_topic': 'cmd_vel',
+            'publish_hz': 24.0,
+            'hold_sec': float(ultrasonic_stop_hold_sec_str),
+            'hazard_clusters': [
+                'front',
+                'front_held',
+                'front_emergency',
+                'front_emergency_held',
+            ],
+            'always_stop_clusters': [
+                'front',
+                'front_held',
+                'front_emergency',
+                'front_emergency_held',
+            ],
+            'guarded_stop_clusters': [],
+            'guarded_stop_max_blob_dist_m': float(
+                ultrasonic_stop_guarded_max_blob_dist_m_str
+            ),
+        }],
+        output='screen',
+        condition=IfCondition(enable_ultrasonic_cmd_vel_enforcer_str),
     ))
 
     # --- RViz (optional) ---
@@ -1029,6 +1078,19 @@ def generate_launch_description():
             description=(
                 'Publish /<robot>/nav2_collision_ahead from controller_server '
                 'rosout lines (e.g. RPP collision ahead)')),
+        DeclareLaunchArgument(
+            'enable_ultrasonic_cmd_vel_enforcer', default_value='false',
+            description=(
+                'Hard-stop cmd_vel override while ultrasonic hazard clusters are active '
+                '(front/front_emergency).')),
+        DeclareLaunchArgument(
+            'ultrasonic_stop_hold_sec', default_value='0.50',
+            description='How long cmd_vel enforcer holds stop after ultrasonic hazard trigger (s).'),
+        DeclareLaunchArgument(
+            'ultrasonic_stop_guarded_max_blob_dist_m', default_value='0.28',
+            description=(
+                'Only stop on guarded hazard clusters if blob distance is below this threshold (m). '
+                'Lower values reduce stutter in tight spaces.')),
         DeclareLaunchArgument(
             'fleet_mode', default_value='true',
             description=('Fleet topology mode: true=merged /map + inject map TF from '
@@ -1145,7 +1207,7 @@ def generate_launch_description():
             'ultrasonic_triangulation_enabled', default_value='true',
             description='Enable ultrasonic triangulation blob publisher.'),
         DeclareLaunchArgument(
-            'ultrasonic_triangulation_similarity_m', default_value='0.08',
+            'ultrasonic_triangulation_similarity_m', default_value='0.07',
             description='Triangulation pair/triple similarity threshold (meters).'),
         DeclareLaunchArgument(
             'ultrasonic_triangulation_similarity_scale_per_m', default_value='0.18',
@@ -1153,7 +1215,7 @@ def generate_launch_description():
                 'Additional triangulation similarity tolerance per meter of front range '
                 '(supports distance-scaled agreement).')),
         DeclareLaunchArgument(
-            'ultrasonic_triangulation_similarity_max_m', default_value='0.14',
+            'ultrasonic_triangulation_similarity_max_m', default_value='0.12',
             description='Upper bound for triangulation similarity threshold (meters).'),
         DeclareLaunchArgument(
             'ultrasonic_triangulation_blob_radius_m', default_value='0.10',
@@ -1171,13 +1233,13 @@ def generate_launch_description():
             'ultrasonic_front_emergency_range_m', default_value='0.38',
             description='Enable front-only emergency blob when front range is below this distance (m).'),
         DeclareLaunchArgument(
-            'ultrasonic_front_emergency_required_streak', default_value='1',
+            'ultrasonic_front_emergency_required_streak', default_value='2',
             description='Consecutive front emergency samples required before publishing emergency blob.'),
         DeclareLaunchArgument(
             'ultrasonic_front_emergency_blob_radius_m', default_value='0.16',
             description='Blob radius used for front emergency obstacle marking (meters).'),
         DeclareLaunchArgument(
-            'ultrasonic_triangulation_blob_hold_sec', default_value='0.90',
+            'ultrasonic_triangulation_blob_hold_sec', default_value='0.45',
             description='How long to keep last triangulated blob when agreement drops briefly (s).'),
         DeclareLaunchArgument(
             'nav2_enable_ultrasonic_blob_layer', default_value='true',

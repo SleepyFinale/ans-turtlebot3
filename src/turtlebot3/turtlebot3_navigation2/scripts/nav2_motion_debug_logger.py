@@ -67,7 +67,11 @@ class Nav2MotionDebugLogger(Node):
 
         self._session_dir = Path(output_dir) / robot_name
         self._session_dir.mkdir(parents=True, exist_ok=True)
-        session_name = datetime.now().strftime('session-%Y%m%d-%H%M%S.jsonl')
+        session_ts = str(os.environ.get('DEBUG_SESSION_TS', '')).strip()
+        if session_ts:
+            session_name = f'session-{session_ts}.jsonl'
+        else:
+            session_name = datetime.now().strftime('session-%Y%m%d-%H%M%S.jsonl')
         self._jsonl_path = self._session_dir / session_name
         self._jsonl_file = self._jsonl_path.open('a', encoding='utf-8')
 

@@ -13,16 +13,35 @@ ROBOT_NAME="${1:-${ROBOT_NAME:-${USER:-robot}}}"
 SESSION_TS="$(date +%Y%m%d-%H%M%S)"
 BASE_OUT="${WORKSPACE_DIR}/logs/${ROBOT_NAME}"
 BAG_OUT="${BASE_OUT}/bag-${SESSION_TS}"
-JSONL_HINT="${BASE_OUT}/session-*.jsonl"
+DB3_OUT="${BAG_OUT}/bag-${SESSION_TS}_0.db3"
+JSONL_OUT="${BASE_OUT}/session-${SESSION_TS}.jsonl"
+DB3_REL="turtlebot3/logs/${ROBOT_NAME}/bag-${SESSION_TS}/bag-${SESSION_TS}_0.db3"
+JSONL_REL="turtlebot3/logs/${ROBOT_NAME}/session-${SESSION_TS}.jsonl"
 
 mkdir -p "$BASE_OUT"
+
+# If debug logger already started and created a nearby session file with a
+# different timestamp, rename it so bag + JSONL share the same SESSION_TS.
+if [[ ! -f "$JSONL_OUT" ]]; then
+  LATEST_JSONL="$(ls -1t "${BASE_OUT}"/session-*.jsonl 2>/dev/null | sed -n '1p' || true)"
+  if [[ -n "$LATEST_JSONL" && "$LATEST_JSONL" != "$JSONL_OUT" ]]; then
+    mv "$LATEST_JSONL" "$JSONL_OUT"
+  fi
+fi
+
+ANALYZE_CMD="python3 ${WORKSPACE_DIR}/scripts/debug/analyze_nav2_bag_stop.py \"\$(dirname \"${DB3_OUT}\")\" && python3 ${WORKSPACE_DIR}/scripts/debug/analyze_nav2_debug_session.py \"${JSONL_OUT}\""
 
 echo "=========================================="
 echo " Nav2 Debug Capture"
 echo "=========================================="
 echo " Robot name   : ${ROBOT_NAME}"
-echo " Bag output   : ${BAG_OUT}"
-echo " JSONL output : ${JSONL_HINT}"
+echo " Bag DB3 path : ${DB3_OUT}"
+echo " JSONL path   : ${JSONL_OUT}"
+echo " Bag DB3(repo): ${DB3_REL}"
+echo " JSONL (repo) : ${JSONL_REL}"
+echo ""
+echo " Analyze command (copy/paste):"
+echo " ${ANALYZE_CMD}"
 echo ""
 echo "Make sure navigation2_slam.launch.py is started with:"
 echo "  enable_debug_logging:=true"

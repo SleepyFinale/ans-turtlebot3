@@ -137,7 +137,8 @@ class UltrasonicTriangulationBlob(Node):
         )
 
     def _on_range(self, idx: int, msg: Range) -> None:
-        if not self._is_valid(float(msg.range)):
+        value = float(msg.range)
+        if not math.isfinite(value) or value < self._min_valid_range:
             return
         self._last_msg[idx] = msg
         self._last_recv_s[idx] = self.get_clock().now().nanoseconds * 1e-9
@@ -218,7 +219,9 @@ class UltrasonicTriangulationBlob(Node):
             age = now_s - _stamp_to_s(msg.header.stamp)
             if age > self._max_age_sec:
                 continue
-            active[idx] = msg
+            value = float(msg.range)
+            if self._is_valid(value):
+                active[idx] = msg
 
         scan = LaserScan()
         scan.header.stamp = self.get_clock().now().to_msg()
@@ -327,12 +330,18 @@ class UltrasonicTriangulationBlob(Node):
             blob_y = (left[1] + front[1] + right[1]) / 3.0
         elif left_sim and left is not None:
             cluster = 'front_left'
-            blob_x = 0.5 * (left[0] + front[0])
-            blob_y = 0.5 * (left[1] + front[1])
+            # Keep lateral placement biased to the side sensor to avoid
+            # over-centering near corridor/table edges.
+            side_w = 0.70
+            front_w = 0.30
+            blob_x = side_w * left[0] + front_w * front[0]
+            blob_y = side_w * left[1] + front_w * front[1]
         elif right_sim and right is not None:
             cluster = 'front_right'
-            blob_x = 0.5 * (right[0] + front[0])
-            blob_y = 0.5 * (right[1] + front[1])
+            side_w = 0.70
+            front_w = 0.30
+            blob_x = side_w * right[0] + front_w * front[0]
+            blob_y = side_w * right[1] + front_w * front[1]
 
         blob_dist = math.hypot(blob_x, blob_y)
         if not math.isfinite(blob_dist) or blob_dist < self._min_valid_range or blob_dist > self._max_valid_range:

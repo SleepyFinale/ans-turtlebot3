@@ -41,6 +41,7 @@ class Nav2RetraceEscape(Node):
         self.declare_parameter('nav2_status_topic', 'navigate_to_pose/_action/status')
         self.declare_parameter('nav2_cancel_service', 'navigate_to_pose/_action/cancel_goal')
         self.declare_parameter('lethal_topic', 'nav2_lethal_inflation')
+        self.declare_parameter('collision_ahead_topic', 'nav2_collision_ahead')
         self.declare_parameter('retrace_active_topic', 'nav2_retrace_active')
         self.declare_parameter('pose_buffer_duration_sec', 20.0)
         self.declare_parameter('pose_sample_min_dist_m', 0.03)
@@ -58,6 +59,11 @@ class Nav2RetraceEscape(Node):
         self.declare_parameter('tick_hz', 8.0)
         self.declare_parameter('tf_lookup_timeout_sec', 0.12)
         self.declare_parameter('retreat_result_timeout_sec', 12.0)
+        self.declare_parameter('enable_collision_retry_guard', True)
+        self.declare_parameter('collision_retry_window_sec', 8.0)
+        self.declare_parameter('collision_retry_min_events', 5)
+        self.declare_parameter('collision_retry_min_goal_age_sec', 6.0)
+        self.declare_parameter('collision_retry_cooldown_sec', 10.0)
 
         self.robot_name = str(self.get_parameter('robot_name').value or '')
         self.map_frame = str(self.get_parameter('map_frame').value)
@@ -65,6 +71,7 @@ class Nav2RetraceEscape(Node):
         self.nav2_status_topic = str(self.get_parameter('nav2_status_topic').value)
         self.nav2_cancel_service = str(self.get_parameter('nav2_cancel_service').value)
         self.lethal_topic = str(self.get_parameter('lethal_topic').value)
+        self.collision_ahead_topic = str(self.get_parameter('collision_ahead_topic').value)
         self.retrace_active_topic = str(self.get_parameter('retrace_active_topic').value)
         self.pose_buffer_duration_sec = float(
             self.get_parameter('pose_buffer_duration_sec').value
@@ -102,6 +109,21 @@ class Nav2RetraceEscape(Node):
         self.retreat_result_timeout_sec = float(
             self.get_parameter('retreat_result_timeout_sec').value
         )
+        self.enable_collision_retry_guard = bool(
+            self.get_parameter('enable_collision_retry_guard').value
+        )
+        self.collision_retry_window_sec = max(
+            1.0, float(self.get_parameter('collision_retry_window_sec').value)
+        )
+        self.collision_retry_min_events = max(
+            2, int(self.get_parameter('collision_retry_min_events').value)
+        )
+        self.collision_retry_min_goal_age_sec = max(
+            0.0, float(self.get_parameter('collision_retry_min_goal_age_sec').value)
+        )
+        self.collision_retry_cooldown_sec = max(
+            0.0, float(self.get_parameter('collision_retry_cooldown_sec').value)
+        )
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -112,6 +134,9 @@ class Nav2RetraceEscape(Node):
         )
         self.lethal_sub = self.create_subscription(
             Bool, self.lethal_topic, self._lethal_callback, 10
+        )
+        self.collision_ahead_sub = self.create_subscription(
+            Bool, self.collision_ahead_topic, self._collision_ahead_callback, 10
         )
         self.active_pub = self.create_publisher(Bool, self.retrace_active_topic, 10)
 
@@ -130,6 +155,9 @@ class Nav2RetraceEscape(Node):
         self.retrace_last_start_time: float = 0.0
         self.retrace_last_end_time: float = 0.0
         self.pending_trigger_reason: str = ''
+        self.collision_ahead_active: bool = False
+        self.collision_ahead_events: Deque[float] = deque()
+        self.last_collision_retry_trigger_time: float = 0.0
 
         tick_period = 1.0 / self.tick_hz if self.tick_hz > 0.0 else 0.125
         pub_period = 1.0 / self.publish_hz if self.publish_hz > 0.0 else 0.25
@@ -153,17 +181,28 @@ class Nav2RetraceEscape(Node):
             self.goal_start_time = now
             self.last_motion_time = now
             self.last_insufficient_history_warn_time = 0.0
+            self.collision_ahead_events.clear()
+            self.collision_ahead_active = False
             if self.last_sample_pose is not None:
                 self.last_motion_reference_pose = self.last_sample_pose
         if active_uuid is None:
             self.goal_start_time = 0.0
             self.last_motion_reference_pose = self.last_sample_pose
+            self.collision_ahead_events.clear()
+            self.collision_ahead_active = False
         self.goal_active = active is not None
         self.last_active_goal_uuid = active_uuid
         self.last_active_goal_info = active
 
     def _lethal_callback(self, msg: Bool) -> None:
         self.lethal_active = bool(msg.data)
+
+    def _collision_ahead_callback(self, msg: Bool) -> None:
+        now = self._now_sec()
+        active = bool(msg.data)
+        if active and not self.collision_ahead_active:
+            self.collision_ahead_events.append(now)
+        self.collision_ahead_active = active
 
     def _publish_retrace_active(self) -> None:
         out = Bool()
@@ -317,6 +356,23 @@ class Nav2RetraceEscape(Node):
             return None
         if self.trigger_on_lethal and self.lethal_active:
             return 'lethal_space'
+        if self.enable_collision_retry_guard:
+            if (
+                self.goal_start_time > 0.0
+                and (now - self.goal_start_time) >= self.collision_retry_min_goal_age_sec
+                and (
+                    self.last_collision_retry_trigger_time <= 0.0
+                    or (now - self.last_collision_retry_trigger_time)
+                    >= self.collision_retry_cooldown_sec
+                )
+            ):
+                while self.collision_ahead_events and (
+                    now - self.collision_ahead_events[0]
+                ) > self.collision_retry_window_sec:
+                    self.collision_ahead_events.popleft()
+                if len(self.collision_ahead_events) >= self.collision_retry_min_events:
+                    self.last_collision_retry_trigger_time = now
+                    return 'collision_retry_guard'
         if self.trigger_on_stall and self.last_motion_time > 0.0:
             if self.goal_start_time > 0.0 and (now - self.goal_start_time) < self.stall_min_goal_age_sec:
                 return None
