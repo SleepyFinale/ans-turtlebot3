@@ -74,7 +74,11 @@ class UltrasonicDebugLogger(Node):
         output_dir = os.path.expanduser(str(self.get_parameter('output_dir').value))
         session_dir = Path(output_dir) / robot_name
         session_dir.mkdir(parents=True, exist_ok=True)
-        session_name = datetime.now().strftime('ultrasonic-session-%Y%m%d-%H%M%S.jsonl')
+        session_ts = str(os.environ.get('DEBUG_SESSION_TS', '')).strip()
+        if session_ts:
+            session_name = f'ultrasonic-session-{session_ts}.jsonl'
+        else:
+            session_name = datetime.now().strftime('ultrasonic-session-%Y%m%d-%H%M%S.jsonl')
         self._jsonl_path = session_dir / session_name
         self._jsonl = self._jsonl_path.open('a', encoding='utf-8')
 

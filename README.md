@@ -909,17 +909,18 @@ ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
   ultrasonic_hard_max_range_m:=0.50 \
   ultrasonic_triangulation_enabled:=true \
   nav2_enable_ultrasonic_blob_layer:=true \
-  ultrasonic_triangulation_similarity_m:=0.06 \
+  ultrasonic_triangulation_similarity_m:=0.07 \
   ultrasonic_triangulation_similarity_scale_per_m:=0.18 \
-  ultrasonic_triangulation_similarity_max_m:=0.14 \
+  ultrasonic_triangulation_similarity_max_m:=0.12 \
   ultrasonic_triangulation_blob_radius_m:=0.08 \
   ultrasonic_triangulation_max_age_sec:=0.15 \
   ultrasonic_triangulation_require_pair_agreement:=true \
   ultrasonic_disable_scan_fusion_when_blob:=true \
   ultrasonic_front_emergency_range_m:=0.38 \
-  ultrasonic_front_emergency_required_streak:=1 \
+  ultrasonic_front_emergency_required_streak:=2 \
   ultrasonic_front_emergency_blob_radius_m:=0.16 \
-  ultrasonic_triangulation_blob_hold_sec:=0.90
+  ultrasonic_triangulation_blob_hold_sec:=0.45 \
+  enable_ultrasonic_cmd_vel_enforcer:=false
 ```
 
 Notes:
@@ -928,8 +929,10 @@ Notes:
 - Triangulation publishes `ultrasonic_blob_scan` and `ultrasonic_triangulation_debug`.
 - Nav2 obstacle layers can consume this dedicated blob source via `nav2_enable_ultrasonic_blob_layer:=true`.
 - `ultrasonic_front_emergency_*` adds a close-range front-only fail-safe if pair matching drops.
+- `enable_ultrasonic_cmd_vel_enforcer:=false` is the recommended LiDAR-like mode (costmap-only behavior). Enable only for emergency fallback testing.
 - `ultrasonic_triangulation_blob_hold_sec` prevents brief dropouts from immediately unmarking close obstacles.
 - `ultrasonic_triangulation_similarity_*` supports distance-scaled pair/triple matching (more tolerant far, tighter near).
+- `nav2_retrace_escape` includes a collision-retry guard (`nav2_collision_ahead` burst detection) to stop repeated forward retries into persistent blocked zones.
 
 #### A/B validation matrix
 
