@@ -20,11 +20,24 @@ class UltrasonicCmdVelEnforcer(Node):
         self.declare_parameter('hold_sec', 0.7)
         self.declare_parameter(
             'hazard_clusters',
-            ['front_guard', 'front_guard_held', 'front_emergency', 'front_emergency_held', 'front_single'],
+            [
+                'front_guard',
+                'front_guard_held',
+                'front_emergency',
+                'front_emergency_held',
+                'front_emergency_replay',
+                'front_single',
+            ],
         )
         self.declare_parameter(
             'always_stop_clusters',
-            ['front_emergency', 'front_emergency_held', 'front_single', 'front_single_held'],
+            [
+                'front_emergency',
+                'front_emergency_held',
+                'front_emergency_replay',
+                'front_single',
+                'front_single_held',
+            ],
         )
         self.declare_parameter(
             'guarded_stop_clusters',

@@ -68,8 +68,8 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_footprint
     odom_topic: odom
-    # Rewritten to an absolute package-share path in navigation2_slam.launch.py.
-    default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery_with_lethal_escape.xml"
+    # Keep stock Nav2 behavior tree for baseline-stable runs.
+    default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
     # Reduce BT tick pressure on SBC CPU (default 10ms; 50ms still starved under SLAM+RViz+Wi‑Fi).
     bt_loop_duration: 100
     # Milliseconds (Nav2 bt_navigator). Default upstream is 20ms — far too tight on

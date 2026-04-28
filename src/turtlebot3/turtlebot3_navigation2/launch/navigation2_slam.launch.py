@@ -35,6 +35,7 @@
 import os
 import socket
 import tempfile
+from typing import Optional
 
 import yaml
 
@@ -156,6 +157,14 @@ def _generate_nav2_params(
     costmap_scan_relay: bool = False,
     nav2_enable_range_layer: bool = False,
     nav2_enable_ultrasonic_blob_layer: bool = False,
+    nav2_ultrasonic_blob_on_global: bool = True,
+    ultrasonic_emergency_observation_persistence: float = 0.28,
+    ultrasonic_side_observation_persistence: float = 0.08,
+    ultrasonic_global_emergency_observation_persistence: Optional[float] = None,
+    ultrasonic_global_side_observation_persistence: Optional[float] = None,
+    ultrasonic_emergency_obstacle_max_range: float = 0.65,
+    ultrasonic_side_obstacle_max_range: float = 0.55,
+    use_custom_bt_recovery_tree: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -254,44 +263,79 @@ def _generate_nav2_params(
             }
 
     if nav2_enable_ultrasonic_blob_layer:
-        for costmap_root in ('local_costmap', 'global_costmap'):
+        blob_emergency_topic = 'ultrasonic_blob_scan_emergency'
+        blob_side_topic = 'ultrasonic_blob_scan_side'
+        if namespace:
+            blob_emergency_topic = f'/{namespace}/ultrasonic_blob_scan_emergency'
+            blob_side_topic = f'/{namespace}/ultrasonic_blob_scan_side'
+
+        costmap_targets = ['local_costmap']
+        if nav2_ultrasonic_blob_on_global:
+            costmap_targets.append('global_costmap')
+
+        global_em_persist = ultrasonic_global_emergency_observation_persistence
+        if global_em_persist is None:
+            global_em_persist = ultrasonic_emergency_observation_persistence
+        global_side_persist = ultrasonic_global_side_observation_persistence
+        if global_side_persist is None:
+            global_side_persist = ultrasonic_side_observation_persistence
+
+        for costmap_root in costmap_targets:
             costmap_node = params.get(costmap_root, {}).get(costmap_root, {}).get('ros__parameters', {})
             if not isinstance(costmap_node, dict):
                 continue
             obstacle = costmap_node.get('obstacle_layer')
             if not isinstance(obstacle, dict):
                 continue
-            blob_topic = 'ultrasonic_blob_scan'
-            if namespace:
-                blob_topic = f'/{namespace}/ultrasonic_blob_scan'
+            if costmap_root == 'local_costmap':
+                em_persist = ultrasonic_emergency_observation_persistence
+                side_persist = ultrasonic_side_observation_persistence
+            else:
+                em_persist = global_em_persist
+                side_persist = global_side_persist
+
             obs_sources = str(obstacle.get('observation_sources', 'scan')).split()
-            if 'ultrasonic_blob' not in obs_sources:
-                obs_sources.append('ultrasonic_blob')
+            for source in ('ultrasonic_blob_emergency', 'ultrasonic_blob_side'):
+                if source not in obs_sources:
+                    obs_sources.append(source)
             obstacle['observation_sources'] = ' '.join(obs_sources)
-            obstacle['ultrasonic_blob'] = {
-                'topic': blob_topic,
+            obstacle['ultrasonic_blob_emergency'] = {
+                'topic': blob_emergency_topic,
                 'max_obstacle_height': 2.0,
                 'clearing': False,
                 'marking': True,
                 'data_type': 'LaserScan',
-                'raytrace_max_range': 0.55,
+                'raytrace_max_range': ultrasonic_emergency_obstacle_max_range,
                 'raytrace_min_range': 0.02,
-                'obstacle_max_range': 0.55,
+                'obstacle_max_range': ultrasonic_emergency_obstacle_max_range,
                 'obstacle_min_range': 0.02,
-                'observation_persistence': 0.20,
+                'observation_persistence': em_persist,
+                'expected_update_rate': 0.0
+            }
+            obstacle['ultrasonic_blob_side'] = {
+                'topic': blob_side_topic,
+                'max_obstacle_height': 2.0,
+                'clearing': False,
+                'marking': True,
+                'data_type': 'LaserScan',
+                'raytrace_max_range': ultrasonic_side_obstacle_max_range,
+                'raytrace_min_range': 0.02,
+                'obstacle_max_range': ultrasonic_side_obstacle_max_range,
+                'obstacle_min_range': 0.02,
+                'observation_persistence': side_persist,
                 'expected_update_rate': 0.0
             }
 
-    # Use a custom navigate-to-pose tree that proactively clears costmaps
-    # around planner/controller failures and keeps backup/spin/wait recoveries.
-    bt_tree_path = os.path.join(
-        get_package_share_directory('turtlebot3_navigation2'),
-        'behavior_trees',
-        'navigate_to_pose_w_replanning_and_recovery_with_lethal_escape.xml',
-    )
-    bt_nav_params = params.get('bt_navigator', {}).get('ros__parameters', {})
-    if isinstance(bt_nav_params, dict):
-        bt_nav_params['default_bt_xml_filename'] = bt_tree_path
+    if use_custom_bt_recovery_tree:
+        # Optional custom BT; baseline mode keeps stock Nav2 behavior tree.
+        bt_tree_path = os.path.join(
+            get_package_share_directory('turtlebot3_navigation2'),
+            'behavior_trees',
+            'navigate_to_pose_w_replanning_and_recovery_with_lethal_escape.xml',
+        )
+        bt_nav_params = params.get('bt_navigator', {}).get('ros__parameters', {})
+        if isinstance(bt_nav_params, dict):
+            bt_nav_params['default_bt_xml_filename'] = bt_tree_path
 
     fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
     with os.fdopen(fd, 'w') as f:
@@ -317,6 +361,24 @@ def _launch_setup(context):
         'ultrasonic_stop_hold_sec').perform(context)
     ultrasonic_stop_guarded_max_blob_dist_m_str = LaunchConfiguration(
         'ultrasonic_stop_guarded_max_blob_dist_m').perform(context)
+    retrace_collision_retry_window_sec_str = LaunchConfiguration(
+        'retrace_collision_retry_window_sec').perform(context)
+    retrace_collision_retry_min_events_str = LaunchConfiguration(
+        'retrace_collision_retry_min_events').perform(context)
+    retrace_collision_retry_cooldown_sec_str = LaunchConfiguration(
+        'retrace_collision_retry_cooldown_sec').perform(context)
+    retrace_retry_zone_radius_m_str = LaunchConfiguration(
+        'retrace_retry_zone_radius_m').perform(context)
+    retrace_retry_zone_decay_sec_str = LaunchConfiguration(
+        'retrace_retry_zone_decay_sec').perform(context)
+    retrace_retry_zone_hard_block_sec_str = LaunchConfiguration(
+        'retrace_retry_zone_hard_block_sec').perform(context)
+    retrace_retry_zone_extra_events_max_str = LaunchConfiguration(
+        'retrace_retry_zone_extra_events_max').perform(context)
+    retrace_retry_zone_repeated_hits_min_str = LaunchConfiguration(
+        'retrace_retry_zone_repeated_hits_min').perform(context)
+    retrace_retry_zone_nonrepeated_extra_events_max_str = LaunchConfiguration(
+        'retrace_retry_zone_nonrepeated_extra_events_max').perform(context)
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
@@ -386,16 +448,69 @@ def _launch_setup(context):
         'ultrasonic_disable_scan_fusion_when_blob').perform(context)
     ultrasonic_front_emergency_range_m_str = LaunchConfiguration(
         'ultrasonic_front_emergency_range_m').perform(context)
+    ultrasonic_front_emergency_strict_range_m_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_strict_range_m').perform(context)
     ultrasonic_front_emergency_required_streak_str = LaunchConfiguration(
         'ultrasonic_front_emergency_required_streak').perform(context)
     ultrasonic_triangulation_blob_hold_sec_str = LaunchConfiguration(
         'ultrasonic_triangulation_blob_hold_sec').perform(context)
+    ultrasonic_hard_block_duration_sec_str = LaunchConfiguration(
+        'ultrasonic_hard_block_duration_sec').perform(context)
+    ultrasonic_memory_decay_duration_sec_str = LaunchConfiguration(
+        'ultrasonic_memory_decay_duration_sec').perform(context)
+    ultrasonic_memory_replay_inward_m_str = LaunchConfiguration(
+        'ultrasonic_memory_replay_inward_m').perform(context)
+    ultrasonic_memory_replay_max_odom_travel_m_str = LaunchConfiguration(
+        'ultrasonic_memory_replay_max_odom_travel_m').perform(context)
+    ultrasonic_memory_replay_max_odom_yaw_rad_str = LaunchConfiguration(
+        'ultrasonic_memory_replay_max_odom_yaw_rad').perform(context)
+    ultrasonic_lateral_blob_cancel_min_odom_yaw_rad_str = LaunchConfiguration(
+        'ultrasonic_lateral_blob_cancel_min_odom_yaw_rad').perform(context)
+    ultrasonic_lateral_blob_cancel_min_abs_blob_angle_rad_str = LaunchConfiguration(
+        'ultrasonic_lateral_blob_cancel_min_abs_blob_angle_rad').perform(context)
+    ultrasonic_memory_replay_in_decay_str = LaunchConfiguration(
+        'ultrasonic_memory_replay_in_decay').perform(context)
     ultrasonic_front_emergency_blob_radius_m_str = LaunchConfiguration(
         'ultrasonic_front_emergency_blob_radius_m').perform(context)
+    ultrasonic_front_emergency_cone_scale_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_cone_scale').perform(context)
+    ultrasonic_front_emergency_hold_sec_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_hold_sec').perform(context)
+    ultrasonic_front_emergency_close_blob_dist_m_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_close_blob_dist_m').perform(context)
+    ultrasonic_front_emergency_close_extra_hold_sec_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_close_extra_hold_sec').perform(context)
+    ultrasonic_front_emergency_close_radius_scale_str = LaunchConfiguration(
+        'ultrasonic_front_emergency_close_radius_scale').perform(context)
     ultrasonic_triangulation_similarity_scale_per_m_str = LaunchConfiguration(
         'ultrasonic_triangulation_similarity_scale_per_m').perform(context)
     ultrasonic_triangulation_similarity_max_m_str = LaunchConfiguration(
         'ultrasonic_triangulation_similarity_max_m').perform(context)
+    ultrasonic_emergency_observation_persistence_str = LaunchConfiguration(
+        'ultrasonic_emergency_observation_persistence_sec').perform(context)
+    ultrasonic_side_observation_persistence_str = LaunchConfiguration(
+        'ultrasonic_side_observation_persistence_sec').perform(context)
+    ultrasonic_global_blob_emergency_persistence_sec_str = LaunchConfiguration(
+        'ultrasonic_global_blob_emergency_persistence_sec').perform(context)
+    ultrasonic_global_blob_side_persistence_sec_str = LaunchConfiguration(
+        'ultrasonic_global_blob_side_persistence_sec').perform(context)
+    ultrasonic_emergency_obstacle_max_range_str = LaunchConfiguration(
+        'ultrasonic_emergency_obstacle_max_range_m').perform(context)
+    ultrasonic_side_obstacle_max_range_str = LaunchConfiguration(
+        'ultrasonic_side_obstacle_max_range_m').perform(context)
+    nav2_ultrasonic_blob_on_global_str = LaunchConfiguration(
+        'nav2_ultrasonic_blob_on_global').perform(context)
+    use_custom_bt_recovery_tree_str = LaunchConfiguration(
+        'use_custom_bt_recovery_tree').perform(context)
+    ultrasonic_cooperative_mode_str = LaunchConfiguration(
+        'ultrasonic_cooperative_mode').perform(context)
+    orca_mode_str = LaunchConfiguration('orca_mode').perform(context)
+    orca_max_linear_scale_str = LaunchConfiguration(
+        'orca_max_linear_scale').perform(context)
+    orca_stop_time_max_sec_str = LaunchConfiguration(
+        'orca_stop_time_max_sec').perform(context)
+    orca_min_predicted_separation_m_str = LaunchConfiguration(
+        'orca_min_predicted_separation_m').perform(context)
 
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
@@ -461,6 +576,8 @@ def _launch_setup(context):
     ultrasonic_profile = ultrasonic_profile_str.strip().lower()
     if ultrasonic_profile not in ('safe', 'aggressive', 'off'):
         ultrasonic_profile = 'safe'
+    ultrasonic_cooperative_mode = ultrasonic_cooperative_mode_str.lower() in (
+        '1', 'true', 'yes')
 
     normalizer_params = {
         'input_topic': 'scan',
@@ -506,6 +623,7 @@ def _launch_setup(context):
     if (
         nav2_enable_ultrasonic_blob_layer_str.lower() in ('1', 'true', 'yes')
         and ultrasonic_disable_scan_fusion_when_blob_str.lower() in ('1', 'true', 'yes')
+        and not ultrasonic_cooperative_mode
     ):
         normalizer_params['ultrasonic_fusion_enabled'] = False
     if ultrasonic_profile == 'aggressive':
@@ -524,6 +642,14 @@ def _launch_setup(context):
         normalizer_params['ultrasonic_overlap_side_pair_front_scale'] = min(
             float(ultrasonic_overlap_side_pair_front_scale_str), 0.60
         )
+    if ultrasonic_cooperative_mode:
+        normalizer_params['ultrasonic_fusion_enabled'] = True
+        normalizer_params['ultrasonic_max_hold_sec'] = min(
+            float(normalizer_params['ultrasonic_max_hold_sec']), 0.40
+        )
+        normalizer_params['ultrasonic_cone_scale'] = min(
+            float(normalizer_params['ultrasonic_cone_scale']), 0.90
+        )
     if ns:
         normalizer_params['frame_id_prefix'] = ns
 
@@ -537,12 +663,7 @@ def _launch_setup(context):
         output='screen',
     ))
 
-    actions.append(Node(
-        package='turtlebot3_navigation2',
-        executable='ultrasonic_triangulation_blob.py',
-        name='ultrasonic_triangulation_blob',
-        namespace=ns if ns else None,
-        parameters=[{
+    tri_params = {
             'range_topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
             'range_frame_ids': (
                 [f'{ns}/ultrasonic_link_left', f'{ns}/ultrasonic_link_front', f'{ns}/ultrasonic_link_right']
@@ -551,6 +672,8 @@ def _launch_setup(context):
             ),
             'base_scan_frame': f'{ns}/base_scan' if ns else 'base_scan',
             'output_scan_topic': 'ultrasonic_blob_scan',
+            'output_scan_topic_emergency': 'ultrasonic_blob_scan_emergency',
+            'output_scan_topic_side': 'ultrasonic_blob_scan_side',
             'debug_topic': 'ultrasonic_triangulation_debug',
             'triangulation_enabled': (
                 ultrasonic_triangulation_enabled_str.lower() in ('1', 'true', 'yes')
@@ -565,10 +688,59 @@ def _launch_setup(context):
                 ultrasonic_triangulation_require_pair_agreement_str.lower() in ('1', 'true', 'yes')
             ),
             'front_emergency_range_m': float(ultrasonic_front_emergency_range_m_str),
+            'front_emergency_strict_range_m': float(ultrasonic_front_emergency_strict_range_m_str),
             'front_emergency_required_streak': int(ultrasonic_front_emergency_required_streak_str),
             'front_emergency_blob_radius_m': float(ultrasonic_front_emergency_blob_radius_m_str),
+            'front_emergency_cone_scale': float(ultrasonic_front_emergency_cone_scale_str),
+            'front_emergency_head_on_angle_rad': 0.45,
+            'front_emergency_head_on_cone_boost': 1.10,
+            'front_emergency_head_on_cone_max': 1.62,
+            'front_emergency_hold_sec': float(ultrasonic_front_emergency_hold_sec_str),
+            'front_emergency_close_blob_dist_m': float(
+                ultrasonic_front_emergency_close_blob_dist_m_str
+            ),
+            'front_emergency_close_extra_hold_sec': float(
+                ultrasonic_front_emergency_close_extra_hold_sec_str
+            ),
+            'front_emergency_close_radius_scale': float(
+                ultrasonic_front_emergency_close_radius_scale_str
+            ),
+            'hard_block_duration_sec': float(ultrasonic_hard_block_duration_sec_str),
+            'memory_decay_duration_sec': float(ultrasonic_memory_decay_duration_sec_str),
+            'memory_replay_inward_m': float(ultrasonic_memory_replay_inward_m_str),
+            'memory_replay_max_odom_travel_m': float(
+                ultrasonic_memory_replay_max_odom_travel_m_str
+            ),
+            'memory_replay_max_odom_yaw_rad': float(
+                ultrasonic_memory_replay_max_odom_yaw_rad_str
+            ),
+            'lateral_blob_cancel_min_odom_yaw_rad': float(
+                ultrasonic_lateral_blob_cancel_min_odom_yaw_rad_str
+            ),
+            'lateral_blob_cancel_min_abs_blob_angle_rad': float(
+                ultrasonic_lateral_blob_cancel_min_abs_blob_angle_rad_str
+            ),
+            'memory_replay_in_decay': (
+                ultrasonic_memory_replay_in_decay_str.lower() in ('1', 'true', 'yes')
+            ),
             'blob_hold_sec': float(ultrasonic_triangulation_blob_hold_sec_str),
-        }],
+    }
+    if ultrasonic_cooperative_mode:
+        tri_params['hard_block_duration_sec'] = 0.0
+        tri_params['memory_decay_duration_sec'] = 0.0
+        tri_params['memory_replay_inward_m'] = 0.0
+        tri_params['memory_replay_in_decay'] = False
+        tri_params['blob_hold_sec'] = min(float(tri_params['blob_hold_sec']), 0.20)
+        tri_params['front_emergency_hold_sec'] = min(
+            float(tri_params['front_emergency_hold_sec']), 0.35
+        )
+
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='ultrasonic_triangulation_blob.py',
+        name='ultrasonic_triangulation_blob',
+        namespace=ns if ns else None,
+        parameters=[tri_params],
         remappings=tf_remappings,
         output='screen',
     ))
@@ -757,6 +929,12 @@ def _launch_setup(context):
         actions.append(wait_tf_proc)
 
     # --- Nav2 with frame-rewritten params ---
+    def _optional_same_as_local_persist(raw: str):
+        s = (raw or '').strip().lower()
+        if s in ('', 'auto', 'use_local', 'same'):
+            return None
+        return float(s)
+
     nav2_params_file = _generate_nav2_params(
         params_file, ns, fleet_active,
         fleet_use_local_slam_map=fleet_use_local_nav_map,
@@ -766,6 +944,28 @@ def _launch_setup(context):
             nav2_enable_range_layer_str.lower() in ('1', 'true', 'yes')),
         nav2_enable_ultrasonic_blob_layer=(
             nav2_enable_ultrasonic_blob_layer_str.lower() in ('1', 'true', 'yes')),
+        nav2_ultrasonic_blob_on_global=(
+            nav2_ultrasonic_blob_on_global_str.lower() in ('1', 'true', 'yes')),
+        ultrasonic_emergency_observation_persistence=float(
+            ultrasonic_emergency_observation_persistence_str
+        ),
+        ultrasonic_side_observation_persistence=float(
+            ultrasonic_side_observation_persistence_str
+        ),
+        ultrasonic_global_emergency_observation_persistence=_optional_same_as_local_persist(
+            ultrasonic_global_blob_emergency_persistence_sec_str
+        ),
+        ultrasonic_global_side_observation_persistence=_optional_same_as_local_persist(
+            ultrasonic_global_blob_side_persistence_sec_str
+        ),
+        ultrasonic_emergency_obstacle_max_range=float(
+            ultrasonic_emergency_obstacle_max_range_str
+        ),
+        ultrasonic_side_obstacle_max_range=float(
+            ultrasonic_side_obstacle_max_range_str
+        ),
+        use_custom_bt_recovery_tree=(
+            use_custom_bt_recovery_tree_str.lower() in ('1', 'true', 'yes')),
     )
 
     if fleet_map_relay:
@@ -931,10 +1131,18 @@ def _launch_setup(context):
                 'collision_ahead_topic': 'nav2_collision_ahead',
                 'retrace_active_topic': 'nav2_retrace_active',
                 'enable_collision_retry_guard': True,
-                'collision_retry_window_sec': 8.0,
-                'collision_retry_min_events': 5,
+                'collision_retry_window_sec': float(retrace_collision_retry_window_sec_str),
+                'collision_retry_min_events': int(retrace_collision_retry_min_events_str),
                 'collision_retry_min_goal_age_sec': 6.0,
-                'collision_retry_cooldown_sec': 12.0,
+                'collision_retry_cooldown_sec': float(retrace_collision_retry_cooldown_sec_str),
+                'retry_zone_radius_m': float(retrace_retry_zone_radius_m_str),
+                'retry_zone_decay_sec': float(retrace_retry_zone_decay_sec_str),
+                'retry_zone_hard_block_sec': float(retrace_retry_zone_hard_block_sec_str),
+                'retry_zone_extra_events_max': int(retrace_retry_zone_extra_events_max_str),
+                'retry_zone_repeated_hits_min': int(retrace_retry_zone_repeated_hits_min_str),
+                'retry_zone_nonrepeated_extra_events_max': int(
+                    retrace_retry_zone_nonrepeated_extra_events_max_str
+                ),
             },
         ],
         output='screen',
@@ -971,24 +1179,45 @@ def _launch_setup(context):
             'publish_hz': 24.0,
             'hold_sec': float(ultrasonic_stop_hold_sec_str),
             'hazard_clusters': [
-                'front',
-                'front_held',
                 'front_emergency',
                 'front_emergency_held',
+                'front_emergency_replay',
             ],
             'always_stop_clusters': [
-                'front',
-                'front_held',
                 'front_emergency',
                 'front_emergency_held',
+                'front_emergency_replay',
             ],
-            'guarded_stop_clusters': [],
+            # launch_ros parameter evaluation rejects empty list here (normalized as ()).
+            # Use a sentinel cluster that never appears in triangulation output.
+            'guarded_stop_clusters': ['__disabled__'],
             'guarded_stop_max_blob_dist_m': float(
                 ultrasonic_stop_guarded_max_blob_dist_m_str
             ),
         }],
         output='screen',
         condition=IfCondition(enable_ultrasonic_cmd_vel_enforcer_str),
+    ))
+
+    # --- ORCA shadow/advisory module ---
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='orca_shadow_advisor.py',
+        name='orca_shadow_advisor',
+        namespace=ns if ns else None,
+        parameters=[{
+            'mode': orca_mode_str.strip().lower(),
+            'max_linear_scale': float(orca_max_linear_scale_str),
+            'stop_time_max_sec': float(orca_stop_time_max_sec_str),
+            'min_predicted_separation_m': float(orca_min_predicted_separation_m_str),
+            'input_cmd_topic': 'cmd_vel_nav',
+            'output_cmd_topic': 'cmd_vel_orca_advised',
+            'scan_topic': 'scan_normalized',
+            'triangulation_debug_topic': 'ultrasonic_triangulation_debug',
+            'nav_path_topic': 'plan',
+            'log_topic': 'orca_shadow_debug',
+        }],
+        output='screen',
     ))
 
     # --- RViz (optional) ---
@@ -1069,20 +1298,31 @@ def generate_launch_description():
             'enable_lethal_watch', default_value='false',
             description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
         DeclareLaunchArgument(
-            'enable_retrace_escape', default_value='true',
+            'enable_retrace_escape', default_value='false',
             description=(
                 'Enable robot-side memory retrace helper; publishes '
                 '/<robot>/nav2_retrace_active and sends retreat goals on lethal/stall.')),
         DeclareLaunchArgument(
-            'enable_controller_collision_watch', default_value='true',
+            'enable_controller_collision_watch', default_value='false',
             description=(
                 'Publish /<robot>/nav2_collision_ahead from controller_server '
                 'rosout lines (e.g. RPP collision ahead)')),
         DeclareLaunchArgument(
             'enable_ultrasonic_cmd_vel_enforcer', default_value='false',
             description=(
-                'Hard-stop cmd_vel override while ultrasonic hazard clusters are active '
-                '(front/front_emergency).')),
+                'Hard-stop cmd_vel while triangulation reports front_emergency / held / '
+                'front_emergency_replay (stops Nav2 forward commands when cost blinks). '
+                'Recommended true for repeated low-pipe or bag contacts.')),
+        DeclareLaunchArgument(
+            'use_custom_bt_recovery_tree', default_value='false',
+            description=(
+                'If true, force custom recovery BT tree override; default false uses '
+                'stock Nav2 tree for baseline-stable behavior.')),
+        DeclareLaunchArgument(
+            'ultrasonic_cooperative_mode', default_value='true',
+            description=(
+                'Conservative LiDAR+ultrasonic cooperation profile: keep low-height '
+                'evidence active while disabling long replay/hold behavior.')),
         DeclareLaunchArgument(
             'ultrasonic_stop_hold_sec', default_value='0.50',
             description='How long cmd_vel enforcer holds stop after ultrasonic hazard trigger (s).'),
@@ -1218,8 +1458,10 @@ def generate_launch_description():
             'ultrasonic_triangulation_similarity_max_m', default_value='0.12',
             description='Upper bound for triangulation similarity threshold (meters).'),
         DeclareLaunchArgument(
-            'ultrasonic_triangulation_blob_radius_m', default_value='0.10',
-            description='Blob radius for triangulated ultrasonic obstacle (meters).'),
+            'ultrasonic_triangulation_blob_radius_m', default_value='0.11',
+            description=(
+                'Base triangulated blob radius (m); slightly larger improves side marking '
+                'for low obstacles (pairs with side costmap max range / persistence).')),
         DeclareLaunchArgument(
             'ultrasonic_triangulation_max_age_sec', default_value='0.15',
             description='Max age of ultrasonic samples used for triangulation (seconds).'),
@@ -1230,20 +1472,158 @@ def generate_launch_description():
             'ultrasonic_disable_scan_fusion_when_blob', default_value='true',
             description='If true, disable legacy ultrasonic scan fusion when blob layer is enabled.'),
         DeclareLaunchArgument(
-            'ultrasonic_front_emergency_range_m', default_value='0.38',
+            'ultrasonic_front_emergency_range_m', default_value='0.50',
             description='Enable front-only emergency blob when front range is below this distance (m).'),
         DeclareLaunchArgument(
-            'ultrasonic_front_emergency_required_streak', default_value='2',
+            'ultrasonic_front_emergency_strict_range_m', default_value='0.34',
+            description=(
+                'Within front_emergency_range_m but without side pair agreement: use full '
+                'front_emergency only if front range is below this (m); otherwise use narrower '
+                'front_hint (side costmap only) so Nav2 can find lateral clearance past soft '
+                'obstacles like floor bags.')),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_required_streak', default_value='1',
             description='Consecutive front emergency samples required before publishing emergency blob.'),
         DeclareLaunchArgument(
-            'ultrasonic_front_emergency_blob_radius_m', default_value='0.16',
+            'ultrasonic_front_emergency_blob_radius_m', default_value='0.20',
             description='Blob radius used for front emergency obstacle marking (meters).'),
         DeclareLaunchArgument(
-            'ultrasonic_triangulation_blob_hold_sec', default_value='0.45',
+            'ultrasonic_front_emergency_cone_scale', default_value='1.35',
+            description=(
+                'Angular width scale for emergency (and close-range side) blob painting in '
+                'LaserScan; >1 widens the arc (helps angled approaches to low obstacles).')),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_hold_sec', default_value='1.20',
+            description='Hold duration (s) specifically for front_emergency blobs before release.'),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_close_blob_dist_m', default_value='0.34',
+            description=(
+                'When front_emergency blob distance (m) is below this, add extra hold time '
+                'and widen blob radius (pipe / final-approach reinforcement).')),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_close_extra_hold_sec', default_value='0.60',
+            description='Extra hold (s) after close-range front_emergency when readings drop.'),
+        DeclareLaunchArgument(
+            'ultrasonic_front_emergency_close_radius_scale', default_value='1.18',
+            description='Scale emergency blob radius when blob is inside close distance.'),
+        DeclareLaunchArgument(
+            'ultrasonic_triangulation_blob_hold_sec', default_value='0.40',
             description='How long to keep last triangulated blob when agreement drops briefly (s).'),
+        DeclareLaunchArgument(
+            'ultrasonic_emergency_observation_persistence_sec', default_value='0.28',
+            description='Local costmap persistence (s) for emergency ultrasonic blobs.'),
+        DeclareLaunchArgument(
+            'ultrasonic_side_observation_persistence_sec', default_value='0.12',
+            description=(
+                'Local costmap persistence (s) for side/agreement ultrasonic blobs; '
+                'slightly longer helps inscribed cost for go-around past low obstacles.')),
+        DeclareLaunchArgument(
+            'ultrasonic_emergency_obstacle_max_range_m', default_value='0.65',
+            description='Obstacle/raytrace max range (m) for emergency ultrasonic costmap source.'),
+        DeclareLaunchArgument(
+            'ultrasonic_side_obstacle_max_range_m', default_value='0.55',
+            description=(
+                'Obstacle/raytrace max range (m) for side ultrasonic costmap source '
+                '(wider arc for side triangulation marks).')),
+        DeclareLaunchArgument(
+            'retrace_collision_retry_window_sec', default_value='8.0',
+            description='Window length (s) for counting collision-ahead retries.'),
+        DeclareLaunchArgument(
+            'retrace_collision_retry_min_events', default_value='5',
+            description='Base collision-ahead events required before retry-zone retrace triggers.'),
+        DeclareLaunchArgument(
+            'retrace_collision_retry_cooldown_sec', default_value='12.0',
+            description='Cooldown (s) between retry-zone retrace triggers.'),
+        DeclareLaunchArgument(
+            'retrace_retry_zone_radius_m', default_value='0.45',
+            description='Radius (m) used to match repeated collisions to the same retry zone.'),
+        DeclareLaunchArgument(
+            'retrace_retry_zone_decay_sec', default_value='22.0',
+            description='Decay duration (s) for retry-zone suppression after hard phase.'),
+        DeclareLaunchArgument(
+            'retrace_retry_zone_hard_block_sec', default_value='6.0',
+            description='Initial hard-block duration (s) for retry-zone suppression.'),
+        DeclareLaunchArgument(
+            'retrace_retry_zone_extra_events_max', default_value='5',
+            description='Max additional collision events required as retry-zone suppression fades.'),
+        DeclareLaunchArgument(
+            'retrace_retry_zone_repeated_hits_min', default_value='2',
+            description='Minimum zone hit count required before strong retry-zone suppression applies.'),
+        DeclareLaunchArgument(
+            'retrace_retry_zone_nonrepeated_extra_events_max', default_value='1',
+            description='Max extra retry events for non-repeated zones (keeps corner escape responsive).'),
+        DeclareLaunchArgument(
+            'ultrasonic_hard_block_duration_sec', default_value='1.00',
+            description='Duration of hard ultrasonic memory phase after front/front_emergency detection (s).'),
+        DeclareLaunchArgument(
+            'ultrasonic_memory_decay_duration_sec', default_value='8.00',
+            description='Duration of ultrasonic decay-memory phase after hard phase expires (s).'),
+        DeclareLaunchArgument(
+            'ultrasonic_memory_replay_inward_m', default_value='0.08',
+            description=(
+                'Pull memory-replay obstacle toward the robot along the stored ray (m). '
+                'Hard phase uses full value; decay uses half. Reduces creep-into-pipe when '
+                'triangulated blob sits farther than the true frontal range.')),
+        DeclareLaunchArgument(
+            'ultrasonic_memory_replay_max_odom_travel_m', default_value='0.32',
+            description=(
+                'Cancel ultrasonic memory/replay after base moves this far in odom (m) '
+                'from anchor (e.g. backed away from pipe). Reduces costmap ghost following.')),
+        DeclareLaunchArgument(
+            'ultrasonic_memory_replay_max_odom_yaw_rad', default_value='0.90',
+            description='Cancel memory/replay after this yaw change (rad) from anchor.'),
+        DeclareLaunchArgument(
+            'ultrasonic_lateral_blob_cancel_min_odom_yaw_rad', default_value='0.32',
+            description=(
+                'For front_left / front_right / front_hint only: drop held blob and re-anchor '
+                'odom after this yaw (rad) so small turns refresh body-fixed cost (go-around). '
+                'Set 0 to disable. Skipped while front range is in emergency band or blob angle '
+                'is below ultrasonic_lateral_blob_cancel_min_abs_blob_angle_rad. '
+                'Does not apply to front_emergency or centered front.')),
+        DeclareLaunchArgument(
+            'ultrasonic_lateral_blob_cancel_min_abs_blob_angle_rad', default_value='0.48',
+            description=(
+                'Minimum |atan2(blob_y,blob_x)| (rad) before lateral yaw-cancel may run; keeps '
+                'shallow angled pipe edges from losing marks. front_left/right can still cancel '
+                'under this angle even if the front range is in the emergency band (bag go-around). '
+                'Set 0 to disable this gate.')),
+        DeclareLaunchArgument(
+            'ultrasonic_memory_replay_in_decay', default_value='false',
+            description=(
+                'If true, keep publishing memory replay during decay phase; if false, '
+                'replay only in hard phase (less phantom cost after escape turns).')),
+        DeclareLaunchArgument(
+            'orca_mode', default_value='off',
+            description='ORCA mode: off, shadow (log only), advisory (publish limited cmd_vel).'),
+        DeclareLaunchArgument(
+            'orca_max_linear_scale', default_value='0.55',
+            description='Max linear scaling in advisory mode (0..1).'),
+        DeclareLaunchArgument(
+            'orca_stop_time_max_sec', default_value='0.80',
+            description='Maximum stop-hold time commanded by ORCA advisory (seconds).'),
+        DeclareLaunchArgument(
+            'orca_min_predicted_separation_m', default_value='0.26',
+            description='Predicted minimum separation threshold used for ORCA conflict checks (m).'),
         DeclareLaunchArgument(
             'nav2_enable_ultrasonic_blob_layer', default_value='true',
             description='Inject ultrasonic_blob_scan into Nav2 obstacle_layer sources.'),
+        DeclareLaunchArgument(
+            'nav2_ultrasonic_blob_on_global', default_value='true',
+            description=(
+                'When nav2_enable_ultrasonic_blob_layer is true, also add emergency/side '
+                'blob sources to global_costmap so ComputePathToPose detours around low '
+                'obstacles (LiDAR may not see).')),
+        DeclareLaunchArgument(
+            'ultrasonic_global_blob_emergency_persistence_sec', default_value='auto',
+            description=(
+                'Global costmap observation_persistence for ultrasonic_blob_emergency. '
+                'Use auto (default) to match ultrasonic_emergency_observation_persistence_sec; '
+                'or a larger float for stabler global plans.')),
+        DeclareLaunchArgument(
+            'ultrasonic_global_blob_side_persistence_sec', default_value='auto',
+            description=(
+                'Global costmap observation_persistence for ultrasonic_blob_side. '
+                'Use auto to match ultrasonic_side_observation_persistence_sec.')),
         DeclareLaunchArgument(
             'enable_startup_map_seeding', default_value='true',
             description=(

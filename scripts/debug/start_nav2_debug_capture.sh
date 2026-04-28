@@ -29,16 +29,14 @@ if [[ ! -f "$JSONL_OUT" ]]; then
   fi
 fi
 
-ANALYZE_CMD="python3 ${WORKSPACE_DIR}/scripts/debug/analyze_nav2_bag_stop.py \"\$(dirname \"${DB3_OUT}\")\" && python3 ${WORKSPACE_DIR}/scripts/debug/analyze_nav2_debug_session.py \"${JSONL_OUT}\""
+ANALYZE_CMD="python3 scripts/debug/analyze_nav2_bag_stop.py bag-${SESSION_TS}_0.db3 && python3 scripts/debug/analyze_nav2_debug_session.py session-${SESSION_TS}.jsonl"
 
 echo "=========================================="
 echo " Nav2 Debug Capture"
 echo "=========================================="
 echo " Robot name   : ${ROBOT_NAME}"
-echo " Bag DB3 path : ${DB3_OUT}"
-echo " JSONL path   : ${JSONL_OUT}"
-echo " Bag DB3(repo): ${DB3_REL}"
-echo " JSONL (repo) : ${JSONL_REL}"
+echo " Bag DB3 path : ${DB3_REL}"
+echo " JSONL path   : ${JSONL_REL}"
 echo ""
 echo " Analyze command (copy/paste):"
 echo " ${ANALYZE_CMD}"

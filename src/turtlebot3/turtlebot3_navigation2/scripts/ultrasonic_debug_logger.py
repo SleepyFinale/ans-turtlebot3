@@ -80,7 +80,8 @@ class UltrasonicDebugLogger(Node):
         else:
             session_name = datetime.now().strftime('ultrasonic-session-%Y%m%d-%H%M%S.jsonl')
         self._jsonl_path = session_dir / session_name
-        self._jsonl = self._jsonl_path.open('a', encoding='utf-8')
+        # Always start a fresh file for each explicit capture session timestamp.
+        self._jsonl = self._jsonl_path.open('w', encoding='utf-8')
 
         self._tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
@@ -125,6 +126,8 @@ class UltrasonicDebugLogger(Node):
         self._rosout_collision_ahead_warn_count = 0
         self._rosout_recent: deque = deque(maxlen=30)
         self._last_triangulation_debug: Optional[Dict] = None
+        self._last_front_emergency_decision_s: Optional[float] = None
+        self._last_front_emergency_costmap_reaction_lag_s: Optional[float] = None
 
         self._setup_subscriptions()
 
@@ -233,10 +236,18 @@ class UltrasonicDebugLogger(Node):
         # Keep logger event typing stable even if payload carries its own "event".
         data.pop('event', None)
         self._last_triangulation_debug = data
+        cluster = str(data.get('cluster') or '')
+        if cluster.startswith('front_emergency'):
+            self._last_front_emergency_decision_s = self.get_clock().now().nanoseconds * 1e-9
         self._write_event('triangulation_decision', data)
 
     def _on_local_costmap(self, _msg: Costmap) -> None:
-        self._last_local_costmap_s = self.get_clock().now().nanoseconds * 1e-9
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        self._last_local_costmap_s = now_s
+        if self._last_front_emergency_decision_s is not None:
+            lag_s = max(0.0, now_s - self._last_front_emergency_decision_s)
+            if lag_s <= 2.0:
+                self._last_front_emergency_costmap_reaction_lag_s = lag_s
 
     def _on_global_costmap(self, _msg: Costmap) -> None:
         self._last_global_costmap_s = self.get_clock().now().nanoseconds * 1e-9
@@ -433,6 +444,17 @@ class UltrasonicDebugLogger(Node):
             'nav2_collision_ahead_age_s': (
                 None if self._last_collision_ahead_s is None
                 else max(0.0, now_s - self._last_collision_ahead_s)
+            ),
+            'front_emergency_recent': (
+                self._last_front_emergency_decision_s is not None
+                and (now_s - self._last_front_emergency_decision_s) <= 2.0
+            ),
+            'front_emergency_costmap_reacted_recently': (
+                self._last_front_emergency_costmap_reaction_lag_s is not None
+                and (now_s - (self._last_local_costmap_s or 0.0)) <= 0.5
+            ),
+            'front_emergency_costmap_reaction_lag_s': (
+                self._last_front_emergency_costmap_reaction_lag_s
             ),
         })
 
