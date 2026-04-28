@@ -24,12 +24,12 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 Use this table when configuring a given robot. SSH using the hostname or IP for that robot. All robots and any Remote PCs or central computers talking to them should share **ROS_DOMAIN_ID=50**.
 
-| Robot  | SNS (lab)             | GCRI_LAB (gcri)      | ANS_starlink (star)  | RaspAP (rpi)        | Azure (azure)       |
-| ------ | --------------------- | -------------------- | -------------------- | ------------------- | --------------------|
-| Blinky | blinky@192.168.0.158  | blinky@192.168.50.158| blinky@192.168.1.158 | blinky@10.3.141.158 | blinky@172.20.10.13 |
-| Pinky  | pinky@192.168.0.194   | pinky@192.168.50.194 | pinky@192.168.1.194  | pinky@10.3.141.194  | pinky@172.20.10.14  |
-| Inky   | inky@192.168.0.139    | inky@192.168.50.139  | inky@192.168.1.139   | inky@10.3.141.139   | inky@172.20.10.15   |
-| Clyde  | clyde@192.168.0.236   | clyde@192.168.50.236 | clyde@192.168.1.236  | clyde@10.3.141.236  | clyde@172.20.10.16  |
+| Robot  | SNS (lab)             | GCRI_LAB (gcri)      | RaspAP (rpi)        |
+| ------ | --------------------- | -------------------- | ------------------- |
+| Blinky | blinky@192.168.0.158  | blinky@192.168.50.158| blinky@10.3.141.158 |
+| Pinky  | pinky@192.168.0.194   | pinky@192.168.50.194 | pinky@10.3.141.194  |
+| Inky   | inky@192.168.0.139    | inky@192.168.50.139  | inky@10.3.141.139   |
+| Clyde  | clyde@192.168.0.236   | clyde@192.168.50.236 | clyde@10.3.141.236  |
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
@@ -246,24 +246,6 @@ When connected to **GCRI_LAB**, each robot uses the same **last octet** as on th
 - **Inky** (user `inky`) → `192.168.50.139`
 - **Clyde** (user `clyde`) → `192.168.50.236`
 
-### Static IPs on the ANS_starlink star Wi‑Fi
-
-When connected to **ANS_starlink**, each robot uses the same **last octet** as on the SNS lab network, on subnet `192.168.1.0/24`:
-
-- **Blinky** (user `blinky`) → `192.168.1.158`
-- **Pinky** (user `pinky`) → `192.168.1.194`
-- **Inky** (user `inky`) → `192.168.1.139`
-- **Clyde** (user `clyde`) → `192.168.1.236`
-
-### Static IPs on the Azure azure hotspot
-
-When connected to the **Azure** mobile hotspot, each robot also uses a fixed IP:
-
-- **Blinky** (user `blinky`) → `172.20.10.13`
-- **Pinky** (user `pinky`) → `172.20.10.14`
-- **Inky** (user `inky`) → `172.20.10.15`
-- **Clyde** (user `clyde`) → `172.20.10.16`
-
 ### Static IPs on RaspAP rpi Wi-Fi
 
 When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/wifi/switch_wifi.sh`):
@@ -285,12 +267,6 @@ sudo ./scripts/wifi/switch_wifi.sh lab
 
 # Connect to GCRI_LAB with static IP (per robot/user)
 sudo ./scripts/wifi/switch_wifi.sh gcri
-
-# Connect to Starlink (ANS_starlink) with static IP (per robot/user)
-sudo ./scripts/wifi/switch_wifi.sh star
-
-# Connect to Azure mobile hotspot with static IP (per robot/user)
-sudo ./scripts/wifi/switch_wifi.sh azure
 
 # Connect to RaspAP with static IP (per robot/user)
 sudo ./scripts/wifi/switch_wifi.sh rpi
@@ -314,19 +290,18 @@ ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh lab
 ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh lab
 ```
 
-If you change the SNS, GCRI_LAB, ANS_starlink, RaspAP, or Azure networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
+If you change the SNS, GCRI_LAB, RaspAP, or TAMU networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
 
 ### Automatic WiFi connection on boot (`scripts/wifi/boot_wifi.sh`)
 
-To prevent the robot from being stuck without WiFi when it boots (e.g., if it was connected to the Azure hotspot before shutdown and the hotspot is not nearby), a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
+To prevent the robot from being stuck without WiFi when it boots, a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
 
 **Behavior:**
 
 - On boot, the robot **first attempts to connect to SNS (lab)**.
 - If that fails, it tries **GCRI_LAB (gcri)**.
-- If that fails, it tries **ANS_starlink (star)**.
-- If that fails, it tries **Azure (azure)**.
-- This order helps the robot come up on lab or field WiFi before relying on the phone hotspot.
+- If that fails, it tries **RaspAP (rpi)**.
+- This order helps the robot come up on lab WiFi before falling back to local hotspot WiFi.
 
 **Installation (one-time setup per robot):**
 
@@ -339,7 +314,7 @@ This installs a systemd service (`boot-wifi.service`) that runs on every boot. T
 
 - Detects the robot name from the hostname
 - Attempts SNS first (waits up to 30 seconds per network)
-- Then GCRI_LAB, then ANS_starlink, then Azure, each with the same timeout behavior
+- Then GCRI_LAB, then RaspAP, each with the same timeout behavior
 - Logs all connection attempts to the systemd journal
 
 **Checking boot WiFi status:**

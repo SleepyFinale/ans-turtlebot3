@@ -1,14 +1,12 @@
 #!/bin/bash
 #
-# Switch Raspberry Pi WiFi between SNS (lab), TAMU_WiFi (tamu), GCRI_LAB (gcri), ANS_starlink (star), RaspAP (rpi), and Azure (azure).
+# Switch Raspberry Pi WiFi between SNS (lab), TAMU_WiFi (tamu), GCRI_LAB (gcri), and RaspAP (rpi).
 #
 # Usage:
 #   sudo ./scripts/wifi/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
 #   sudo ./scripts/wifi/switch_wifi.sh tamu      # TAMU_WiFi (DHCP; PEAP + wpa patch per TAMU Pi KB)
 #   sudo ./scripts/wifi/switch_wifi.sh gcri      # GCRI_LAB WiFi with static IP (per robot/user)
-#   sudo ./scripts/wifi/switch_wifi.sh star      # ANS_starlink WiFi with static IP (per robot/user)
 #   sudo ./scripts/wifi/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
-#   sudo ./scripts/wifi/switch_wifi.sh azure     # Azure hotspot with static IP (per robot/user)
 #   ./scripts/wifi/switch_wifi.sh status         # show current WiFi (no sudo)
 #
 # Prereq: Remove or comment out the wifis/wlan0 block from
@@ -18,9 +16,7 @@
 # Static IPs are chosen by current user (blinky / pinky / inky / clyde):
 #   lab:    blinky@192.168.0.158,  pinky@192.168.0.194,   inky@192.168.0.139,   clyde@192.168.0.236
 #   gcri:   blinky@192.168.50.158, pinky@192.168.50.194,  inky@192.168.50.139,  clyde@192.168.50.236
-#   star:   blinky@192.168.1.158,  pinky@192.168.1.194,   inky@192.168.1.139,   clyde@192.168.1.236
 #   rpi:    blinky@10.3.141.158,   pinky@10.3.141.194,    inky@10.3.141.139,    clyde@10.3.141.236
-#   azure:  blinky@172.20.10.13,   pinky@172.20.10.14,    inky@172.20.10.15,    clyde@172.20.10.16
 #   tamu:   TAMU_WiFi (DHCP; PEAP + wpa patch per TAMU Pi KB)
 #
 #   Optional: TAMU_CA_CERT=… (PEM) to validate RADIUS cert; TAMU_PASSWORD_NT_HASH=… for password=hash:… (KB 528)
@@ -28,7 +24,7 @@
 #   Debug:  Save WPA logs next to this script - use _WIFI_SCRIPT_DIR printed by "tamu" errors, or:
 #           sudo journalctl -u netplan-wpa-wlan0.service -b --no-pager | tail -n 200 > scripts/wifi/netplan-wpa-wlan0.log
 # When run with sudo we use SUDO_USER so "blinky" user gets the blinky IPs.
-# Override with: $0 lab blinky / $0 gcri pinky / $0 star inky / $0 rpi clyde / $0 azure blinky or ROBOT_NAME=….
+# Override with: $0 lab blinky / $0 gcri pinky / $0 rpi clyde or ROBOT_NAME=….
 #
 
 set -e
@@ -55,16 +51,6 @@ GCRI_IP_PINKY="192.168.50.194"
 GCRI_IP_INKY="192.168.50.139"
 GCRI_IP_CLYDE="192.168.50.236"
 
-# ANS_starlink WiFi (star) static IP config
-STAR_SSID="ANS_starlink"
-STAR_PASSWORD="an5_rox!"
-STAR_GATEWAY="192.168.1.1"
-STAR_PREFIX="24"
-STAR_IP_BLINKY="192.168.1.158"
-STAR_IP_PINKY="192.168.1.194"
-STAR_IP_INKY="192.168.1.139"
-STAR_IP_CLYDE="192.168.1.236"
-
 # RaspAP WiFi (rpi) static IP config
 RPI_SSID="RaspAP"
 RPI_PASSWORD="sn5_rox!"
@@ -75,20 +61,10 @@ RPI_IP_PINKY="10.3.141.194"
 RPI_IP_INKY="10.3.141.139"
 RPI_IP_CLYDE="10.3.141.236"
 
-# Azure WiFi (azure) static IP config
-AZURE_SSID="Azure"
-AZURE_PASSWORD="howdoyouwanttodothis"
-AZURE_GATEWAY="172.20.10.1"
-AZURE_PREFIX="28"
-AZURE_IP_BLINKY="172.20.10.13"
-AZURE_IP_PINKY="172.20.10.14"
-AZURE_IP_INKY="172.20.10.15"
-AZURE_IP_CLYDE="172.20.10.16"
-
 # TAMU campus WiFi (WPA Enterprise). SSID must match the network name (see TAMU WiFi KB).
 TAMU_SSID="TAMU_WiFi"
-TAMU_IDENTITY="schen08"
-TAMU_PASSWORD="H0wdoyouwanttodothi$"
+TAMU_IDENTITY="${TAMU_IDENTITY:-}"
+TAMU_PASSWORD="${TAMU_PASSWORD:-}"
 # Optional PEM for ca-certificate (unset = none, matching TAMU Pi KB 528). Example: USERTrust under /etc/ssl/certs.
 TAMU_CA_CERT="${TAMU_CA_CERT:-}"
 
@@ -100,7 +76,7 @@ get_robot_name() {
   echo "${name:-}"
 }
 
-# Set per-robot static IPs for SNS, GCRI_LAB, ANS_starlink, RaspAP, and Azure. Exits if unknown robot.
+# Set per-robot static IPs for SNS, GCRI_LAB, and RaspAP. Exits if unknown robot.
 set_robot_static_ips() {
   local robot
   robot="${1:-$(get_robot_name)}"
@@ -109,46 +85,36 @@ set_robot_static_ips() {
     blinky)
       LAB_STATIC_IP="$LAB_IP_BLINKY"
       GCRI_STATIC_IP="$GCRI_IP_BLINKY"
-      STAR_STATIC_IP="$STAR_IP_BLINKY"
       RPI_STATIC_IP="$RPI_IP_BLINKY"
-      AZURE_STATIC_IP="$AZURE_IP_BLINKY"
       ;;
     pinky)
       LAB_STATIC_IP="$LAB_IP_PINKY"
       GCRI_STATIC_IP="$GCRI_IP_PINKY"
-      STAR_STATIC_IP="$STAR_IP_PINKY"
       RPI_STATIC_IP="$RPI_IP_PINKY"
-      AZURE_STATIC_IP="$AZURE_IP_PINKY"
       ;;
     inky)
       LAB_STATIC_IP="$LAB_IP_INKY"
       GCRI_STATIC_IP="$GCRI_IP_INKY"
-      STAR_STATIC_IP="$STAR_IP_INKY"
       RPI_STATIC_IP="$RPI_IP_INKY"
-      AZURE_STATIC_IP="$AZURE_IP_INKY"
       ;;
     clyde)
       LAB_STATIC_IP="$LAB_IP_CLYDE"
       GCRI_STATIC_IP="$GCRI_IP_CLYDE"
-      STAR_STATIC_IP="$STAR_IP_CLYDE"
       RPI_STATIC_IP="$RPI_IP_CLYDE"
-      AZURE_STATIC_IP="$AZURE_IP_CLYDE"
       ;;
     *)
       echo "Unknown robot: '$robot'. Current user is: $(get_robot_name)"
-      echo "Use: $0 {lab|gcri|star|rpi|azure} {blinky|pinky|inky|clyde}   (or set ROBOT_NAME=…)"
+      echo "Use: $0 {lab|gcri|rpi} {blinky|pinky|inky|clyde}   (or set ROBOT_NAME=…)"
       exit 1
       ;;
   esac
 }
 
 usage() {
-  echo "Usage: $0 { lab | gcri | star | rpi | azure | tamu | status } [robot]"
+  echo "Usage: $0 { lab | gcri | rpi | tamu | status } [robot]"
   echo "  lab [blinky|pinky|inky|clyde]   - connect to SNS (static IP by robot)"
   echo "  gcri [blinky|pinky|inky|clyde]  - connect to GCRI_LAB (static IP by robot)"
-  echo "  star [blinky|pinky|inky|clyde]  - connect to ANS_starlink (static IP by robot)"
   echo "  rpi [blinky|pinky|inky|clyde]   - connect to RaspAP (static IP by robot)"
-  echo "  azure [blinky|pinky|inky|clyde] - connect to Azure (static IP by robot)"
   echo "  tamu                            - connect to TAMU_WiFi (DHCP; PEAP + wpa patch per TAMU Pi KB)"
   echo "  status                          - show current WiFi (no sudo)"
   exit 1
@@ -287,28 +253,6 @@ network:
 EOF
 }
 
-write_netplan_star() {
-  cat << EOF
-network:
-  version: 2
-  wifis:
-    wlan0:
-      dhcp4: false
-      addresses:
-        - ${STAR_STATIC_IP}/${STAR_PREFIX}
-      routes:
-        - to: default
-          via: ${STAR_GATEWAY}
-      nameservers:
-        addresses:
-          - ${STAR_GATEWAY}
-          - 8.8.8.8
-      access-points:
-        "${STAR_SSID}":
-          password: "${STAR_PASSWORD}"
-EOF
-}
-
 write_netplan_rpi() {
   cat << EOF
 network:
@@ -328,28 +272,6 @@ network:
       access-points:
         "${RPI_SSID}":
           password: "${RPI_PASSWORD}"
-EOF
-}
-
-write_netplan_azure() {
-  cat << EOF
-network:
-  version: 2
-  wifis:
-    wlan0:
-      dhcp4: false
-      addresses:
-        - ${AZURE_STATIC_IP}/${AZURE_PREFIX}
-      routes:
-        - to: default
-          via: ${AZURE_GATEWAY}
-      nameservers:
-        addresses:
-          - ${AZURE_GATEWAY}
-          - 8.8.8.8
-      access-points:
-        "${AZURE_SSID}":
-          password: "${AZURE_PASSWORD}"
 EOF
 }
 
@@ -399,28 +321,6 @@ case "${1:-}" in
     netplan_apply_quiet
     echo "Switched to GCRI (SSID ${GCRI_SSID}, static IP ${GCRI_STATIC_IP})."
     ;;
-  star)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for Starlink: sudo $0 star"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_star > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to Starlink (SSID ${STAR_SSID}, static IP ${STAR_STATIC_IP})."
-    ;;
-  star)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for Starlink: sudo $0 star"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_star > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to Starlink (SSID ${STAR_SSID}, static IP ${STAR_STATIC_IP})."
-    ;;
   rpi)
     if [ "$(id -u)" -ne 0 ]; then
       echo "Run with sudo for RaspAP: sudo $0 rpi"
@@ -431,17 +331,6 @@ case "${1:-}" in
     chmod 600 "$NETPLAN_OVERRIDE"
     netplan_apply_quiet
     echo "Switched to RaspAP (SSID ${RPI_SSID}, static IP ${RPI_STATIC_IP})."
-    ;;
-  azure)
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "Run with sudo for Azure: sudo $0 azure"
-      exit 1
-    fi
-    set_robot_static_ips "${2:-$ROBOT_NAME}"
-    write_netplan_azure > "$NETPLAN_OVERRIDE"
-    chmod 600 "$NETPLAN_OVERRIDE"
-    netplan_apply_quiet
-    echo "Switched to Azure (SSID ${AZURE_SSID}, static IP ${AZURE_STATIC_IP})."
     ;;
   tamu)
     if [ "$(id -u)" -ne 0 ]; then
