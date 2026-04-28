@@ -1507,7 +1507,7 @@ def generate_launch_description():
             'ultrasonic_front_emergency_close_radius_scale', default_value='1.18',
             description='Scale emergency blob radius when blob is inside close distance.'),
         DeclareLaunchArgument(
-            'ultrasonic_triangulation_blob_hold_sec', default_value='0.40',
+            'ultrasonic_triangulation_blob_hold_sec', default_value='0.20',
             description='How long to keep last triangulated blob when agreement drops briefly (s).'),
         DeclareLaunchArgument(
             'ultrasonic_emergency_observation_persistence_sec', default_value='0.28',
@@ -1553,10 +1553,10 @@ def generate_launch_description():
             'retrace_retry_zone_nonrepeated_extra_events_max', default_value='1',
             description='Max extra retry events for non-repeated zones (keeps corner escape responsive).'),
         DeclareLaunchArgument(
-            'ultrasonic_hard_block_duration_sec', default_value='1.00',
+            'ultrasonic_hard_block_duration_sec', default_value='0.0',
             description='Duration of hard ultrasonic memory phase after front/front_emergency detection (s).'),
         DeclareLaunchArgument(
-            'ultrasonic_memory_decay_duration_sec', default_value='8.00',
+            'ultrasonic_memory_decay_duration_sec', default_value='0.0',
             description='Duration of ultrasonic decay-memory phase after hard phase expires (s).'),
         DeclareLaunchArgument(
             'ultrasonic_memory_replay_inward_m', default_value='0.08',
@@ -1593,7 +1593,7 @@ def generate_launch_description():
                 'If true, keep publishing memory replay during decay phase; if false, '
                 'replay only in hard phase (less phantom cost after escape turns).')),
         DeclareLaunchArgument(
-            'orca_mode', default_value='off',
+            'orca_mode', default_value='advisory',
             description='ORCA mode: off, shadow (log only), advisory (publish limited cmd_vel).'),
         DeclareLaunchArgument(
             'orca_max_linear_scale', default_value='0.55',
@@ -1608,7 +1608,7 @@ def generate_launch_description():
             'nav2_enable_ultrasonic_blob_layer', default_value='true',
             description='Inject ultrasonic_blob_scan into Nav2 obstacle_layer sources.'),
         DeclareLaunchArgument(
-            'nav2_ultrasonic_blob_on_global', default_value='true',
+            'nav2_ultrasonic_blob_on_global', default_value='false',
             description=(
                 'When nav2_enable_ultrasonic_blob_layer is true, also add emergency/side '
                 'blob sources to global_costmap so ComputePathToPose detours around low '
