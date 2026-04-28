@@ -10,7 +10,7 @@ scripts/wifi/netplan-wpa-wlan0.log
 
 .cursor/
 
-# sns generated and sensitive artifacts
+# sns: generated/sensitive artifacts (safety net at folder root)
 scripts/sns/*.priv
 scripts/sns/*.pem
 scripts/sns/*.pub
@@ -18,3 +18,11 @@ scripts/sns/*.bin
 scripts/sns/*.pcap
 scripts/sns/*.ctx
 scripts/sns/*_test.json
+
+# sns: all TPM key material lives here (code lives in scripts/sns/auth/)
+scripts/sns/tpm/
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
