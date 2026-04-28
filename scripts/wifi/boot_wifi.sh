@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Boot-time WiFi connection script: tries SNS (lab), then Starlink (star), then Azure.
+# Boot-time WiFi connection script: tries SNS (lab), then GCRI_LAB (gcri), then RaspAP (rpi).
 #
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
-# Order: lab → star → azure (each step runs only if the previous did not get a working gateway ping).
+# Order: lab -> gcri -> rpi (each step runs only if the previous did not get a working gateway ping).
 #
 # Usage: sudo ./scripts/wifi/boot_wifi.sh [robot]
 #   robot: optional robot name (blinky/pinky/inky/clyde). If not provided, detected from hostname.
@@ -17,8 +17,8 @@ SWITCH_WIFI_SCRIPT="${SCRIPT_DIR}/switch_wifi.sh"
 
 # Gateways for connectivity checks
 LAB_GATEWAY="192.168.0.1"
-STAR_GATEWAY="192.168.1.1"
-AZURE_GATEWAY="172.20.10.1"
+GCRI_GATEWAY="192.168.50.1"
+RPI_GATEWAY="10.3.141.1"
 
 # Timeout for WiFi connection attempts (seconds)
 CONNECTION_TIMEOUT=30
@@ -124,31 +124,31 @@ main() {
     exit 0
   fi
   
-  # Step 2: SNS failed, try Starlink (star)
-  echo "[boot_wifi] SNS connection failed, attempting Starlink (star)..."
-  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" star "$robot_name"
+  # Step 2: SNS failed, try GCRI_LAB (gcri)
+  echo "[boot_wifi] SNS connection failed, attempting GCRI_LAB (gcri)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" gcri "$robot_name"
   
-  if wait_for_connection "$STAR_GATEWAY" "$CONNECTION_TIMEOUT"; then
+  if wait_for_connection "$GCRI_GATEWAY" "$CONNECTION_TIMEOUT"; then
     local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
     local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    echo "[boot_wifi] Successfully connected to Starlink (SSID: $current_ssid, IP: $current_ip)"
+    echo "[boot_wifi] Successfully connected to GCRI_LAB (SSID: $current_ssid, IP: $current_ip)"
     exit 0
   fi
   
-  # Step 3: Starlink failed, try Azure
-  echo "[boot_wifi] Starlink connection failed, attempting Azure..."
-  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
+  # Step 3: GCRI_LAB failed, try RaspAP
+  echo "[boot_wifi] GCRI_LAB connection failed, attempting RaspAP (rpi)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" rpi "$robot_name"
   
   # Wait for connection to establish
-  if wait_for_connection "$AZURE_GATEWAY" "$CONNECTION_TIMEOUT"; then
+  if wait_for_connection "$RPI_GATEWAY" "$CONNECTION_TIMEOUT"; then
     local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
     local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    echo "[boot_wifi] Successfully connected to Azure (SSID: $current_ssid, IP: $current_ip)"
+    echo "[boot_wifi] Successfully connected to RaspAP (SSID: $current_ssid, IP: $current_ip)"
     exit 0
   fi
   
   # All failed
-  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab), Starlink (star), or Azure"
+  echo "[boot_wifi] ERROR: Failed to connect to SNS (lab), GCRI_LAB (gcri), or RaspAP (rpi)"
   echo "[boot_wifi] ERROR: Please check your WiFi connections and try again."
   exit 1
 }

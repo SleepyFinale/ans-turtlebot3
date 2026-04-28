@@ -1,5 +1,5 @@
 [Unit]
-Description=Boot WiFi Connection (SNS, then Starlink, then Azure)
+Description=Boot WiFi Connection (SNS, then GCRI_LAB, then RaspAP)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target
