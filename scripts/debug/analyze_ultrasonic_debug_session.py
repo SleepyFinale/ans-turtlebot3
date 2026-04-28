@@ -4,7 +4,9 @@
 import argparse
 import json
 from collections import Counter, defaultdict
-from typing import Dict, List, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 
 def _load_rows(path: str) -> List[Dict]:
@@ -35,20 +37,179 @@ def _fmt(v: Optional[float], digits: int = 3) -> str:
     return f"{v:.{digits}f}"
 
 
+def _ts_iso_to_s(ts_iso: Optional[str]) -> Optional[float]:
+    if not ts_iso:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _workspace_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _pick_latest(paths: List[Path]) -> Optional[Path]:
+    if not paths:
+        return None
+    return max(paths, key=lambda p: p.stat().st_mtime)
+
+
+def _filter_rows_last_minutes(rows: List[Dict], last_minutes: float) -> List[Dict]:
+    """Keep rows whose ts_iso is within last_minutes of the latest timestamp in the file."""
+    if last_minutes <= 0:
+        return rows
+    ts_vals = [
+        _ts_iso_to_s(r.get("ts_iso"))
+        for r in rows
+        if _ts_iso_to_s(r.get("ts_iso")) is not None
+    ]
+    if not ts_vals:
+        return rows
+    cutoff = max(ts_vals) - last_minutes * 60.0
+
+    def _keep(row: Dict) -> bool:
+        t = _ts_iso_to_s(row.get("ts_iso"))
+        if t is None:
+            return True
+        return t >= cutoff
+
+    return [r for r in rows if _keep(r)]
+
+
+def _nearest_nav_row(
+    nav_index: List[Tuple[float, Dict]], ts: float, window_s: float
+) -> Optional[Dict]:
+    """Binary search could be used; linear is fine for ~1k–2k nav rows."""
+    best: Optional[Dict] = None
+    best_dt = window_s + 1.0
+    for tnav, nrow in nav_index:
+        dt = abs(ts - tnav)
+        if dt <= window_s and dt < best_dt:
+            best_dt = dt
+            best = nrow
+    return best
+
+
+def _print_cluster_nav_correlation(by_event: Dict[str, List[Dict]], window_s: float) -> None:
+    """Match triangulation_decision timestamps to nearest nav_context row."""
+    nav_rows = by_event.get("nav_context", [])
+    index: List[Tuple[float, Dict]] = []
+    for row in nav_rows:
+        ts = _ts_iso_to_s(row.get("ts_iso"))
+        if ts is not None:
+            index.append((ts, row))
+    index.sort(key=lambda x: x[0])
+    tri = by_event.get("triangulation_decision", [])
+    if not tri or not index:
+        print("cluster_nav_correlation: (need triangulation_decision and nav_context rows)")
+        return
+
+    stats: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: {"n": 0, "collision": 0, "forward_cmd": 0, "both": 0}
+    )
+    for row in tri:
+        ts = _ts_iso_to_s(row.get("ts_iso"))
+        if ts is None:
+            continue
+        cluster = str(row.get("cluster", "unknown"))
+        nav = _nearest_nav_row(index, ts, window_s)
+        if nav is None:
+            continue
+        st = stats[cluster]
+        st["n"] += 1
+        cmd = nav.get("cmd_vel") or {}
+        forward = float(cmd.get("linear_x", 0.0)) > 0.05
+        coll = bool(nav.get("nav2_collision_ahead", False))
+        if coll:
+            st["collision"] += 1
+        if forward:
+            st["forward_cmd"] += 1
+        if coll and forward:
+            st["both"] += 1
+
+    print("")
+    print(
+        f"cluster_nav_correlation (triangulation_decision vs nav_context, "
+        f"|dt|<={window_s}s):"
+    )
+    for cluster in sorted(stats.keys(), key=lambda c: -stats[c]["n"]):
+        st = stats[cluster]
+        n = st["n"]
+        if n == 0:
+            continue
+        print(
+            f"  {cluster}: n={n} "
+            f"collision_frac={st['collision'] / n:.2f} "
+            f"forward_cmd_frac={st['forward_cmd'] / n:.2f} "
+            f"collision_and_forward_frac={st['both'] / n:.2f}"
+        )
+
+
+def _resolve_jsonl_path(user_input: Optional[str]) -> Path:
+    root = _workspace_root()
+    logs_dir = root / "logs"
+    pattern = "*/ultrasonic-session-*.jsonl"
+
+    if user_input:
+        candidate = Path(user_input).expanduser()
+        if candidate.exists():
+            return candidate.resolve()
+        if not candidate.is_absolute():
+            local_candidate = (Path.cwd() / candidate).resolve()
+            if local_candidate.exists():
+                return local_candidate
+            by_name = _pick_latest(list(logs_dir.glob(f"**/{candidate.name}")))
+            if by_name and by_name.exists():
+                return by_name.resolve()
+        raise SystemExit(f"Ultrasonic session JSONL not found: {user_input}")
+
+    latest = _pick_latest(list(logs_dir.glob(pattern)))
+    if latest is None:
+        raise SystemExit(f"No ultrasonic session JSONL files found under: {logs_dir}")
+    return latest.resolve()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("jsonl_path", help="Path to ultrasonic-session-*.jsonl")
+    ap.add_argument("jsonl_path", nargs="?", help="Path to ultrasonic-session-*.jsonl")
     ap.add_argument(
         "--show-last-anomalies",
         type=int,
         default=8,
         help="How many recent anomaly rows to print",
     )
+    ap.add_argument(
+        "--last-minutes",
+        type=float,
+        default=0.0,
+        help="Only include rows whose ts_iso falls in the last N minutes (0 = full file).",
+    )
+    ap.add_argument(
+        "--cluster-nav",
+        action="store_true",
+        help=(
+            "Print triangulation cluster vs nearest nav_context: collision_ahead and "
+            "forward cmd_vel fractions (use with --last-minutes for final approach)."
+        ),
+    )
+    ap.add_argument(
+        "--cluster-nav-window-s",
+        type=float,
+        default=0.15,
+        help="Max |timestamp| difference for triangulation_decision to nav_context match.",
+    )
     args = ap.parse_args()
 
-    rows = _load_rows(args.jsonl_path)
+    jsonl_path = _resolve_jsonl_path(args.jsonl_path)
+    rows = _load_rows(str(jsonl_path))
     if not rows:
         raise SystemExit("No JSON rows found")
+    if args.last_minutes and args.last_minutes > 0:
+        rows = _filter_rows_last_minutes(rows, args.last_minutes)
+        if not rows:
+            raise SystemExit("No rows left after --last-minutes filter")
 
     by_event: Dict[str, List[Dict]] = defaultdict(list)
     for row in rows:
@@ -113,7 +274,64 @@ def main() -> None:
         if row.get("blob_dist_m") is not None:
             tri_blob_dist.append(float(row.get("blob_dist_m")))
 
-    print(f"session: {args.jsonl_path}")
+    front_emergency_ts: List[float] = []
+    for row in by_event.get("triangulation_decision", []):
+        cluster = str(row.get("cluster", ""))
+        if cluster.startswith("front_emergency"):
+            ts_s = _ts_iso_to_s(row.get("ts_iso"))
+            if ts_s is not None:
+                front_emergency_ts.append(ts_s)
+    front_emergency_ts = sorted(front_emergency_ts)
+
+    collision_true_ts: List[float] = []
+    forward_cmd_ts: List[float] = []
+    for row in nav_rows:
+        ts_s = _ts_iso_to_s(row.get("ts_iso"))
+        if ts_s is None:
+            continue
+        if bool(row.get("nav2_collision_ahead", False)):
+            collision_true_ts.append(ts_s)
+        cmd = row.get("cmd_vel") or {}
+        if float(cmd.get("linear_x", 0.0)) > 0.05:
+            forward_cmd_ts.append(ts_s)
+
+    latency_buckets = Counter({
+        "lt_0.25s": 0,
+        "0.25_to_0.75s": 0,
+        "0.75_to_2.0s": 0,
+        "gt_2.0s": 0,
+        "missing_collision_ahead": 0,
+    })
+    front_emergency_followed_by_forward = 0
+    for ts_s in front_emergency_ts:
+        next_collision = next((c for c in collision_true_ts if c >= ts_s), None)
+        if next_collision is None:
+            latency_buckets["missing_collision_ahead"] += 1
+        else:
+            dt = next_collision - ts_s
+            if dt < 0.25:
+                latency_buckets["lt_0.25s"] += 1
+            elif dt < 0.75:
+                latency_buckets["0.25_to_0.75s"] += 1
+            elif dt <= 2.0:
+                latency_buckets["0.75_to_2.0s"] += 1
+            else:
+                latency_buckets["gt_2.0s"] += 1
+        next_forward = next((f for f in forward_cmd_ts if f >= ts_s and f <= ts_s + 2.0), None)
+        if next_forward is not None:
+            front_emergency_followed_by_forward += 1
+
+    session_starts = len(by_event.get("session_start", []))
+    session_ends = len(by_event.get("session_end", []))
+    if session_starts > 1:
+        print(
+            "warning: multiple sessions detected in one JSONL "
+            f"(session_start={session_starts}, session_end={session_ends}); "
+            "results may include older runs."
+        )
+    print(f"session: {jsonl_path}")
+    if args.last_minutes and args.last_minutes > 0:
+        print(f"filter: last {args.last_minutes} minutes by ts_iso")
     print(f"rows_total: {len(rows)}")
     print(f"events: {', '.join(f'{k}={len(v)}' for k, v in sorted(by_event.items()))}")
     print("")
@@ -165,6 +383,16 @@ def main() -> None:
             + _fmt(_mean(tri_blob_dist), 3)
             + f" samples={len(tri_blob_dist)}"
         )
+        if front_emergency_ts:
+            print("  front_emergency_to_collision_ahead_latency:")
+            print(
+                "    "
+                + ", ".join(f"{k}={v}" for k, v in latency_buckets.items())
+            )
+            print(
+                "  front_emergency_followed_by_forward_cmd_rows: "
+                f"{front_emergency_followed_by_forward}/{len(front_emergency_ts)}"
+            )
     print("anomaly counts:")
     if anomaly_counter:
         for flag, count in anomaly_counter.most_common():
@@ -179,6 +407,9 @@ def main() -> None:
             print(f"  line={row['_line']} ts={row.get('ts_iso')} flags={row.get('flags')}")
     else:
         print("  (none)")
+
+    if args.cluster_nav:
+        _print_cluster_nav_correlation(by_event, args.cluster_nav_window_s)
 
 
 if __name__ == "__main__":

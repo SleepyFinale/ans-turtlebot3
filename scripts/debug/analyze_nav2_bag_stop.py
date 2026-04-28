@@ -10,6 +10,7 @@ This script highlights intervals where:
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from rclpy.serialization import deserialize_message
@@ -57,10 +58,61 @@ def _is_stop_tick(
     return (rotate_only or near_zero_cmd) and near_zero_odom
 
 
+def _workspace_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _pick_latest(paths: List[Path]) -> Optional[Path]:
+    if not paths:
+        return None
+    return max(paths, key=lambda p: p.stat().st_mtime)
+
+
+def _resolve_bag_path(user_input: Optional[str]) -> Path:
+    root = _workspace_root()
+    logs_dir = root / "logs"
+
+    def to_bag_dir(p: Path) -> Path:
+        if p.is_dir():
+            return p
+        if p.name.endswith(".db3"):
+            return p.parent
+        return p
+
+    if user_input:
+        candidate = Path(user_input).expanduser()
+        if candidate.exists():
+            return to_bag_dir(candidate.resolve())
+        if not candidate.is_absolute():
+            local_candidate = (Path.cwd() / candidate).resolve()
+            if local_candidate.exists():
+                return to_bag_dir(local_candidate)
+            by_name = _pick_latest(list(logs_dir.glob(f"**/{candidate.name}")))
+            if by_name and by_name.exists():
+                return to_bag_dir(by_name.resolve())
+        raise SystemExit(f"Bag input not found: {user_input}")
+
+    latest_db3 = _pick_latest(list(logs_dir.glob("*/bag-*/bag-*_0.db3")))
+    if latest_db3 is None:
+        raise SystemExit(f"No bag db3 files found under: {logs_dir}")
+    return latest_db3.parent
+
+
+def _infer_robot_from_bag_path(bag_path: Path) -> Optional[str]:
+    # Expected layout: <workspace>/logs/<robot>/bag-<timestamp>
+    if bag_path.parent.parent.name == "logs":
+        return bag_path.parent.name
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("bag_path", help="Bag directory path")
-    ap.add_argument("--robot", default="pinky", help="Robot namespace name")
+    ap.add_argument("bag_path", nargs="?", help="Bag directory path or bag-*_0.db3 file")
+    ap.add_argument(
+        "--robot",
+        default=None,
+        help="Robot namespace name (defaults to robot inferred from bag path, or pinky)",
+    )
     ap.add_argument("--start", type=float, default=None, help="Start unix time (s)")
     ap.add_argument("--end", type=float, default=None, help="End unix time (s)")
     ap.add_argument("--sample-step", type=float, default=0.2, help="Sampling step (s)")
@@ -71,7 +123,9 @@ def main() -> None:
     ap.add_argument("--ang-cmd-min", type=float, default=0.03, help="Angular command rotate-only threshold")
     args = ap.parse_args()
 
-    ns = f"/{args.robot}"
+    bag_path = _resolve_bag_path(args.bag_path)
+    robot_name = args.robot or _infer_robot_from_bag_path(bag_path) or "pinky"
+    ns = f"/{robot_name}"
     topic_types = {
         f"{ns}/cmd_vel_nav": "geometry_msgs/msg/Twist",
         f"{ns}/cmd_vel": "geometry_msgs/msg/Twist",
@@ -84,7 +138,7 @@ def main() -> None:
 
     reader = SequentialReader()
     reader.open(
-        StorageOptions(uri=args.bag_path, storage_id="sqlite3"),
+        StorageOptions(uri=str(bag_path), storage_id="sqlite3"),
         ConverterOptions("", ""),
     )
 
@@ -159,7 +213,8 @@ def main() -> None:
     if start_idx is not None and len(flags) - start_idx >= min_len:
         intervals.append((start_idx, len(flags) - 1))
 
-    print(f"bag: {args.bag_path}")
+    print(f"bag: {bag_path}")
+    print(f"robot: {robot_name}")
     print(f"window: {t0:.3f} -> {t1:.3f}")
     print(f"ticks: {len(ticks)}")
     print(f"stop_intervals: {len(intervals)}")

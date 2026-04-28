@@ -916,10 +916,13 @@ ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
   ultrasonic_triangulation_max_age_sec:=0.15 \
   ultrasonic_triangulation_require_pair_agreement:=true \
   ultrasonic_disable_scan_fusion_when_blob:=true \
-  ultrasonic_front_emergency_range_m:=0.38 \
-  ultrasonic_front_emergency_required_streak:=2 \
-  ultrasonic_front_emergency_blob_radius_m:=0.16 \
-  ultrasonic_triangulation_blob_hold_sec:=0.45 \
+  ultrasonic_front_emergency_range_m:=0.50 \
+  ultrasonic_front_emergency_required_streak:=1 \
+  ultrasonic_front_emergency_blob_radius_m:=0.20 \
+  ultrasonic_front_emergency_hold_sec:=1.20 \
+  ultrasonic_hard_block_duration_sec:=1.00 \
+  ultrasonic_memory_decay_duration_sec:=8.00 \
+  ultrasonic_triangulation_blob_hold_sec:=0.40 \
   enable_ultrasonic_cmd_vel_enforcer:=false
 ```
 
@@ -927,12 +930,13 @@ Notes:
 
 - `ultrasonic_hard_max_range_m` is enforced for scan fusion and triangulation input.
 - Triangulation publishes `ultrasonic_blob_scan` and `ultrasonic_triangulation_debug`.
-- Nav2 obstacle layers can consume this dedicated blob source via `nav2_enable_ultrasonic_blob_layer:=true`.
+- Nav2 obstacle layers can consume this dedicated blob source via `nav2_enable_ultrasonic_blob_layer:=true` (local costmap only in current hard-then-decay tuning).
 - `ultrasonic_front_emergency_*` adds a close-range front-only fail-safe if pair matching drops.
+- `ultrasonic_hard_block_duration_sec` + `ultrasonic_memory_decay_duration_sec` expose hard-then-decay memory phase telemetry in triangulation debug (`hard_active`, `memory_phase`, `memory_age_sec`).
 - `enable_ultrasonic_cmd_vel_enforcer:=false` is the recommended LiDAR-like mode (costmap-only behavior). Enable only for emergency fallback testing.
 - `ultrasonic_triangulation_blob_hold_sec` prevents brief dropouts from immediately unmarking close obstacles.
 - `ultrasonic_triangulation_similarity_*` supports distance-scaled pair/triple matching (more tolerant far, tighter near).
-- `nav2_retrace_escape` includes a collision-retry guard (`nav2_collision_ahead` burst detection) to stop repeated forward retries into persistent blocked zones.
+- `nav2_retrace_escape` includes decaying retry zones (hard first, then fade) using `nav2_collision_ahead` bursts to prevent repeated straight re-cross attempts while still allowing eventual re-traversal.
 
 #### A/B validation matrix
 

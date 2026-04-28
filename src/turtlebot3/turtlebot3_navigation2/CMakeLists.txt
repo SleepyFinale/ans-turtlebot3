@@ -34,6 +34,7 @@ install(
     scripts/nav2_retrace_escape.py
     scripts/nav2_controller_collision_watch.py
     scripts/ultrasonic_cmd_vel_enforcer.py
+    scripts/orca_shadow_advisor.py
     scripts/standalone_world_map_tf.py
     scripts/namespace_tf_to_global_tf_relay.py
   DESTINATION lib/${PROJECT_NAME}

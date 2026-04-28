@@ -1,0 +1,49 @@
+run_id: ""
+date_utc: ""
+operator: ""
+robot_name: ""
+map_id: ""
+profile: "baseline-safe"
+launch_command: ""
+
+environment:
+  floor_type: ""
+  lighting: ""
+  notes: ""
+
+scenario:
+  name: ""
+  start_pose:
+    x: 0.0
+    y: 0.0
+    yaw_rad: 0.0
+  goal_pose:
+    x: 0.0
+    y: 0.0
+    yaw_rad: 0.0
+  obstacles:
+    - type: "pipe|bag|table_leg|doorway|corner"
+      pose_hint: ""
+      dimensions: ""
+
+toggles:
+  ultrasonic_cooperative_mode: true
+  nav2_enable_ultrasonic_blob_layer: true
+  nav2_ultrasonic_blob_on_global: false
+  enable_retrace_escape: false
+  enable_controller_collision_watch: false
+  enable_ultrasonic_cmd_vel_enforcer: false
+  orca_mode: "off"
+  orca_max_linear_scale: 0.55
+  orca_stop_time_max_sec: 0.8
+
+results:
+  completed: false
+  hard_collision: false
+  deadlock: false
+  max_stuck_interval_s: 0.0
+  notes: ""
+  log_paths:
+    ultrasonic_jsonl: ""
+    nav2_jsonl: ""
+    orca_jsonl: ""

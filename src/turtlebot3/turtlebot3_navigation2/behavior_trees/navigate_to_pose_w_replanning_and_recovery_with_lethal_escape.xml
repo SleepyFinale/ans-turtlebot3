@@ -2,6 +2,11 @@
   Navigate-to-pose tree with replanning and recoveries.
   Keeps short in-tree recoveries (backup/spin/wait) while nav2_retrace_escape.py
   performs memory-based retreat when lethal-space or stall triggers fire.
+
+  Low-obstacle note: ultrasonic blob marks are non-clearing. Prefer clearing the
+  local costmap first so transient planner/controller issues recover without
+  wiping global evidence of low obstacles (global also subscribes to blob scans
+  when enabled in launch). Full global clear remains as a secondary recovery.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -16,9 +21,6 @@
               <ClearEntireCostmap
                 name="ClearLocalCostmap-PreEscape"
                 service_name="local_costmap/clear_entirely_local_costmap"/>
-              <ClearEntireCostmap
-                name="ClearGlobalCostmap-PreEscape"
-                service_name="global_costmap/clear_entirely_global_costmap"/>
               <Wait wait_duration="0.2"/>
               <BackUp backup_dist="0.25" backup_speed="0.06"/>
               <Spin spin_dist="0.6"/>
@@ -42,9 +44,6 @@
             <ClearEntireCostmap
               name="ClearLocalCostmap-Context"
               service_name="local_costmap/clear_entirely_local_costmap"/>
-            <ClearEntireCostmap
-              name="ClearGlobalCostmap-ControlRetry"
-              service_name="global_costmap/clear_entirely_global_costmap"/>
             <Wait wait_duration="0.4"/>
           </Sequence>
         </RecoveryNode>
@@ -52,9 +51,12 @@
       <ReactiveFallback name="RecoveryFallback">
         <GoalUpdated/>
         <RoundRobin name="RecoveryActions">
+          <ClearEntireCostmap
+            name="ClearLocalCostmap-Subtree"
+            service_name="local_costmap/clear_entirely_local_costmap"/>
           <Sequence name="ClearBothCostmaps">
             <ClearEntireCostmap
-              name="ClearLocalCostmap-Subtree"
+              name="ClearLocalCostmap-Subtree-Full"
               service_name="local_costmap/clear_entirely_local_costmap"/>
             <ClearEntireCostmap
               name="ClearGlobalCostmap-Subtree"

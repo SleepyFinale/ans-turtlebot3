@@ -16,23 +16,13 @@ JSONL_REL="turtlebot3/logs/${ROBOT_NAME}/ultrasonic-session-${SESSION_TS}.jsonl"
 
 mkdir -p "$BASE_OUT"
 
-# If logger already created a nearby ultrasonic-session file with a different
-# timestamp, rename it so capture timestamp and JSONL timestamp match.
-if [[ ! -f "$JSONL_OUT" ]]; then
-  LATEST_JSONL="$(ls -1t "${BASE_OUT}"/ultrasonic-session-*.jsonl 2>/dev/null | sed -n '1p' || true)"
-  if [[ -n "$LATEST_JSONL" && "$LATEST_JSONL" != "$JSONL_OUT" ]]; then
-    mv "$LATEST_JSONL" "$JSONL_OUT"
-  fi
-fi
-
-ANALYZE_CMD="python3 ${WORKSPACE_DIR}/scripts/debug/analyze_ultrasonic_debug_session.py \"${JSONL_OUT}\""
+ANALYZE_CMD="python3 scripts/debug/analyze_ultrasonic_debug_session.py ultrasonic-session-${SESSION_TS}.jsonl"
 
 echo "=========================================="
 echo " Ultrasonic Debug Capture"
 echo "=========================================="
 echo " Robot name   : ${ROBOT_NAME}"
-echo " JSONL path   : ${JSONL_OUT}"
-echo " JSONL (repo) : ${JSONL_REL}"
+echo " JSONL path   : ${JSONL_REL}"
 echo ""
 echo " Analyze command (copy/paste):"
 echo " ${ANALYZE_CMD}"

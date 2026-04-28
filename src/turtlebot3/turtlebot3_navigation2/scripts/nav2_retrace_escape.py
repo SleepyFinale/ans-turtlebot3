@@ -64,6 +64,12 @@ class Nav2RetraceEscape(Node):
         self.declare_parameter('collision_retry_min_events', 5)
         self.declare_parameter('collision_retry_min_goal_age_sec', 6.0)
         self.declare_parameter('collision_retry_cooldown_sec', 10.0)
+        self.declare_parameter('retry_zone_radius_m', 0.45)
+        self.declare_parameter('retry_zone_decay_sec', 22.0)
+        self.declare_parameter('retry_zone_hard_block_sec', 6.0)
+        self.declare_parameter('retry_zone_extra_events_max', 5)
+        self.declare_parameter('retry_zone_repeated_hits_min', 2)
+        self.declare_parameter('retry_zone_nonrepeated_extra_events_max', 1)
 
         self.robot_name = str(self.get_parameter('robot_name').value or '')
         self.map_frame = str(self.get_parameter('map_frame').value)
@@ -124,6 +130,24 @@ class Nav2RetraceEscape(Node):
         self.collision_retry_cooldown_sec = max(
             0.0, float(self.get_parameter('collision_retry_cooldown_sec').value)
         )
+        self.retry_zone_radius_m = max(
+            0.05, float(self.get_parameter('retry_zone_radius_m').value)
+        )
+        self.retry_zone_decay_sec = max(
+            1.0, float(self.get_parameter('retry_zone_decay_sec').value)
+        )
+        self.retry_zone_hard_block_sec = max(
+            0.0, float(self.get_parameter('retry_zone_hard_block_sec').value)
+        )
+        self.retry_zone_extra_events_max = max(
+            0, int(self.get_parameter('retry_zone_extra_events_max').value)
+        )
+        self.retry_zone_repeated_hits_min = max(
+            1, int(self.get_parameter('retry_zone_repeated_hits_min').value)
+        )
+        self.retry_zone_nonrepeated_extra_events_max = max(
+            0, int(self.get_parameter('retry_zone_nonrepeated_extra_events_max').value)
+        )
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -158,6 +182,8 @@ class Nav2RetraceEscape(Node):
         self.collision_ahead_active: bool = False
         self.collision_ahead_events: Deque[float] = deque()
         self.last_collision_retry_trigger_time: float = 0.0
+        self.retry_zones: Deque[dict] = deque()
+        self.last_collision_pose: Optional[Tuple[float, float, float]] = None
 
         tick_period = 1.0 / self.tick_hz if self.tick_hz > 0.0 else 0.125
         pub_period = 1.0 / self.publish_hz if self.publish_hz > 0.0 else 0.25
@@ -202,7 +228,61 @@ class Nav2RetraceEscape(Node):
         active = bool(msg.data)
         if active and not self.collision_ahead_active:
             self.collision_ahead_events.append(now)
+            pose = self._lookup_pose()
+            if pose is not None:
+                self.last_collision_pose = pose
         self.collision_ahead_active = active
+
+    def _zone_dist(self, pose: Tuple[float, float, float], zone: dict) -> float:
+        px, py, _ = pose
+        return math.hypot(px - zone['x'], py - zone['y'])
+
+    def _zone_strength(self, now: float, zone: dict) -> float:
+        age = max(0.0, now - float(zone['created_s']))
+        if age <= self.retry_zone_hard_block_sec:
+            return 1.0
+        fade_age = age - self.retry_zone_hard_block_sec
+        if fade_age >= self.retry_zone_decay_sec:
+            return 0.0
+        return max(0.0, 1.0 - (fade_age / self.retry_zone_decay_sec))
+
+    def _prune_retry_zones(self, now: float) -> None:
+        kept = deque()
+        for zone in self.retry_zones:
+            if self._zone_strength(now, zone) > 0.0:
+                kept.append(zone)
+        self.retry_zones = kept
+
+    def _find_nearest_zone(
+        self, pose: Tuple[float, float, float], now: float
+    ) -> Optional[dict]:
+        nearest = None
+        best_dist = float('inf')
+        for zone in self.retry_zones:
+            dist = self._zone_dist(pose, zone)
+            if dist <= self.retry_zone_radius_m and dist < best_dist:
+                nearest = zone
+                best_dist = dist
+        if nearest is None:
+            return None
+        if self._zone_strength(now, nearest) <= 0.0:
+            return None
+        return nearest
+
+    def _update_retry_zone(self, pose: Tuple[float, float, float], now: float) -> None:
+        zone = self._find_nearest_zone(pose, now)
+        px, py, _ = pose
+        if zone is None:
+            self.retry_zones.append({
+                'x': px,
+                'y': py,
+                'created_s': now,
+                'last_hit_s': now,
+                'hits': 1,
+            })
+            return
+        zone['last_hit_s'] = now
+        zone['hits'] = int(zone.get('hits', 0)) + 1
 
     def _publish_retrace_active(self) -> None:
         out = Bool()
@@ -357,6 +437,7 @@ class Nav2RetraceEscape(Node):
         if self.trigger_on_lethal and self.lethal_active:
             return 'lethal_space'
         if self.enable_collision_retry_guard:
+            self._prune_retry_zones(now)
             if (
                 self.goal_start_time > 0.0
                 and (now - self.goal_start_time) >= self.collision_retry_min_goal_age_sec
@@ -370,8 +451,27 @@ class Nav2RetraceEscape(Node):
                     now - self.collision_ahead_events[0]
                 ) > self.collision_retry_window_sec:
                     self.collision_ahead_events.popleft()
-                if len(self.collision_ahead_events) >= self.collision_retry_min_events:
+                current_pose = self.last_collision_pose or self.last_sample_pose
+                zone = None
+                extra_required = 0
+                if current_pose is not None:
+                    zone = self._find_nearest_zone(current_pose, now)
+                if zone is not None:
+                    strength = self._zone_strength(now, zone)
+                    repeated_zone = int(zone.get('hits', 0)) >= self.retry_zone_repeated_hits_min
+                    max_extra = (
+                        self.retry_zone_extra_events_max
+                        if repeated_zone
+                        else self.retry_zone_nonrepeated_extra_events_max
+                    )
+                    extra_required = int(round((1.0 - strength) * max_extra))
+                required_events = self.collision_retry_min_events + extra_required
+                if len(self.collision_ahead_events) >= required_events:
+                    if current_pose is not None:
+                        self._update_retry_zone(current_pose, now)
                     self.last_collision_retry_trigger_time = now
+                    if zone is not None:
+                        return 'collision_retry_zone'
                     return 'collision_retry_guard'
         if self.trigger_on_stall and self.last_motion_time > 0.0:
             if self.goal_start_time > 0.0 and (now - self.goal_start_time) < self.stall_min_goal_age_sec:

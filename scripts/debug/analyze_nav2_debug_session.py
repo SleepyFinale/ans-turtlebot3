@@ -4,6 +4,7 @@
 import argparse
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 
@@ -108,14 +109,49 @@ def _summarize_interval(ticks: List[Tick], a: int, b: int, hz: float) -> Dict:
     }
 
 
+def _workspace_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _pick_latest(paths: List[Path]) -> Optional[Path]:
+    if not paths:
+        return None
+    return max(paths, key=lambda p: p.stat().st_mtime)
+
+
+def _resolve_jsonl_path(user_input: Optional[str]) -> Path:
+    root = _workspace_root()
+    logs_dir = root / "logs"
+    pattern = "*/session-*.jsonl"
+
+    if user_input:
+        candidate = Path(user_input).expanduser()
+        if candidate.exists():
+            return candidate.resolve()
+        if not candidate.is_absolute():
+            local_candidate = (Path.cwd() / candidate).resolve()
+            if local_candidate.exists():
+                return local_candidate
+            by_name = _pick_latest(list(logs_dir.glob(f"**/{candidate.name}")))
+            if by_name and by_name.exists():
+                return by_name.resolve()
+        raise SystemExit(f"Session JSONL not found: {user_input}")
+
+    latest = _pick_latest(list(logs_dir.glob(pattern)))
+    if latest is None:
+        raise SystemExit(f"No Nav2 session JSONL files found under: {logs_dir}")
+    return latest.resolve()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("jsonl_path")
+    ap.add_argument("jsonl_path", nargs="?")
     ap.add_argument("--log-rate-hz", type=float, default=5.0)
     ap.add_argument("--min-freeze-ticks", type=int, default=5)
     args = ap.parse_args()
 
-    ticks = _load_ticks(args.jsonl_path)
+    jsonl_path = _resolve_jsonl_path(args.jsonl_path)
+    ticks = _load_ticks(str(jsonl_path))
     if not ticks:
         raise SystemExit("No tick rows found")
 
@@ -127,7 +163,7 @@ def main() -> None:
     executing_count = sum(1 for t in ticks if t.nav_status == 2)
     preemption_burst_count = sum(1 for t in ticks if "high_goal_preemption_rate" in t.anomalies)
 
-    print(f"session: {args.jsonl_path}")
+    print(f"session: {jsonl_path}")
     print(f"ticks: {len(ticks)}")
     print(f"executing_ticks: {executing_count}")
     print(f"high_cost_ticks: {high_cost_count}")
