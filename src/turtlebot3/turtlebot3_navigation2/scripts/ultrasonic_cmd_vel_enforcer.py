@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Publish zero cmd_vel when ultrasonic hazard clusters are active."""
+"""Publish zero ``cmd_vel`` while ultrasonic hazard clusters are active.
+
+This is intentionally narrow in scope: it is an emergency stop overlay, not a
+full obstacle-avoidance controller. Normal path tracking should still come from
+Nav2; this helper only clamps motion when close-range ultrasonic evidence says
+the robot should not keep driving forward.
+"""
 
 import json
 from typing import Optional, Set
@@ -66,6 +72,8 @@ class UltrasonicCmdVelEnforcer(Node):
         self._last_state: Optional[bool] = None
         self._last_cluster: Optional[str] = None
 
+        # Consume the triangulation debug stream because it already classifies
+        # hazards into cluster labels the rest of the stack understands.
         self.create_subscription(String, tri_topic, self._on_triangulation_debug, 20)
         self._pub = self.create_publisher(Twist, self._cmd_vel_topic, 20)
         self.create_timer(1.0 / self._publish_hz, self._tick)

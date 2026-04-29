@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Publish Bool when RegulatedPurePursuitController reports collision ahead (via rosout)."""
+"""Convert controller ``collision ahead`` log spam into a debounced Bool topic.
+
+The robot and central helpers only care that the controller is repeatedly
+reporting imminent collision, not every individual rosout line.
+"""
 
 from typing import Optional
 
@@ -37,6 +41,8 @@ class Nav2ControllerCollisionWatch(Node):
         self._last_match_time: Optional[float] = None
         self._last_pub: Optional[bool] = None
 
+        # rosout is diagnostic traffic: best-effort is fine here and avoids
+        # making this helper part of the critical control-path QoS story.
         qos = QoSProfile(
             depth=200,
             reliability=ReliabilityPolicy.BEST_EFFORT,

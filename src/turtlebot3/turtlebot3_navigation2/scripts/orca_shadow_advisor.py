@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""ORCA-inspired shadow/advisory limiter for low-speed TB3 navigation."""
+"""ORCA-inspired shadow/advisory limiter for low-speed TurtleBot3 navigation.
+
+This node is deliberately side-channel oriented: it inspects the live command,
+front scan, ultrasonic cluster classification, and current Nav2 path, then
+publishes either logs-only ("shadow") or a softened cmd_vel ("advisory").
+"""
 
 import json
 import math
@@ -49,6 +54,8 @@ class OrcaShadowAdvisor(Node):
             self._min_sep, float(self.get_parameter('front_cone_max_range_m').value)
         )
 
+        # Cached context from each input stream. The advisory is computed when a
+        # new command arrives so the output stays aligned with Nav2 timing.
         self._last_front_range: Optional[float] = None
         self._last_cluster: str = 'none'
         self._last_path_poses = 0

@@ -9,6 +9,28 @@ This tree is the **canonical** copy of namespaced SLAM + Nav2 launch and paramet
 - **Optional Pi load relief:** launch arg `scan_costmap_max_hz` (e.g. `6.0`) — costmaps subscribe to throttled `scan_costmap` while SLAM stays on full-rate `scan_normalized`.
 - **Startup map seeding automation:** launch arg `enable_startup_map_seeding:=true` in `navigation2_slam.launch.py` (run before central start)
 
+## Quick start for new collaborators
+
+Use this for a minimal end-to-end fleet bring-up:
+
+1. **[ROBOT-SBC]** On each robot (`~/turtlebot3` from the `ans-turtlebot3` checkout):
+   - `ros2 launch turtlebot3_bringup robot.launch.py`
+   - `ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py`
+2. **[CENTRAL-PC]** On central (`~/central-computer` from the `ans-central-computer` checkout):
+   - `./scripts/core/start_central.sh`
+   - `./scripts/core/start_rviz_central.sh`
+3. Verify from central:
+   - `ros2 topic echo /map --once`
+   - `ros2 action list | rg navigate_to_pose`
+
+### SSHFS editing reliability note
+
+Editing robot files over SSHFS is supported, but for reliable deployment:
+
+- run build and launch commands directly on the Pi shell (not through a flaky mount),
+- avoid changing netplan/systemd files during unstable Wi‑Fi sessions,
+- keep a fallback access path (HDMI/keyboard or direct SSH on known-good Wi‑Fi).
+
 ## Goal of this document
 
 Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
@@ -68,6 +90,53 @@ sudo nano /etc/netplan/50-cloud-init.yaml
 ```
 
 Edit Wi‑Fi settings (replace with your SSID/password), then save and reboot.
+
+### Disable Wi-Fi Power Saving (`wlan0`)
+
+Disable Wi-Fi power saving early in SBC setup to reduce latency spikes and connection dropouts during robot bringup and multi-robot operation.
+
+1. Install `iw`:
+
+   ```bash
+   sudo apt install iw
+   ```
+
+2. Create a one-shot systemd service:
+
+   ```bash
+   sudo nano /etc/systemd/system/wifi-powersave-off.service
+   ```
+
+   Paste:
+
+   ```ini
+   [Unit]
+   Description=Disable Wi-Fi power save on wlan0
+   After=network-pre.target
+   Wants=network-pre.target
+
+   [Service]
+   Type=oneshot
+   ExecStart=/usr/sbin/iw dev wlan0 set power_save off
+   RemainAfterExit=yes
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. Reload systemd and enable the service:
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now wifi-powersave-off.service
+   ```
+
+4. Verify:
+
+   ```bash
+   systemctl status wifi-powersave-off.service --no-pager
+   iw dev wlan0 get power_save
+   ```
 
 ### Disable Unattended Upgrades
 
@@ -167,16 +236,33 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    cd turtlebot3
    ```
 
-2. **Install dependencies and build** (use wall power; build can take over an hour):
+2. **Install dependencies** (required for `robot.launch.py` + `navigation2_slam.launch.py`):
 
    ```bash
-   sudo apt install python3-argcomplete python3-colcon-common-extensions libboost-system-dev build-essential
-   sudo apt install ros-humble-hls-lfcd-lds-driver
-   sudo apt install ros-humble-turtlebot3-msgs
-   sudo apt install ros-humble-nav2-bringup
-   sudo apt install ros-humble-dynamixel-sdk
-   sudo apt install ros-humble-xacro
-   sudo apt install libudev-dev
+   sudo apt update
+   sudo apt install -y \
+     python3-argcomplete python3-colcon-common-extensions \
+     build-essential libboost-system-dev libudev-dev \
+     ros-humble-nav2-bringup ros-humble-slam-toolbox ros-humble-robot-localization \
+     ros-humble-dynamixel-sdk ros-humble-turtlebot3-msgs \
+     ros-humble-hls-lfcd-lds-driver ros-humble-xacro
+   ```
+
+   Optional (only if you run outdoor GPS mode with `outdoor:=true` in `robot.launch.py`):
+
+   ```bash
+   sudo apt install -y ros-humble-nmea-navsat-driver
+   ```
+
+   Quick verification (recommended):
+
+   ```bash
+   ros2 pkg list | rg "slam_toolbox|robot_localization|nav2_bringup|turtlebot3_msgs|dynamixel_sdk"
+   ```
+
+3. **Build and source the workspace** (use wall power; build can take over an hour):
+
+   ```bash
    cd ~/turtlebot3/
    echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
    source ~/.bashrc
@@ -185,13 +271,45 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    source ~/.bashrc
    ```
 
-3. **Source the workspace** (or open a new shell):
+4. **Recommended `~/.bashrc` block (robot):**
+
+   Add this block to `~/.bashrc` so interactive shells source the ROS/TurtleBot3 environment automatically and start in `~/turtlebot3`:
+
+   ```bash
+   # --- ROS 2 / TurtleBot3 environment ---
+   # Sources /opt/ros/humble + ~/turtlebot3/install/setup.bash with error checking.
+   if [ -f "$HOME/turtlebot3/scripts/env/ros_robot_env.bash" ]; then
+       # shellcheck disable=SC1091
+       source "$HOME/turtlebot3/scripts/env/ros_robot_env.bash"
+   fi
+
+   # Per-robot ROS_DOMAIN_ID (USER -> blinky=05, pinky=22, inky=19, clyde=80).
+   if [ -f "$HOME/turtlebot3/scripts/env/ros_domain_profile.bash" ]; then
+       # shellcheck disable=SC1091
+       source "$HOME/turtlebot3/scripts/env/ros_domain_profile.bash"
+   fi
+
+   # TurtleBot3 hardware model + LiDAR variant.
+   export TURTLEBOT3_MODEL=burger
+   export LDS_MODEL=LDS-02
+
+   # Default cwd for interactive shells (includes console auto-login via .profile).
+   cd "$HOME/turtlebot3" 2>/dev/null || true
+   ```
+
+   Then open a new shell or run:
+
+   ```bash
+   source ~/.bashrc
+   ```
+
+5. **Source the workspace** (or open a new shell):
 
    ```bash
    source ~/turtlebot3/install/setup.bash
    ```
 
-4. **Rebuild script:** After the initial build, use `scripts/build/rebuild_common.sh`:
+6. **Rebuild script:** After the initial build, use `scripts/build/rebuild_common.sh`:
    - **Minimal rebuild (fast):** `minimal` mode builds only the packages needed for `ros2 launch turtlebot3_bringup robot.launch.py`.
    - **Full rebuild:** `clean` mode removes `build/`, `install/`, and `log/`, then runs a full colcon build and sources the workspace.
    - Optional flags for `clean`: `--no-clean` (skip deletion) and `--source` (source only).
@@ -215,21 +333,34 @@ This repo includes a helper script to switch the robot’s Wi‑Fi network and a
 - Script path: `scripts/network/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
 
-### One‑time prerequisite
+### Recommended right after cloning this repo
 
-On each robot, ensure that `wlan0` is **only** configured via this script (to avoid duplicate netplan definitions):
+After cloning `~/turtlebot3` on a robot, set up Wi-Fi management in this order:
 
-```bash
-sudo nano /etc/netplan/50-cloud-init.yaml
-```
+1. **One-time prerequisite:** ensure only `switch_wifi.sh` manages `wlan0` to avoid duplicate netplan definitions. Comment out (or remove) the `wifis:` / `wlan0:` block in:
 
-Comment out or remove the `wifis:` / `wlan0:` block from `50-cloud-init.yaml`, leaving any `ethernets:` config intact. Then:
+   ```bash
+   sudo nano /etc/netplan/50-cloud-init.yaml
+   sudo netplan apply
+   ```
 
-```bash
-sudo netplan apply
-```
+2. Install the boot-time Wi-Fi service from this repo:
 
-From this point on, Wi‑Fi is managed by `scripts/network/switch_wifi.sh`.
+   ```bash
+   cd ~/turtlebot3
+   sudo ./scripts/network/install_boot_wifi.sh
+   ```
+
+3. Use the Wi-Fi switch helper for normal network changes:
+
+   ```bash
+   cd ~/turtlebot3
+   sudo ./scripts/network/switch_wifi.sh lab
+   sudo ./scripts/network/switch_wifi.sh gcri
+   sudo ./scripts/network/switch_wifi.sh rpi
+   sudo env TAMU_IDENTITY=<netid> TAMU_PASSWORD='<password>' ./scripts/network/switch_wifi.sh tamu
+   ./scripts/network/switch_wifi.sh status
+   ```
 
 ### Static IPs on the SNS lab Wi‑Fi
 
@@ -273,6 +404,9 @@ sudo ./scripts/network/switch_wifi.sh gcri
 
 # Connect to RaspAP with static IP (per robot/user)
 sudo ./scripts/network/switch_wifi.sh rpi
+
+# Connect to TAMU_WiFi with DHCP (WPA enterprise)
+sudo env TAMU_IDENTITY=<netid> TAMU_PASSWORD='<password>' ./scripts/network/switch_wifi.sh tamu
 
 # Show current Wi‑Fi SSID and wlan0 IP
 ./scripts/network/switch_wifi.sh status
@@ -501,7 +635,7 @@ This stack supports two comms modes, but **fleet runs must use bridges**.
 
 1) `bridged_domains` (**use this**)
    - Central uses `fleet_domain_map.central_domain_id` (default `50` in-repo; override in YAML if needed).
-   - Each robot uses a deterministic per-robot domain from `config/fleet_domain_map.yaml`.
+   - Each robot uses a deterministic per-robot domain from `scripts/env/ros_domain_profile.bash` (robot-side helper).
    - Central starts per-robot domain bridges and keeps explorer/action behavior unchanged.
    - With the default Fast DDS port layout, keep **every** `ROS_DOMAIN_ID` you use (central and each robot) **<= 232** so multicast ports stay valid.
 2) `shared_domain` (legacy compatibility only)
@@ -522,7 +656,7 @@ You can also pass a robot name explicitly if hostnames differ:
 source scripts/env/ros_domain_profile.bash pinky
 ```
 
-Domain assignments are defined on central in `ans-central-computer/config/fleet_domain_map.yaml` and must stay in sync with robot hostnames.
+Domain assignments are defined in `~/central-computer/config/fleet_domain_map.yaml` (`ans-central-computer`) and must stay in sync with robot hostnames.
 
 ### Multi-robot and central computer
 
@@ -541,7 +675,7 @@ For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), robots remain
 If you use `fleet_mode:=auto`, robots may delay Nav2 activation until the central stack publishes required global TF/map links. That delay is expected in auto mode.
 
 To check TF and connectivity from the central PC, run (from `~/central-computer`):  
-`ROS_DOMAIN_ID=50 python3 scripts/diagnostics/diagnose_multirobot_tf.py`  
+`ROS_DOMAIN_ID=<central_domain_id> python3 scripts/diagnostics/diagnose_multirobot_tf.py`  
 After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
 
 #### High-level changes
@@ -645,7 +779,7 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 - **Planner: `source_frame` / frame `map` does not exist / "Could not transform the start or goal pose in the costmap frame":**
   - **Robot only** (no central PC): launch with **`fleet_mode:=false`** (default) and rebuild/install so `standalone_world_map_tf.py` runs. Check logs for `standalone_world_map_tf: Publishing static TF map -> <robot>/map`.
   - **If you use `fleet_mode:=true`:** Nav2 listens on **global** `/tf` and **`/map` must be available on the DDS graph** — start **`start_central.sh`** on the PC (multi-robot: `map_merge`; single-robot: `single_robot_map_relay.py` republishes `/<robot>/map` → `/map`). Running `fleet_mode:=true` on the robot **without** the central stack (no relay, no merge) will fail with missing `map` / costmap data.
-- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnostics/diagnose_multirobot_tf.py` (from `~/central-computer`).
+- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=<central_domain_id> python3 scripts/diagnostics/diagnose_multirobot_tf.py` (from `~/central-computer`).
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
 - **`Starting point in lethal space` / robot gets stuck near inflated obstacles:** The robot Nav2 behavior tree now runs an explicit lethal-escape sequence on planner failure (short backup -> local/global costmap clear -> replan) before falling back to wider recoveries. This does not change costmap area definitions; it changes recovery priority so the robot actively exits lethal cells and retries planning.
@@ -836,16 +970,17 @@ Tip: pair this with the interval printed by `analyze_nav2_bag_stop.py`.
 Use this when ultrasonic topics are publishing but obstacle behavior still looks wrong (flat values, no fusion effect, or Nav2 range-layer starvation).
 
 1. Start bringup and `navigation2_slam.launch.py` as usual.
-1. In another terminal, run:
 
-```bash
-cd ~/turtlebot3
-./scripts/diagnostics/start_ultrasonic_debug_capture.sh
-# Optional explicit robot name:
-# ./scripts/diagnostics/start_ultrasonic_debug_capture.sh blinky
-```
+2. In another terminal, run:
 
-1. Run your obstacle test, then stop capture with Ctrl+C.
+    ```bash
+    cd ~/turtlebot3
+    ./scripts/diagnostics/start_ultrasonic_debug_capture.sh
+    # Optional explicit robot name:
+    # ./scripts/diagnostics/start_ultrasonic_debug_capture.sh blinky
+    ```
+
+3. Run your obstacle test, then stop capture with Ctrl+C.
 
 #### File produced
 
@@ -892,67 +1027,3 @@ cd ~/turtlebot3
 ```
 
 This captures `/map`, local/global costmaps, plan, `cmd_vel`, `odom`, TF, and Nav2 action status so you can align controller intent with obstacle marking over time.
-
-### Ultrasonic triangulated costmap blob (Apr 2026)
-
-For overlapping ultrasonic cones, enable triangulation-to-blob and keep a hard short-range cap:
-
-```bash
-cd ~/turtlebot3
-ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
-  nav2_enable_range_layer:=false \
-  ultrasonic_profile:=safe \
-  ultrasonic_hard_max_range_m:=0.50 \
-  ultrasonic_triangulation_enabled:=true \
-  nav2_enable_ultrasonic_blob_layer:=true \
-  ultrasonic_triangulation_similarity_m:=0.07 \
-  ultrasonic_triangulation_similarity_scale_per_m:=0.18 \
-  ultrasonic_triangulation_similarity_max_m:=0.12 \
-  ultrasonic_triangulation_blob_radius_m:=0.08 \
-  ultrasonic_triangulation_max_age_sec:=0.15 \
-  ultrasonic_triangulation_require_pair_agreement:=true \
-  ultrasonic_disable_scan_fusion_when_blob:=true \
-  ultrasonic_front_emergency_range_m:=0.50 \
-  ultrasonic_front_emergency_required_streak:=1 \
-  ultrasonic_front_emergency_blob_radius_m:=0.20 \
-  ultrasonic_front_emergency_hold_sec:=1.20 \
-  ultrasonic_hard_block_duration_sec:=1.00 \
-  ultrasonic_memory_decay_duration_sec:=8.00 \
-  ultrasonic_triangulation_blob_hold_sec:=0.40 \
-  enable_ultrasonic_cmd_vel_enforcer:=false
-```
-
-Notes:
-
-- `ultrasonic_hard_max_range_m` is enforced for scan fusion and triangulation input.
-- Triangulation publishes `ultrasonic_blob_scan` and `ultrasonic_triangulation_debug`.
-- Nav2 obstacle layers can consume this dedicated blob source via `nav2_enable_ultrasonic_blob_layer:=true` (local costmap only in current hard-then-decay tuning).
-- `ultrasonic_front_emergency_*` adds a close-range front-only fail-safe if pair matching drops.
-- `ultrasonic_hard_block_duration_sec` + `ultrasonic_memory_decay_duration_sec` expose hard-then-decay memory phase telemetry in triangulation debug (`hard_active`, `memory_phase`, `memory_age_sec`).
-- `enable_ultrasonic_cmd_vel_enforcer:=false` is the recommended LiDAR-like mode (costmap-only behavior). Enable only for emergency fallback testing.
-- `ultrasonic_triangulation_blob_hold_sec` prevents brief dropouts from immediately unmarking close obstacles.
-- `ultrasonic_triangulation_similarity_*` supports distance-scaled pair/triple matching (more tolerant far, tighter near).
-- `nav2_retrace_escape` includes decaying retry zones (hard first, then fade) using `nav2_collision_ahead` bursts to prevent repeated straight re-cross attempts while still allowing eventual re-traversal.
-
-#### A/B validation matrix
-
-Use the same route/object placement for all runs:
-
-1. Baseline fusion only:
-   - `ultrasonic_triangulation_enabled:=false`
-   - `nav2_enable_ultrasonic_blob_layer:=false`
-2. Triangulated blob only:
-   - `ultrasonic_triangulation_enabled:=true`
-   - `nav2_enable_ultrasonic_blob_layer:=true`
-   - `ultrasonic_profile:=off`
-3. Triangulated blob + front-only fusion:
-   - `ultrasonic_use_left:=false ultrasonic_use_front:=true ultrasonic_use_right:=false`
-4. Triangulated blob + all fusion (stress):
-   - `ultrasonic_use_left:=true ultrasonic_use_front:=true ultrasonic_use_right:=true`
-
-Compare:
-
-- planner warnings (`Starting point in lethal space`)
-- recovery loop frequency (spin/backup/wait)
-- goal completion rate
-- analyzer triangulation summary (`triangulation_decision` clusters and blob distance stats)

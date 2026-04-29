@@ -64,7 +64,9 @@ def _default_robot_name():
 DEFAULT_ROBOT_NAME = _default_robot_name()
 LIDAR_USB_PORT = '/dev/tb3_lidar'
 
+
 def validate_opencr_port(context, *args, **kwargs):
+    """Warn early when the OpenCR symlink does not resolve to a live tty device."""
     port = LaunchConfiguration('usb_port').perform(context).strip()
     if not port:
         print('[robot.launch.py] WARNING: usb_port is empty; turtlebot3_node may fail to connect to OpenCR.')
@@ -84,7 +86,9 @@ def validate_opencr_port(context, *args, **kwargs):
         print(f'[robot.launch.py] WARNING: OpenCR stat failed for {real_port}: {exc}')
     return []
 
+
 def launch_gps_nodes(context, *args, **kwargs):
+    """Launch up to two GPS serial drivers after filtering invalid or duplicate ports."""
     robot_name = LaunchConfiguration('robot_name').perform(context)
     namespace_override = LaunchConfiguration('namespace').perform(context)
     effective_ns = namespace_override if namespace_override else robot_name
@@ -100,6 +104,8 @@ def launch_gps_nodes(context, *args, **kwargs):
         print('[robot.launch.py] Outdoor mode disabled (outdoor:=false); skipping all GPS serial drivers.')
         return []
 
+    # Keep GPS selection deterministic so outdoor runs do not accidentally open
+    # the same USB-UART twice through two different symlink names.
     configured_ports = [
         (1, gps_port_1, gps_baud_1, gps_enable_1),
         (2, gps_port_2, gps_baud_2, gps_enable_2),
@@ -303,8 +309,12 @@ def generate_launch_description():
             default_value=start_slam_with_normalizer,
             description='Deprecated compatibility flag (no-op; use navigation2_slam.launch.py)'),
 
+        # Everything below runs under the effective robot namespace so sensors,
+        # TF, and the hardware node agree on the same <robot>/... graph.
         PushRosNamespace(effective_namespace),
 
+        # Robot model frames are xacro-prefixed with the same namespace so URDF
+        # links line up with namespaced TF published by bringup and Nav2.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 [ThisLaunchFileDir(), '/turtlebot3_state_publisher.launch.py']),
@@ -312,6 +322,8 @@ def generate_launch_description():
                               'namespace': effective_namespace}.items(),
         ),
 
+        # LiDAR driver stays modular because the fleet can switch between LDS-01,
+        # LDS-02, and LDS-03 while keeping the rest of bringup unchanged.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([lidar_pkg_dir, LDS_LAUNCH_FILE]),
             launch_arguments={'port': lidar_port,
@@ -319,6 +331,8 @@ def generate_launch_description():
                               'namespace': effective_namespace}.items(),
         ),
 
+        # Hardware validation happens before TurtleBot3/OpenCR startup so bad
+        # udev state is visible in the launch log immediately.
         OpaqueFunction(function=validate_opencr_port),
         OpaqueFunction(function=launch_gps_nodes),
 
@@ -347,6 +361,8 @@ def generate_launch_description():
             name='gps_driver',
             condition=IfCondition(outdoor),
             output='screen',
+            # Publish a single fused "fix" topic so downstream localization nodes
+            # do not need to know whether one or two receivers are active.
             parameters=[{'namespace': namespace}],
         ),
         Node(
@@ -366,6 +382,8 @@ def generate_launch_description():
             name='navsat_transform',
             condition=IfCondition(outdoor),
             output='screen',
+            # navsat_transform consumes the fused fix topic produced above and
+            # keeps GPS integration optional for indoor/default runs.
             remappings=[('gps/fix','fix'), ('/tf', 'tf'), ('/tf_static', 'tf_static')],
             parameters=[ekf_param_dir, {
                 'namespace': namespace,

@@ -46,6 +46,8 @@ class MapThrottleRelay(Node):
         max_hz = max(float(max_hz), 0.1)
         period = 1.0 / max_hz
 
+        # Coalesce bursts instead of queueing every update. Nav2 only needs the
+        # newest map/update pair at the relay rate, not every intermediate one.
         self._lock = threading.Lock()
         self._pending_grid: OccupancyGrid | None = None
         self._pending_update: OccupancyGridUpdate | None = None

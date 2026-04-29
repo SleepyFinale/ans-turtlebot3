@@ -25,6 +25,8 @@ DiffDriveController::DiffDriveController(const float wheel_seperation, const flo
 {
   nh_ = std::shared_ptr<::rclcpp::Node>(this, [](::rclcpp::Node *) {});
 
+  // DiffDriveController is a thin wrapper around the odometry helper: the
+  // hardware node owns motor I/O, while this node owns wheel-to-odom math.
   odometry_ = std::make_unique<Odometry>(
     nh_,
     wheel_seperation,

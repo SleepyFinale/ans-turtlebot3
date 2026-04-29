@@ -2,6 +2,8 @@
   turtlebot3_node:
     ros__parameters:
 
+      # Hardware-facing defaults for the Burger base. These are the values the
+      # OpenCR / base driver expects before any fleet-specific launch logic.
       enable_stamped_cmd_vel: false
 
       opencr:
@@ -27,6 +29,8 @@
         ir: 0
         sonar: 0
       ultrasonic:
+        # Basic filtering for the raw OpenCR ultrasonic stream before it reaches
+        # the higher-level scan-fusion / triangulation helpers.
         min_valid_range: 0.02
         max_valid_range: 3.0
         use_jump_filter: true
@@ -41,6 +45,8 @@
     ros__parameters:
 
       odometry:
+        # publish_tf is true here so the robot can run standalone; fleet launch
+        # later decides whether those transforms stay namespaced or get relayed.
         publish_tf: true
         use_imu: true
         frame_id: "odom"

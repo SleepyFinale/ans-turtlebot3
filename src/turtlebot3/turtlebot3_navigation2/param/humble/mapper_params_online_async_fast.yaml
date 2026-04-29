@@ -1,6 +1,8 @@
 slam_toolbox:
   ros__parameters:
 
+    # Core solver configuration. These stay close to slam_toolbox defaults while
+    # the timing / queue knobs below are tuned for Raspberry Pi fleet runs.
     # Plugin params
     solver_plugin: solver_plugins::CeresSolver
     ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
@@ -9,6 +11,8 @@ slam_toolbox:
     ceres_dogleg_type: TRADITIONAL_DOGLEG
     ceres_loss_function: None
 
+    # Frame/topic names here are the logical defaults. The launch file rewrites
+    # the top-level key and frame ids per namespace before starting the node.
     # ROS Parameters
     odom_frame: odom
     map_frame: map
@@ -27,6 +31,9 @@ slam_toolbox:
     #map_start_at_dock: true
 
     debug_logging: false
+    # Queue/timing parameters are intentionally more forgiving than desktop
+    # defaults because SLAM, Nav2, Wi-Fi relays, and RViz can all contend for
+    # CPU on the robot SBC.
     # tf2_ros::MessageFilter queue for scan+odom TF (default in node is 1). At 1, any
     # CPU spike (Nav2 composition, Wi-Fi, map relay) causes "queue is full" scan drops.
     scan_queue_size: 40
@@ -48,7 +55,7 @@ slam_toolbox:
     stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
     enable_interactive_mode: true
 
-    # General Parameters
+    # General scan-matching / pose-graph behavior.
     use_scan_matching: true
     use_scan_barycenter: true
     # Thresholds chosen to keep pose updates reasonably frequent even with small motions
@@ -71,17 +78,18 @@ slam_toolbox:
     loop_match_minimum_response_coarse: 0.5
     loop_match_minimum_response_fine: 0.55
 
-    # Correlation Parameters - Correlation Parameters
+    # Local correlation search used for regular scan matching.
     correlation_search_space_dimension: 0.5
     correlation_search_space_resolution: 0.01
     correlation_search_space_smear_deviation: 0.1 
 
-    # Correlation Parameters - Loop Closure Parameters (larger window for long corridors)
+    # Wider search window for loop closure in long corridors and multi-room runs.
     loop_search_space_dimension: 11.0
     loop_search_space_resolution: 0.05
     loop_search_space_smear_deviation: 0.03
 
-    # Scan Matcher Parameters - higher = trust odometry more, resist large pose corrections
+    # Scan matcher penalties: higher values trust odometry more and resist large
+    # pose jumps from ambiguous map geometry.
     distance_variance_penalty: 1.0
     angle_variance_penalty: 1.5
 

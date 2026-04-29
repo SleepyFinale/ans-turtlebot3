@@ -1,6 +1,9 @@
 /**:
   ekf_filter_node:
     ros__parameters:
+      # These frames are fallback defaults from the bringup package. In normal
+      # fleet use, launch-time namespace handling provides the effective robot
+      # frame names seen on the ROS graph.
       frequency: 4.0
       sensor_timeout: 0.2
       two_d_mode: true
@@ -18,7 +21,8 @@
       base_link_frame: blinky/base_footprint
       world_frame: blinky/odom
 
-      # Wheel odometry input
+      # Wheel odometry is the continuous motion estimate; it stays active indoors
+      # and outdoors and provides the main short-horizon motion signal.
       odom0: odom
       odom0_config: [true,  true,  false,
                       false, false, false,
@@ -28,7 +32,8 @@
       odom0_differential: false
       odom0_relative: true
 
-      # IMU input
+      # IMU supplies orientation / angular velocity so yaw does not drift purely
+      # from wheel integration.
       imu0: imu
       imu0_config: [false, false, false,
                     true,  true,  true,
@@ -39,6 +44,7 @@
       imu0_relative: false
       imu0_remove_gravitational_acceleration: true
 
+      # GPS-derived odometry is optional and only meaningful in outdoor mode.
       odom1: odometry/gps
       odom1_config: [true,  true,  false,
                       false, false, false,
@@ -54,7 +60,9 @@
       gps_topic: fix
       imu_topic: imu
 
-      world_frame: blinky/odom   # match EKF
+      # Keep world_frame aligned with the EKF odom frame so GPS corrections feed
+      # the same local navigation frame instead of introducing a second world.
+      world_frame: blinky/odom
       publish_filtered_gps: true
       wait_for_datum: false
       frequency: 4.0
