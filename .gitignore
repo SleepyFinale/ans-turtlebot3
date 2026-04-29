@@ -3,24 +3,32 @@ build/
 install/
 log/
 logs/
-__pycache__/
 
+# Script/runtime logs
 /scripts/monitor/logs/
-scripts/wifi/netplan-wpa-wlan0.log
+scripts/network/netplan-wpa-wlan0.log
 
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE/editor metadata
 .cursor/
+.vscode/
+.idea/
 
-# sns: generated/sensitive artifacts (safety net at folder root)
-scripts/sns/*.priv
-scripts/sns/*.pem
-scripts/sns/*.pub
-scripts/sns/*.bin
-scripts/sns/*.pcap
-scripts/sns/*.ctx
-scripts/sns/*_test.json
+# security: generated/sensitive artifacts (safety net at folder root)
+scripts/security/*.priv
+scripts/security/*.pem
+scripts/security/*.pub
+scripts/security/*.bin
+scripts/security/*.pcap
+scripts/security/*.ctx
+scripts/security/*_test.json
 
-# sns: all TPM key material lives here (code lives in scripts/sns/auth/)
-scripts/sns/tpm/
+# security: all TPM key material lives here (code lives in scripts/security/auth/)
+scripts/security/tpm/
 
 # Editor swap/backup files
 *.swp

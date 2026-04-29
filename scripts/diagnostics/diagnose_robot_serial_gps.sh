@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Quick robot-side diagnostics for OpenCR/LiDAR/GPS serial mapping and NMEA integrity.
 # Usage:
-#   scripts/debug/diagnose_robot_serial_gps.sh
-#   scripts/debug/diagnose_robot_serial_gps.sh --seconds 8
-#   scripts/debug/diagnose_robot_serial_gps.sh --gps-only
+#   scripts/diagnostics/diagnose_robot_serial_gps.sh
+#   scripts/diagnostics/diagnose_robot_serial_gps.sh --seconds 8
+#   scripts/diagnostics/diagnose_robot_serial_gps.sh --gps-only
 
 set -euo pipefail
 

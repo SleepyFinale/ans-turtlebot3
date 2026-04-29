@@ -1,10 +1,11 @@
 # Raspberry Pi Bottleneck Monitor
 
-This monitoring workflow has two scripts:
+This monitoring workflow has two scripts on the robot:
 
 - `pi_bottleneck_monitor.sh`: collects runtime system and network metrics into CSV.
 - `analyze_log.py`: scans the CSV and reports potential bottlenecks.
-- `plot_bottleneck_metric.py`: plots any selected numeric metric over time.
+- Plotting is done from the central workspace helper:
+  `~/central-computer/scripts/plotting/monitor/plot_bottleneck_metric.py`.
 
 ## Why this is useful for ROS 2 robots
 
@@ -97,24 +98,31 @@ Example with ROS timing analysis:
 ./scripts/monitor/analyze_log.py scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --ros-log scripts/monitor/logs/ros_launch_YYYYmmdd_HHMMSS.log
 ```
 
-## Plot metric over time
+## Plot metric over time (central computer)
 
 List available numeric metrics in a CSV:
 
 ```bash
-./scripts/monitor/plot_bottleneck_metric.py pi_bottleneck_YYYYmmdd_HHMMSS.csv --list-metrics
+cd ~/central-computer
+python3 ~/central-computer/scripts/plotting/monitor/plot_bottleneck_metric.py \
+  ~/turtlebot3/scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --list-metrics
 ```
 
 Create a plot (PNG):
 
 ```bash
-./scripts/monitor/plot_bottleneck_metric.py pi_bottleneck_YYYYmmdd_HHMMSS.csv --metric cpu_usage_pct
+cd ~/central-computer
+python3 ~/central-computer/scripts/plotting/monitor/plot_bottleneck_metric.py \
+  ~/turtlebot3/scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv --metric cpu_usage_pct
 ```
 
 Optional smoothing (rolling average window in samples):
 
 ```bash
-./scripts/monitor/plot_bottleneck_metric.py pi_bottleneck_YYYYmmdd_HHMMSS.csv --metric cpu_usage_pct --rolling-window 5
+cd ~/central-computer
+python3 ~/central-computer/scripts/plotting/monitor/plot_bottleneck_metric.py \
+  ~/turtlebot3/scripts/monitor/logs/pi_bottleneck_YYYYmmdd_HHMMSS.csv \
+  --metric cpu_usage_pct --rolling-window 5
 ```
 
 ## Default threshold policy

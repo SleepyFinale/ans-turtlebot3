@@ -555,7 +555,7 @@ def _launch_setup(context):
     workspace_dir = os.path.expanduser(
         os.environ.get('TURTLEBOT3_WS', '~/turtlebot3'))
     repo_logs_dir = os.path.join(workspace_dir, 'logs')
-    wait_tf_script = os.path.join(workspace_dir, 'scripts', 'wait_for_tf.py')
+    wait_tf_script = os.path.join(workspace_dir, 'scripts', 'env', 'wait_for_tf.py')
     expanded_debug_log_dir = os.path.expanduser(debug_log_dir)
     legacy_debug_root = os.path.expanduser('~/.ros/nav2_debug')
     if expanded_debug_log_dir == legacy_debug_root:

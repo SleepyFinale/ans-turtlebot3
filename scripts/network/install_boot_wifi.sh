@@ -3,7 +3,7 @@
 # Install boot WiFi service for automatic WiFi connection on boot.
 # This script sets up the systemd service to run boot_wifi.sh on startup.
 #
-# Usage: sudo ./scripts/wifi/install_boot_wifi.sh
+# Usage: sudo ./scripts/network/install_boot_wifi.sh
 #
 
 set -e
@@ -13,7 +13,7 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# Get the workspace directory (two levels up from this script: workspace/scripts/wifi)
+# Get the workspace directory (two levels up from this script: workspace/scripts/network)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 SERVICE_NAME="boot-wifi.service"
@@ -25,7 +25,7 @@ echo "Installing boot WiFi service..."
 echo "Workspace directory: $WORKSPACE_DIR"
 
 # Basic sanity check: ensure the target script exists at the expected (post-move) path.
-BOOT_WIFI_SCRIPT="$WORKSPACE_DIR/scripts/wifi/boot_wifi.sh"
+BOOT_WIFI_SCRIPT="$WORKSPACE_DIR/scripts/network/boot_wifi.sh"
 if [ ! -f "$BOOT_WIFI_SCRIPT" ]; then
   echo "Error: Expected boot WiFi script not found at: $BOOT_WIFI_SCRIPT"
   echo "Please ensure you are running this from a valid turtlebot3 checkout."
@@ -66,7 +66,7 @@ echo "To view logs: sudo journalctl -u $SERVICE_NAME"
 echo "To test now: sudo systemctl start $SERVICE_NAME"
 echo ""
 echo "Prereq: only one netplan file should configure wlan0. If \`switch_wifi.sh\` applies lab/gcri/rpi,"
-echo "  remove the wifis/wlan0 block from /etc/netplan/50-cloud-init.yaml (see scripts/wifi/switch_wifi.sh"
+echo "  remove the wifis/wlan0 block from /etc/netplan/50-cloud-init.yaml (see scripts/network/switch_wifi.sh"
 echo "  header), then: sudo netplan apply"
 
 netplan_ok=1

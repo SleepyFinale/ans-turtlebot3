@@ -5,7 +5,7 @@
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
 # Order: lab -> gcri -> rpi (each step runs only if the previous did not get a working gateway ping).
 #
-# Usage: sudo ./scripts/wifi/boot_wifi.sh [robot]
+# Usage: sudo ./scripts/network/boot_wifi.sh [robot]
 #   robot: optional robot name (blinky/pinky/inky/clyde). If not provided, detected from hostname.
 #
 

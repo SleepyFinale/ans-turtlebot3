@@ -22,7 +22,7 @@ import stat
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, LogInfo
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir, PythonExpression
@@ -38,10 +38,7 @@ def _default_robot_name():
     """Default namespace when ``robot_name`` is not passed explicitly.
 
     Use hostname when it identifies the robot; ignore stock image defaults so
-    ``USER`` selects the namespace when ``/etc/hostname`` is still ``ubuntu``.export TURTLEBOT3_MODEL=burger
-source scripts/ros_domain_profile.bash
-source scripts/ros_robot_env.bash
-ros2 launch turtlebot3_bringup robot.launch.py
+    ``USER`` selects the namespace when ``/etc/hostname`` is still ``ubuntu``.
     """
 
     def _short(raw):
@@ -304,7 +301,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'start_slam_with_normalizer',
             default_value=start_slam_with_normalizer,
-            description='If true, also run scripts/start_slam_with_normalizer.sh'),
+            description='Deprecated compatibility flag (no-op; use navigation2_slam.launch.py)'),
 
         PushRosNamespace(effective_namespace),
 
@@ -335,21 +332,13 @@ def generate_launch_description():
             remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
             output='screen'),
 
-        ExecuteProcess(
+        LogInfo(
             condition=IfCondition(start_slam_with_normalizer),
-            cmd=[
-                'bash',
-                os.path.join(
-                    os.path.expanduser('~'),
-                    'turtlebot3',
-                    'scripts',
-                    'start_slam_with_normalizer.sh'
-                )
-            ],
-            output='screen',
-            additional_env={
-                'USE_SIM_TIME': use_sim_time
-            },
+            msg=(
+                '[robot.launch.py] start_slam_with_normalizer is deprecated and now a no-op. '
+                'Launch Nav2 + SLAM explicitly via: '
+                'ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py'
+            ),
         ),
 
         Node(

@@ -2,7 +2,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# This file lives in scripts/debug — workspace root is two levels up (colcon install/).
+# This file lives in scripts/diagnostics — workspace root is two levels up (colcon install/).
 WORKSPACE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 cd "$WORKSPACE_DIR"
@@ -29,7 +29,7 @@ if [[ ! -f "$JSONL_OUT" ]]; then
   fi
 fi
 
-ANALYZE_CMD="python3 scripts/debug/analyze_nav2_bag_stop.py bag-${SESSION_TS}_0.db3 && python3 scripts/debug/analyze_nav2_debug_session.py session-${SESSION_TS}.jsonl"
+ANALYZE_CMD="python3 scripts/diagnostics/analyze_nav2_bag_stop.py bag-${SESSION_TS}_0.db3 && python3 scripts/diagnostics/analyze_nav2_debug_session.py session-${SESSION_TS}.jsonl"
 
 echo "=========================================="
 echo " Nav2 Debug Capture"

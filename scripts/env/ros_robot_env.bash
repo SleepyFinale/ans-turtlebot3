@@ -26,5 +26,5 @@ echo "  Overlay : ${WS_DIR}"
 if [ -n "${ROS_DOMAIN_ID:-}" ]; then
   echo "  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}"
 else
-  echo "  ROS_DOMAIN_ID: (unset; source scripts/ros_domain_profile.bash for bridged mode)"
+  echo "  ROS_DOMAIN_ID: (unset; source scripts/env/ros_domain_profile.bash for bridged mode)"
 fi
