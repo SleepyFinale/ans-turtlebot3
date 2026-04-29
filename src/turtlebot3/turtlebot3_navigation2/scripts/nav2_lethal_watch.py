@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Publish whether robot footprint is currently in a lethal costmap cell."""
+"""Publish whether the robot footprint currently sits in a lethal costmap cell.
+
+This gives higher-level recovery logic a lightweight signal that is cheaper to
+consume than polling the full costmap from every helper node.
+"""
 
 from typing import Optional, Tuple
 
@@ -33,6 +37,9 @@ class Nav2LethalWatch(Node):
         )
         publish_hz = float(self.get_parameter('publish_hz').value)
 
+        # Cache the latest costmap and re-sample it on a timer; TF and costmap
+        # updates are independent, so the lethal-state check should not depend on
+        # either one arriving first.
         self._latest_costmap: Optional[OccupancyGrid] = None
         self._last_state: Optional[bool] = None
 

@@ -1,4 +1,7 @@
-# Used by nav2 slam_launch when slam=True. Normalized scan avoids SLAM "expected N readings" errors.
+# Shared Nav2 profile for the robot-side SLAM + navigation launch.
+# The launch file rewrites frames/topics per robot namespace at runtime, so this
+# YAML should describe logical roles (map, odom, scan_normalized), not hard-code
+# fleet-specific topic remaps.
 slam_toolbox:
   ros__parameters:
     # In namespaced setups, Nav2 runs inside the robot namespace.
@@ -78,7 +81,9 @@ bt_navigator:
     default_server_timeout: 5000
     # Milliseconds — wait_for_service / action server discovery (default 1000).
     wait_for_service_timeout: 5000
-    enable_groot_monitoring: False # Was true, possibly caused TF timestamp mismatches
+    # Leave Groot monitoring off on the robots by default; it adds background BT
+    # traffic without helping normal fleet bringup or debugging.
+    enable_groot_monitoring: False
     groot_zmq_publisher_port: 1666
     groot_zmq_server_port: 1667
     plugin_lib_names:
@@ -136,7 +141,8 @@ controller_server:
     current_goal_checker: "general_goal_checker"
     controller_plugins: ["FollowPath"]
 
-    # Progress checker parameters
+    # Progress checker parameters: tuned to avoid false "stuck" aborts while
+    # still letting nav2_retrace_escape react before the controller gives up.
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       # Make this less trigger-happy in dynamic / cluttered spaces.
@@ -230,9 +236,13 @@ local_costmap:
           raytrace_min_range: 0.12
           obstacle_max_range: 2.5
           obstacle_min_range: 0.12
+      # Static layer consumes either the robot-local SLAM map or a fleet-supplied
+      # world map, depending on how navigation2_slam.launch.py rewrites map_topic.
       static_layer:
         map_subscribe_transient_local: True
-      always_send_full_costmap: False # Was true, possibly caused TF timestamp mismatches
+      # Incremental updates are enough for local execution and reduce bandwidth
+      # / CPU churn compared with republishing the full local costmap every tick.
+      always_send_full_costmap: False
   local_costmap_client:
     ros__parameters:
       use_sim_time: False
@@ -275,7 +285,9 @@ global_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
-        subscribe_to_updates: True  # Enable incremental map updates for faster map updates
+        # Subscribe to incremental updates so live SLAM map changes propagate
+        # without forcing a full-grid republish every cycle.
+        subscribe_to_updates: True
         # Avoid sticky lethal cells during live SLAM updates; latest map update
         # should overwrite stale high-cost artifacts around the robot.
         use_maximum: false
@@ -285,7 +297,9 @@ global_costmap:
         inflation_radius: 0.22
         # Match local: steeper inflation falloff for tight door turns (see local note).
         cost_scaling_factor: 4.0
-      always_send_full_costmap: False # Was true, possibly caused TF timestamp mismatches
+      # Same rationale as local costmap: keep updates incremental unless a tool
+      # explicitly needs full-grid snapshots.
+      always_send_full_costmap: False
   global_costmap_client:
     ros__parameters:
       use_sim_time: False
@@ -314,8 +328,8 @@ planner_server:
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
-      # NavFn can produce: "Failed to create a plan from potential when a legal potential was found"
-      # when maps are frequently resizing/updating (SLAM). SmacPlanner2D is more robust.
+      # SmacPlanner2D tolerates live SLAM map resizing better than the older
+      # NavFn path on this hardware.
       plugin: "nav2_smac_planner/SmacPlanner2D"
       tolerance: 0.25
       downsample_costmap: false
@@ -346,8 +360,8 @@ recoveries_server:
       plugin: "nav2_recoveries/BackUp"
       backup_dist: 0.20
       backup_speed: 0.06
-      # If your robot radius is 0.12, setting this slightly smaller 
-      # allows it to move even if it's "touching" a lethal cell.
+      # Slightly smaller than robot_radius so the backup recovery can still
+      # initiate when inflation barely overlaps the footprint.
       simulated_footprint_radius: 0.10 
     wait:
       plugin: "nav2_recoveries/Wait"

@@ -42,6 +42,8 @@ def generate_launch_description():
         'urdf',
         urdf_file_name)
 
+    # The xacro takes a namespace prefix so every link/joint frame matches the
+    # namespaced TF tree used by multi-robot bringup and Nav2.
     robot_desc = Command([
         'xacro ',
         urdf,
@@ -67,5 +69,7 @@ def generate_launch_description():
             parameters=[
                     rsp_params,
                     {'use_sim_time': use_sim_time}],
+            # Publish onto relative tf topics so robot.launch.py can decide
+            # whether they stay namespaced or get relayed to global /tf later.
             remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')]),
     ])

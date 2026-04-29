@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""
-Subscribe to map (namespaced), publish zlib-compressed serialized OccupancyGrid on map_wire_z.
+"""Publish a compressed OccupancyGrid side channel for fleet map transport.
 
-Fleet mode side channel for lower-bandwidth map transfer to the central computer.
+The normal ``map`` topic stays available locally on the robot. This node adds a
+lower-bandwidth ``map_wire_z`` stream that central-side tooling can bridge more
+cheaply across Wi-Fi.
 """
 
 import zlib
@@ -41,6 +42,8 @@ class MapWireCompressedRepublisher(Node):
         compression_level = int(self.get_parameter('compression_level').value)
         self._compression_level = max(1, min(9, compression_level))
 
+        # Reuse map-style QoS so late subscribers can still receive the latest
+        # full grid without waiting for a fresh SLAM publication.
         self._pub = self.create_publisher(
             UInt8MultiArray, output_topic, MAP_QOS)
         self.create_subscription(

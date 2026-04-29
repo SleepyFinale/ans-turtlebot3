@@ -512,6 +512,8 @@ def _launch_setup(context):
     orca_min_predicted_separation_m_str = LaunchConfiguration(
         'orca_min_predicted_separation_m').perform(context)
 
+    # Normalize the fleet-mode flags once so the rest of the launch can branch
+    # on "standalone robot" vs "robot participating in a central-managed fleet".
     fleet_mode_norm = fleet_mode_str.lower()
     fleet_auto_mode = fleet_mode_norm == 'auto'
     fleet_active = fleet_mode_norm in ('1', 'true', 'yes') or fleet_auto_mode
@@ -573,6 +575,8 @@ def _launch_setup(context):
     actions = []
 
     # --- Laser scan normalizer ---
+    # Keep SLAM/Nav2 fed with a fixed-width scan stream even when the lidar
+    # driver varies beam count slightly between packets.
     ultrasonic_profile = ultrasonic_profile_str.strip().lower()
     if ultrasonic_profile not in ('safe', 'aggressive', 'off'):
         ultrasonic_profile = 'safe'
@@ -663,6 +667,8 @@ def _launch_setup(context):
         output='screen',
     ))
 
+    # Triangulation turns overlapping ultrasonic returns into compact blob scans
+    # that Nav2 can consume through standard obstacle-layer interfaces.
     tri_params = {
             'range_topics': ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'],
             'range_frame_ids': (
@@ -791,7 +797,9 @@ def _launch_setup(context):
             output='screen',
         ))
 
-    # Fleet Nav2 listens on global /tf; robot + SLAM publish on /{ns}/tf only.
+    # Fleet Nav2 listens on global /tf; robot bringup and slam_toolbox still
+    # publish on /{ns}/tf, so a relay is needed whenever central-style TF is
+    # expected but the robot is launched on its own.
     if ns and fleet_active:
         actions.append(Node(
             package='turtlebot3_navigation2',
@@ -820,7 +828,8 @@ def _launch_setup(context):
             output='screen',
         ))
 
-    # Fleet mode: zlib-compressed map side channel for central relay (/{ns}/map_wire_z).
+    # Fleet mode: keep a compressed side channel available for central bridging
+    # so OccupancyGrid traffic does not have to cross Wi-Fi uncompressed.
     if ns and fleet_active:
         actions.append(Node(
             package='turtlebot3_navigation2',
@@ -837,7 +846,8 @@ def _launch_setup(context):
             output='screen',
         ))
 
-    # Throttle merged /map (and updates) for Nav2 when Wi‑Fi is constrained.
+    # Throttle merged /map (and updates) for Nav2 when Wi-Fi is constrained.
+    # This is only used when Nav2 is intentionally consuming the network /map.
     if fleet_map_relay:
         actions.append(Node(
             package='turtlebot3_navigation2',
@@ -897,6 +907,8 @@ def _launch_setup(context):
     ))
 
     # --- Wait for TF ---
+    # Bringup intentionally gates Nav2 on the minimum TF needed for whichever
+    # topology is active, rather than relying on a fixed startup delay.
     wait_tf_env = dict(os.environ)
     wait_tf_env['TF_WAIT_ODOM_ONLY'] = 'true'
     wait_tf_env['TF_WAIT_STABLE_SAMPLES'] = '2'
@@ -929,6 +941,8 @@ def _launch_setup(context):
         actions.append(wait_tf_proc)
 
     # --- Nav2 with frame-rewritten params ---
+    # The params file is rewritten per launch so the same YAML can serve
+    # standalone robots, namespaced fleet robots, and central-map variants.
     def _optional_same_as_local_persist(raw: str):
         s = (raw or '').strip().lower()
         if s in ('', 'auto', 'use_local', 'same'):
@@ -1093,6 +1107,8 @@ def _launch_setup(context):
     ))
 
     # --- Publish whether the robot is in Nav2 lethal costmap space ---
+    # This gives robot- and central-side helpers a cheap signal that the robot
+    # is effectively starting inside inflated / blocked space.
     actions.append(Node(
         package='turtlebot3_navigation2',
         executable='nav2_lethal_watch.py',
@@ -1113,6 +1129,8 @@ def _launch_setup(context):
     ))
 
     # --- Memory-based retrace escape for lethal-start / progress timeout ---
+    # This recovery helper is separate from the BT so it can watch action
+    # status, costmap state, and recent pose history in one place.
     actions.append(Node(
         package='turtlebot3_navigation2',
         executable='nav2_retrace_escape.py',
@@ -1168,6 +1186,8 @@ def _launch_setup(context):
     ))
 
     # --- Hard-stop cmd_vel override from ultrasonic hazard clusters ---
+    # Keep this as a narrow emergency override; normal avoidance should still
+    # come from costmaps and the controller whenever possible.
     actions.append(Node(
         package='turtlebot3_navigation2',
         executable='ultrasonic_cmd_vel_enforcer.py',
@@ -1200,6 +1220,8 @@ def _launch_setup(context):
     ))
 
     # --- ORCA shadow/advisory module ---
+    # This stays decoupled from core Nav2 control so teams can run it in
+    # "shadow" or "advisory" mode without changing the main planner stack.
     actions.append(Node(
         package='turtlebot3_navigation2',
         executable='orca_shadow_advisor.py',

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""
-Triangulate overlapping ultrasonic detections into a compact obstacle blob scan.
+"""Convert short-range ultrasonic returns into compact obstacle blob scans.
+
+The normalizer path handles lidar-like scan fusion. This node complements it by
+publishing dedicated emergency/side blob scans that Nav2 can consume through
+standard obstacle-layer plugins without pretending the ultrasonic sensors are a
+full 360-degree lidar.
 """
 
 import json
@@ -28,6 +32,7 @@ class UltrasonicTriangulationBlob(Node):
     def __init__(self) -> None:
         super().__init__('ultrasonic_triangulation_blob')
 
+        # Detection gating and blob-shape parameters.
         self.declare_parameter('range_topics', ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'])
         self.declare_parameter('range_frame_ids', ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right'])
         self.declare_parameter('base_scan_frame', 'base_scan')
@@ -159,7 +164,8 @@ class UltrasonicTriangulationBlob(Node):
             0.0, float(self.get_parameter('lateral_blob_cancel_min_abs_blob_angle_rad').value)
         )
 
-        # Keep namespaced frame lookup robust.
+        # Keep namespaced frame lookup robust. Most launch files pass short frame
+        # names and let this node prepend the current namespace when needed.
         if len(self._range_frames) != 3:
             self._range_frames = ['ultrasonic_link_left', 'ultrasonic_link_front', 'ultrasonic_link_right']
         ns = self.get_namespace().strip('/')
@@ -172,6 +178,8 @@ class UltrasonicTriangulationBlob(Node):
             else:
                 self._range_frames[i] = f
 
+        # Runtime state tracks the freshest range from each sensor plus a small
+        # amount of memory/replay context for short-lived low obstacles.
         self._last_msg: Dict[int, Optional[Range]] = {0: None, 1: None, 2: None}
         self._last_recv_s: Dict[int, Optional[float]] = {0: None, 1: None, 2: None}
         self._front_emergency_streak = 0
@@ -215,6 +223,8 @@ class UltrasonicTriangulationBlob(Node):
             10,
         )
 
+        # Subscribe to at most three directional ultrasonic streams: left,
+        # front, and right. The downstream logic assumes that ordering.
         for i, topic in enumerate(self._range_topics[:3]):
             self.create_subscription(
                 Range,

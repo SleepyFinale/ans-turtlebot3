@@ -35,6 +35,9 @@ class Nav2RetraceEscape(Node):
     def __init__(self):
         super().__init__('nav2_retrace_escape')
 
+        # Triggers and retreat-shape parameters. These let the robot respond to
+        # both hard lethal-space events and slower "goal is active but the robot
+        # is not making progress" stalls.
         self.declare_parameter('robot_name', '')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('base_frame', 'base_footprint')
@@ -149,6 +152,8 @@ class Nav2RetraceEscape(Node):
             0, int(self.get_parameter('retry_zone_nonrepeated_extra_events_max').value)
         )
 
+        # This node combines action status, TF, and costmap-derived Bool topics
+        # because no single Nav2 server has enough context to choose a retreat.
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -164,6 +169,8 @@ class Nav2RetraceEscape(Node):
         )
         self.active_pub = self.create_publisher(Bool, self.retrace_active_topic, 10)
 
+        # pose_buffer stores recent map-frame samples as
+        # (timestamp, x, y, yaw). Retreat goals are selected from this history.
         self.pose_buffer: Deque[Tuple[float, float, float, float]] = deque()
         self.last_sample_pose: Optional[Tuple[float, float, float]] = None
         self.last_motion_reference_pose: Optional[Tuple[float, float, float]] = None
@@ -227,6 +234,8 @@ class Nav2RetraceEscape(Node):
         now = self._now_sec()
         active = bool(msg.data)
         if active and not self.collision_ahead_active:
+            # Count only rising edges so one sustained controller warning does
+            # not look like repeated retries in the same blocked spot.
             self.collision_ahead_events.append(now)
             pose = self._lookup_pose()
             if pose is not None:

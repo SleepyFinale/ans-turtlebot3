@@ -28,6 +28,8 @@ TurtleBot3::TurtleBot3(const std::string & usb_port)
   RCLCPP_INFO(get_logger(), "Init TurtleBot3 Node Main");
   node_handle_ = std::shared_ptr<::rclcpp::Node>(this, [](::rclcpp::Node *) {});
 
+  // Initialize the OpenCR link first so sensor/device objects can assume the
+  // underlying register block is already readable.
   init_dynamixel_sdk_wrapper(usb_port);
   check_device_status();
 
@@ -85,6 +87,8 @@ void TurtleBot3::check_device_status()
       &reset,
       &sdk_msg);
 
+    // OpenCR gyro calibration is intentionally blocking here. Later odometry
+    // and EKF consumers assume the IMU bias has already settled.
     RCLCPP_INFO(this->get_logger(), "Start Calibration of Gyro");
     rclcpp::sleep_for(std::chrono::seconds(5));
     RCLCPP_INFO(this->get_logger(), "Calibration End");
@@ -176,6 +180,8 @@ void TurtleBot3::add_sensors()
     is_connected_sonar,
     0);
 
+  // The sensor list order matters in practice because later code iterates the
+  // collection to publish/update all attached devices every control cycle.
   sensors_.push_back(
     new sensors::BatteryState(
       node_handle_,

@@ -3,6 +3,8 @@ build/
 install/
 log/
 logs/
+/.ros/
+/.colcon/
 
 # Script/runtime logs
 /scripts/monitor/logs/

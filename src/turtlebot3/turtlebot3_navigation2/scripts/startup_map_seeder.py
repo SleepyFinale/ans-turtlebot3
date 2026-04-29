@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""One-shot startup motion to improve early SLAM map quality."""
+"""Run a short, one-shot cmd_vel sequence to seed the first SLAM map cells.
+
+The launch waits until ``controller_server`` is ACTIVE before moving. That keeps
+the seeding motion aligned with the same command pipeline Nav2 will later use,
+rather than publishing into a stack that is still coming up.
+"""
 
 from __future__ import annotations
 
@@ -34,6 +39,9 @@ class StartupMapSeeder(Node):
 
         forward_speed = float(self.get_parameter('forward_speed_m_s').value)
 
+        # Keep the default motion conservative: enough forward movement to grow
+        # the initial map, then a stop so the robot does not drift away before
+        # operators or the central stack are ready.
         self._segments: List[Segment] = [
             Segment(3.0, forward_speed, 0.0, 'forward'),
             Segment(1.0, 0.0, 0.0, 'stop'),
@@ -48,6 +56,8 @@ class StartupMapSeeder(Node):
         # Using sensor-data (best-effort) here can silently drop all commands.
         cmd_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self._pub = self.create_publisher(Twist, cmd_topic, cmd_qos)
+        # Resolve the lifecycle service explicitly because this node often runs
+        # under a namespace and needs to poll the matching controller instance.
         self._service_name = f'/{self.get_namespace().strip("/")}/{controller_node}/get_state'
         self._service_name = self._service_name.replace('//', '/')
         self._state_client = self.create_client(GetState, self._service_name)

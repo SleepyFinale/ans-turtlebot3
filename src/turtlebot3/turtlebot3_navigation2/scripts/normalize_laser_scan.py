@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""
-Laser scan normalizer to fix variable reading counts for slam_toolbox.
-This node normalizes all scans to have a consistent number of readings (default: 228)
-by interpolating or padding/truncating as needed.
+"""Normalize lidar scans for SLAM/Nav2 and optionally fuse short-range ultrasonic data.
+
+This node serves two roles in the robot stack:
+1. lock every outgoing ``scan_normalized`` message to a stable beam count so
+   slam_toolbox and Nav2 do not see changing scan widths from the lidar driver
+2. fold close ultrasonic evidence into that scan in a conservative, rate-limited
+   way so low obstacles can still influence planning
 """
 
 import rclpy
@@ -20,8 +23,10 @@ from statistics import median
 class LaserScanNormalizer(Node):
     def __init__(self):
         super().__init__('laser_scan_normalizer')
-        
-        # Fixed target fallback/override; auto-detect mode can lock to observed scan lengths.
+
+        # Scan-shape normalization parameters.
+        # The fixed target is still kept as a fallback in case startup scans are
+        # too noisy to auto-lock a trustworthy beam count.
         self.declare_parameter('target_readings', 228)
         self.declare_parameter('auto_target_readings', True)
         self.declare_parameter('auto_target_sample_scans', 30)
@@ -35,7 +40,8 @@ class LaserScanNormalizer(Node):
         # For multi-robot: prefix for frame_id (e.g. "blinky" -> "blinky/base_scan"). Empty = use original.
         self.declare_parameter('frame_id_prefix', '')
         
-        # ultrasonic sensor topics
+        # Ultrasonic fusion parameters. These stay separate from the lidar
+        # normalization path so the robot can disable or tune them independently.
         self.declare_parameter('range_topics', [''])
         self.declare_parameter('range_frame_ids', [''])
         self.declare_parameter('ultrasonic_window_size', 3)
@@ -123,6 +129,7 @@ class LaserScanNormalizer(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
         # Subscribe to the original scan with sensor QoS (best effort, volatile)
+        # to match the typical lidar driver profile and avoid back-pressure.
         from rclpy.qos import qos_profile_sensor_data
         self.subscription = self.create_subscription(
             LaserScan,
@@ -131,6 +138,8 @@ class LaserScanNormalizer(Node):
             qos_profile_sensor_data
         )
 
+        # One subscription per ultrasonic sensor lets the node track age,
+        # filtering, and frame mismatches separately for left/front/right.
         for index, topic in enumerate(self._range_topics):
             self._range_subs.append(
                 self.create_subscription(
@@ -145,7 +154,8 @@ class LaserScanNormalizer(Node):
             self._range_previous_filtered.append(None)
             self._range_last_change_time.append(None)
 
-        # Publish the normalized scan with sensor QoS
+        # Publish with sensor QoS as well so downstream consumers treat this like
+        # a normal live scan topic rather than a latched configuration stream.
         self.publisher = self.create_publisher(
             LaserScan,
             output_topic,
@@ -242,6 +252,8 @@ class LaserScanNormalizer(Node):
             )
             return
 
+        # Choose the most common filtered count, with a tie-break toward the
+        # median, so startup outliers do not permanently skew the target size.
         counts = Counter(filtered)
         selected = sorted(counts.items(), key=lambda kv: (-kv[1], abs(kv[0] - center), kv[0]))[0][0]
         self.target_readings = int(selected)

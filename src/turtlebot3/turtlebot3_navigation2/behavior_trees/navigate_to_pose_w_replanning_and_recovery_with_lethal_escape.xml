@@ -16,6 +16,8 @@
           <RecoveryNode number_of_retries="3" name="ComputePathToPose">
             <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
             <Sequence name="EscapeLethalThenRetryPlan">
+              <!-- Keep the first response local and cheap before escalating to
+                   a full global clear or a robot-side retrace intervention. -->
               <!-- Let nav2_retrace_escape observe planner failure before fallback chain. -->
               <Wait wait_duration="0.4"/>
               <ClearEntireCostmap
@@ -38,6 +40,8 @@
         <RecoveryNode number_of_retries="2" name="FollowPath">
           <FollowPath path="{path}" controller_id="FollowPath"/>
           <Sequence name="ClearLocalThenRetryControl">
+            <!-- Control failures are often transient local-costmap issues, so
+                 retry with a small backup and local clear before broader reset. -->
             <!-- brief delay gives retrace node time to cancel and run reverse leg -->
             <Wait wait_duration="0.3"/>
             <BackUp backup_dist="0.15" backup_speed="0.05"/>
@@ -51,6 +55,8 @@
       <ReactiveFallback name="RecoveryFallback">
         <GoalUpdated/>
         <RoundRobin name="RecoveryActions">
+          <!-- Round-robin avoids getting stuck on one recovery behavior forever;
+               each failure cycles to the next broader fallback. -->
           <ClearEntireCostmap
             name="ClearLocalCostmap-Subtree"
             service_name="local_costmap/clear_entirely_local_costmap"/>

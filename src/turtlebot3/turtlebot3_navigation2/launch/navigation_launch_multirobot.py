@@ -46,6 +46,9 @@ def generate_launch_description():
     # Namespaced nodes default to /<ns>/tf (no world map -> ns/map). Use global
     # /tf from the central relay + map_merge (or single-robot map bridge).
     # Map: merged /map on the central PC when map_merge runs.
+    # All Nav2 servers in this launch are expected to behave like fleet clients:
+    # TF comes from the global graph, while the map topic can be the merged map,
+    # a throttled relay, or a robot-local map chosen by the parent launch.
     remappings = [
         ('tf', '/tf'), ('tf_static', '/tf_static'),
         ('map', nav_map_topic), ('map_updates', nav_map_updates_topic),
@@ -137,6 +140,8 @@ def generate_launch_description():
         **container_common,
     ))
 
+    # Non-composed mode is the safer default on Raspberry Pi: each Nav2 server
+    # gets its own process, which is easier to debug and less fragile on exit.
     load_nodes = GroupAction(
         condition=UnlessCondition(use_composition),
         actions=[
@@ -185,6 +190,8 @@ def generate_launch_description():
                  }]),
         ])
 
+    # Composed mode keeps the same logical stack but loads the servers into one
+    # container for users willing to trade debuggability for lower process count.
     load_composable_nodes = LoadComposableNodes(
         condition=IfCondition(use_composition),
         target_container=container_name_full,
