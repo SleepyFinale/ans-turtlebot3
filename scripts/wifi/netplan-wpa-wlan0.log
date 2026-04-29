@@ -1,0 +1,200 @@
+Apr 17 17:10:08 ubuntu wpa_supplicant[1536]: Successfully initialized wpa_supplicant
+Apr 17 17:10:10 ubuntu wpa_supplicant[1536]: wlan0: Trying to associate with SSID 'SNS'
+Apr 17 17:10:13 ubuntu wpa_supplicant[1536]: wlan0: Associated with 0c:ef:15:f6:83:4f
+Apr 17 17:10:13 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-CONNECTED - Connection to 0c:ef:15:f6:83:4f completed [id=0 id_str=]
+Apr 17 17:10:13 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-SUBNET-STATUS-UPDATE status=0
+Apr 17 17:10:13 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=COUNTRY_IE type=COUNTRY alpha2=US
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:14:31 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-DISCONNECTED bssid=0c:ef:15:f6:83:4f reason=3 locally_generated=1
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:14:31 ubuntu wpa_supplicant[1536]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:14:31 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:14:31 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:14:32 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: Successfully initialized wpa_supplicant
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:32 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:14:32 ubuntu wpa_supplicant[2857]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:14:32 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:14:32 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:14:32 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:14:32 ubuntu wpa_supplicant[2868]: Successfully initialized wpa_supplicant
+Apr 17 17:14:35 ubuntu wpa_supplicant[2868]: wlan0: Trying to associate with SSID 'TAMU_WiFi'
+Apr 17 17:14:45 ubuntu wpa_supplicant[2868]: wlan0: Authentication with dc:b7:ac:a6:32:81 timed out.
+Apr 17 17:14:45 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DISCONNECTED bssid=dc:b7:ac:a6:32:81 reason=3 locally_generated=1
+Apr 17 17:14:45 ubuntu wpa_supplicant[2868]: BSSID dc:b7:ac:a6:32:81 ignore list count incremented to 2, ignoring for 10 seconds
+Apr 17 17:14:45 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:45 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=CORE type=WORLD
+Apr 17 17:14:45 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=USER type=COUNTRY alpha2=US
+Apr 17 17:14:47 ubuntu wpa_supplicant[2868]: wlan0: Trying to associate with SSID 'TAMU_WiFi'
+Apr 17 17:14:57 ubuntu wpa_supplicant[2868]: wlan0: Authentication with dc:b7:ac:a5:5e:a1 timed out.
+Apr 17 17:14:57 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DISCONNECTED bssid=dc:b7:ac:a5:5e:a1 reason=3 locally_generated=1
+Apr 17 17:14:57 ubuntu wpa_supplicant[2868]: BSSID dc:b7:ac:a5:5e:a1 ignore list count incremented to 2, ignoring for 10 seconds
+Apr 17 17:14:57 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:14:57 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=CORE type=WORLD
+Apr 17 17:14:57 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=USER type=COUNTRY alpha2=US
+Apr 17 17:14:59 ubuntu wpa_supplicant[2868]: wlan0: Trying to associate with SSID 'TAMU_WiFi'
+Apr 17 17:15:00 ubuntu wpa_supplicant[2868]: wlan0: Associated with dc:b7:ac:a5:5e:b1
+Apr 17 17:15:00 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-STARTED EAP authentication started
+Apr 17 17:15:00 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-SUBNET-STATUS-UPDATE status=0
+Apr 17 17:15:00 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=COUNTRY_IE type=COUNTRY alpha2=US
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-PROPOSED-METHOD vendor=0 method=13 -> NAK
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-PROPOSED-METHOD vendor=0 method=25
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-METHOD EAP vendor 0 method 25 (PEAP) selected
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-PEER-CERT depth=1 subject='/C=US/O=Internet2/CN=InCommon RSA Server CA 2' hash=87e01cc4dd0c9d92a3dbd49092ff13f9cd387445cdc57e5b984e1b7721b5b029
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-PEER-CERT depth=0 subject='/C=US/ST=Texas/O=Texas A & M University/CN=net.tamu.edu' hash=917c3724cea22e350d2b7787fd0d9286e963313fac62ffb216b2eac79e1b2495
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-PEER-ALT depth=0 DNS:net.tamu.edu
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: EAP-MSCHAPV2: Authentication succeeded
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: EAP-TLV: TLV Result - Success - EAP-TLV/Phase2 Completed
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-EAP-SUCCESS EAP authentication completed successfully
+Apr 17 17:15:02 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-CONNECTED - Connection to dc:b7:ac:a5:5e:b1 completed [id=0 id_str=]
+Apr 17 17:16:01 ubuntu wpa_supplicant[2868]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:16:31 ubuntu wpa_supplicant[2868]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:17:02 ubuntu wpa_supplicant[2868]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:18:02 ubuntu wpa_supplicant[2868]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:18:03 ubuntu wpa_supplicant[2868]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:18:47 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DISCONNECTED bssid=dc:b7:ac:a5:5e:b1 reason=3 locally_generated=1
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:18:47 ubuntu wpa_supplicant[2868]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:18:47 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:18:47 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:18:48 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:18:48 ubuntu wpa_supplicant[3361]: Successfully initialized wpa_supplicant
+Apr 17 17:18:51 ubuntu wpa_supplicant[3361]: wlan0: Trying to associate with SSID 'SNS'
+Apr 17 17:18:53 ubuntu wpa_supplicant[3361]: wlan0: Associated with 0c:ef:15:f6:83:4f
+Apr 17 17:18:53 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-CONNECTED - Connection to 0c:ef:15:f6:83:4f completed [id=0 id_str=]
+Apr 17 17:18:53 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-SUBNET-STATUS-UPDATE status=0
+Apr 17 17:18:53 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=COUNTRY_IE type=COUNTRY alpha2=US
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:24:56 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-DISCONNECTED bssid=0c:ef:15:f6:83:4f reason=3 locally_generated=1
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:24:56 ubuntu wpa_supplicant[3361]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:24:56 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:24:56 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:24:57 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: Successfully initialized wpa_supplicant
+Apr 17 17:24:57 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:24:57 ubuntu wpa_supplicant[4610]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:24:57 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:24:57 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:24:57 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:24:57 ubuntu wpa_supplicant[4621]: Successfully initialized wpa_supplicant
+Apr 17 17:25:00 ubuntu wpa_supplicant[4621]: wlan0: Trying to associate with SSID 'TAMU_WiFi'
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: Associated with dc:b7:ac:a5:5e:b1
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-STARTED EAP authentication started
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-SUBNET-STATUS-UPDATE status=0
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=COUNTRY_IE type=COUNTRY alpha2=US
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-PROPOSED-METHOD vendor=0 method=13 -> NAK
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-PROPOSED-METHOD vendor=0 method=25
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-METHOD EAP vendor 0 method 25 (PEAP) selected
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-PEER-CERT depth=1 subject='/C=US/O=Internet2/CN=InCommon RSA Server CA 2' hash=87e01cc4dd0c9d92a3dbd49092ff13f9cd387445cdc57e5b984e1b7721b5b029
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-PEER-CERT depth=0 subject='/C=US/ST=Texas/O=Texas A & M University/CN=net.tamu.edu' hash=917c3724cea22e350d2b7787fd0d9286e963313fac62ffb216b2eac79e1b2495
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-PEER-ALT depth=0 DNS:net.tamu.edu
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: EAP-MSCHAPV2: Authentication succeeded
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: EAP-TLV: TLV Result - Success - EAP-TLV/Phase2 Completed
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-EAP-SUCCESS EAP authentication completed successfully
+Apr 17 17:25:02 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-CONNECTED - Connection to dc:b7:ac:a5:5e:b1 completed [id=0 id_str=]
+Apr 17 17:26:03 ubuntu wpa_supplicant[4621]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:26:17 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-DISCONNECTED bssid=dc:b7:ac:a5:5e:b1 reason=3 locally_generated=1
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:26:17 ubuntu wpa_supplicant[4621]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:26:17 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:26:17 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:26:18 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:26:18 ubuntu wpa_supplicant[4853]: Successfully initialized wpa_supplicant
+Apr 17 17:26:21 ubuntu wpa_supplicant[4853]: wlan0: Trying to associate with SSID 'SNS'
+Apr 17 17:26:23 ubuntu wpa_supplicant[4853]: wlan0: Associated with 0c:ef:15:f6:83:4f
+Apr 17 17:26:23 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-CONNECTED - Connection to 0c:ef:15:f6:83:4f completed [id=0 id_str=]
+Apr 17 17:26:23 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-SUBNET-STATUS-UPDATE status=0
+Apr 17 17:26:23 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=COUNTRY_IE type=COUNTRY alpha2=US
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:30:37 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-DISCONNECTED bssid=0c:ef:15:f6:83:4f reason=3 locally_generated=1
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:30:37 ubuntu wpa_supplicant[4853]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:30:37 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:30:37 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:30:38 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: Successfully initialized wpa_supplicant
+Apr 17 17:30:38 ubuntu systemd[1]: Stopping WPA supplicant for netplan wlan0...
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: p2p-dev-wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: nl80211: deinit ifname=p2p-dev-wlan0 disabled_11b_rates=0
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: p2p-dev-wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: nl80211: deinit ifname=wlan0 disabled_11b_rates=0
+Apr 17 17:30:38 ubuntu wpa_supplicant[5674]: wlan0: CTRL-EVENT-TERMINATING
+Apr 17 17:30:38 ubuntu systemd[1]: netplan-wpa-wlan0.service: Deactivated successfully.
+Apr 17 17:30:38 ubuntu systemd[1]: Stopped WPA supplicant for netplan wlan0.
+Apr 17 17:30:38 ubuntu systemd[1]: Started WPA supplicant for netplan wlan0.
+Apr 17 17:30:38 ubuntu wpa_supplicant[5688]: Successfully initialized wpa_supplicant
+Apr 17 17:30:41 ubuntu wpa_supplicant[5688]: wlan0: Trying to associate with SSID 'TAMU_WiFi'
+Apr 17 17:30:51 ubuntu wpa_supplicant[5688]: wlan0: Authentication with dc:b7:ac:a6:32:81 timed out.
+Apr 17 17:30:51 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-DISCONNECTED bssid=dc:b7:ac:a6:32:81 reason=3 locally_generated=1
+Apr 17 17:30:51 ubuntu wpa_supplicant[5688]: BSSID dc:b7:ac:a6:32:81 ignore list count incremented to 2, ignoring for 10 seconds
+Apr 17 17:30:51 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-DSCP-POLICY clear_all
+Apr 17 17:30:51 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=CORE type=WORLD
+Apr 17 17:30:51 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=USER type=COUNTRY alpha2=US
+Apr 17 17:30:53 ubuntu wpa_supplicant[5688]: wlan0: Trying to associate with SSID 'TAMU_WiFi'
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: Associated with dc:b7:ac:a5:5e:b1
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-STARTED EAP authentication started
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-SUBNET-STATUS-UPDATE status=0
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-REGDOM-CHANGE init=COUNTRY_IE type=COUNTRY alpha2=US
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-PROPOSED-METHOD vendor=0 method=13 -> NAK
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-PROPOSED-METHOD vendor=0 method=25
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-METHOD EAP vendor 0 method 25 (PEAP) selected
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-PEER-CERT depth=1 subject='/C=US/O=Internet2/CN=InCommon RSA Server CA 2' hash=87e01cc4dd0c9d92a3dbd49092ff13f9cd387445cdc57e5b984e1b7721b5b029
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-PEER-CERT depth=0 subject='/C=US/ST=Texas/O=Texas A & M University/CN=net.tamu.edu' hash=917c3724cea22e350d2b7787fd0d9286e963313fac62ffb216b2eac79e1b2495
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-PEER-ALT depth=0 DNS:net.tamu.edu
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: EAP-MSCHAPV2: Authentication succeeded
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: EAP-TLV: TLV Result - Success - EAP-TLV/Phase2 Completed
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-EAP-SUCCESS EAP authentication completed successfully
+Apr 17 17:30:55 ubuntu wpa_supplicant[5688]: wlan0: CTRL-EVENT-CONNECTED - Connection to dc:b7:ac:a5:5e:b1 completed [id=0 id_str=]
+Apr 17 17:31:55 ubuntu wpa_supplicant[5688]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:32:25 ubuntu wpa_supplicant[5688]: RRM: Ignoring radio measurement request: Not RRM network
+Apr 17 17:32:56 ubuntu wpa_supplicant[5688]: RRM: Ignoring radio measurement request: Not RRM network
