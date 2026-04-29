@@ -3,11 +3,11 @@
 # Switch Raspberry Pi WiFi between SNS (lab), TAMU_WiFi (tamu), GCRI_LAB (gcri), and RaspAP (rpi).
 #
 # Usage:
-#   sudo ./scripts/wifi/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
-#   sudo ./scripts/wifi/switch_wifi.sh tamu      # TAMU_WiFi (DHCP; PEAP + wpa patch per TAMU Pi KB)
-#   sudo ./scripts/wifi/switch_wifi.sh gcri      # GCRI_LAB WiFi with static IP (per robot/user)
-#   sudo ./scripts/wifi/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
-#   ./scripts/wifi/switch_wifi.sh status         # show current WiFi (no sudo)
+#   sudo ./scripts/network/switch_wifi.sh lab       # SNS WiFi with static IP (per robot/user)
+#   sudo ./scripts/network/switch_wifi.sh tamu      # TAMU_WiFi (DHCP; PEAP + wpa patch per TAMU Pi KB)
+#   sudo ./scripts/network/switch_wifi.sh gcri      # GCRI_LAB WiFi with static IP (per robot/user)
+#   sudo ./scripts/network/switch_wifi.sh rpi       # RaspAP WiFi with static IP (per robot/user)
+#   ./scripts/network/switch_wifi.sh status         # show current WiFi (no sudo)
 #
 # Prereq: Remove or comment out the wifis/wlan0 block from
 #   /etc/netplan/50-cloud-init.yaml so this script's 99-wifi-switch.yaml
@@ -22,7 +22,7 @@
 #   Optional: TAMU_CA_CERT=… (PEM) to validate RADIUS cert; TAMU_PASSWORD_NT_HASH=… for password=hash:… (KB 528)
 #             TAMU_DOMAIN_SUFFIX=tamu.edu only if Help Desk says your cert needs domain_suffix_match
 #   Debug:  Save WPA logs next to this script - use _WIFI_SCRIPT_DIR printed by "tamu" errors, or:
-#           sudo journalctl -u netplan-wpa-wlan0.service -b --no-pager | tail -n 200 > scripts/wifi/netplan-wpa-wlan0.log
+#           sudo journalctl -u netplan-wpa-wlan0.service -b --no-pager | tail -n 200 > scripts/network/netplan-wpa-wlan0.log
 # When run with sudo we use SUDO_USER so "blinky" user gets the blinky IPs.
 # Override with: $0 lab blinky / $0 gcri pinky / $0 rpi clyde or ROBOT_NAME=….
 #

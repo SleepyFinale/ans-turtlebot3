@@ -2,8 +2,8 @@
 #
 # Set ROS_DOMAIN_ID using stable per-robot fleet mapping.
 # Usage:
-#   source scripts/ros_domain_profile.bash
-#   source scripts/ros_domain_profile.bash pinky
+#   source scripts/env/ros_domain_profile.bash
+#   source scripts/env/ros_domain_profile.bash pinky
 #
 # Detection order when no explicit arg is provided:
 #   1) ROBOT_NAME / TURTLEBOT3_ROBOT_NAME
@@ -40,7 +40,7 @@ case "${_ros_domain_robot}" in
       return 0 2>/dev/null || exit 0
     fi
     echo "No existing ROS_DOMAIN_ID set; pass robot name explicitly:"
-    echo "  source scripts/ros_domain_profile.bash pinky"
+    echo "  source scripts/env/ros_domain_profile.bash pinky"
     return 1 2>/dev/null || exit 1
     ;;
 esac

@@ -3,8 +3,8 @@
 Probe likely GPS baud rates and score NMEA line quality.
 
 Usage:
-  python3 scripts/debug/probe_gps_baud.py /dev/gps1
-  python3 scripts/debug/probe_gps_baud.py /dev/gps2 --seconds 4
+  python3 scripts/diagnostics/probe_gps_baud.py /dev/gps1
+  python3 scripts/diagnostics/probe_gps_baud.py /dev/gps2 --seconds 4
 """
 
 import argparse

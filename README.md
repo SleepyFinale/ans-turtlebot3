@@ -22,7 +22,7 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 ## Robot fleet reference
 
-Use this table when configuring a given robot. SSH using the hostname or IP for that robot. All robots and any Remote PCs or central computers talking to them should share **ROS_DOMAIN_ID=50**.
+Use this table when configuring a given robot. SSH using the hostname or IP for that robot. For fleet runs, follow the `bridged_domains` policy in [ROS_DOMAIN_ID](#ros_domain_id): robots use per-robot domain assignments and central uses the configured central domain (default `50`).
 
 | Robot  | SNS (lab)             | GCRI_LAB (gcri)      | RaspAP (rpi)        |
 | ------ | --------------------- | -------------------- | ------------------- |
@@ -191,25 +191,28 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
    source ~/turtlebot3/install/setup.bash
    ```
 
-4. **Rebuild scripts:** After the initial build:
-   - **Minimal rebuild (fast):** `scripts/minimal_rebuild.sh` builds only the packages needed for `ros2 launch turtlebot3_bringup robot.launch.py` (turtlebot3_description, turtlebot3_node, ld08_driver, turtlebot3_bringup). No clean step; use for quick iterations.
-   - **Full clean rebuild:** `scripts/clean_rebuild.sh` removes `build/`, `install/`, and `log/`, runs a full colcon build, and sources the workspace. Use `--no-clean` to build without cleaning, or `--source` to only source the existing install.
+4. **Rebuild script:** After the initial build, use `scripts/build/rebuild_common.sh`:
+   - **Minimal rebuild (fast):** `minimal` mode builds only the packages needed for `ros2 launch turtlebot3_bringup robot.launch.py`.
+   - **Full rebuild:** `clean` mode removes `build/`, `install/`, and `log/`, then runs a full colcon build and sources the workspace.
+   - Optional flags for `clean`: `--no-clean` (skip deletion) and `--source` (source only).
 
    ```bash
    cd ~/turtlebot3
-   ./scripts/minimal_rebuild.sh    # fast: only what robot.launch.py needs
-   ./scripts/clean_rebuild.sh      # full clean + build
+   ./scripts/build/rebuild_common.sh minimal
+   ./scripts/build/rebuild_common.sh clean
+   ./scripts/build/rebuild_common.sh clean --no-clean
+   ./scripts/build/rebuild_common.sh clean --source
    ```
 
-   Both scripts use all CPU cores by default; on a 2GB Raspberry Pi, set `COLCON_PARALLEL_JOBS=1` before running. If scripts aren’t executable: `chmod +x ~/turtlebot3/scripts/minimal_rebuild.sh ~/turtlebot3/scripts/clean_rebuild.sh`
+   The script defaults to `COLCON_PARALLEL_JOBS=1` (safe for low-memory SBCs). Override when needed, e.g. `COLCON_PARALLEL_JOBS=2 ./scripts/build/rebuild_common.sh minimal`.
 
 ---
 
-## Wi‑Fi switching and static IPs (`scripts/wifi/switch_wifi.sh`)
+## Wi‑Fi switching and static IPs (`scripts/network/switch_wifi.sh`)
 
 This repo includes a helper script to switch the robot’s Wi‑Fi network and apply consistent IP settings using **netplan**.
 
-- Script path: `scripts/wifi/switch_wifi.sh`
+- Script path: `scripts/network/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
 
 ### One‑time prerequisite
@@ -226,7 +229,7 @@ Comment out or remove the `wifis:` / `wlan0:` block from `50-cloud-init.yaml`, l
 sudo netplan apply
 ```
 
-From this point on, Wi‑Fi is managed by `scripts/wifi/switch_wifi.sh`.
+From this point on, Wi‑Fi is managed by `scripts/network/switch_wifi.sh`.
 
 ### Static IPs on the SNS lab Wi‑Fi
 
@@ -248,7 +251,7 @@ When connected to **GCRI_LAB**, each robot uses the same **last octet** as on th
 
 ### Static IPs on RaspAP rpi Wi-Fi
 
-When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/wifi/switch_wifi.sh`):
+When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/network/switch_wifi.sh`):
 
 - **Blinky** → `10.3.141.158`
 - **Pinky** → `10.3.141.194`
@@ -263,36 +266,36 @@ From `~/turtlebot3` on the robot:
 cd ~/turtlebot3
 
 # Connect to SNS lab Wi‑Fi with static IP (per robot/user)
-sudo ./scripts/wifi/switch_wifi.sh lab
+sudo ./scripts/network/switch_wifi.sh lab
 
 # Connect to GCRI_LAB with static IP (per robot/user)
-sudo ./scripts/wifi/switch_wifi.sh gcri
+sudo ./scripts/network/switch_wifi.sh gcri
 
 # Connect to RaspAP with static IP (per robot/user)
-sudo ./scripts/wifi/switch_wifi.sh rpi
+sudo ./scripts/network/switch_wifi.sh rpi
 
 # Show current Wi‑Fi SSID and wlan0 IP
-./scripts/wifi/switch_wifi.sh status
+./scripts/network/switch_wifi.sh status
 ```
 
 The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly (e.g. when logged in as a different account):
 
 ```bash
-sudo ./scripts/wifi/switch_wifi.sh lab pinky
-sudo ./scripts/wifi/switch_wifi.sh lab blinky
-sudo ./scripts/wifi/switch_wifi.sh lab inky
-sudo ./scripts/wifi/switch_wifi.sh lab clyde
+sudo ./scripts/network/switch_wifi.sh lab pinky
+sudo ./scripts/network/switch_wifi.sh lab blinky
+sudo ./scripts/network/switch_wifi.sh lab inky
+sudo ./scripts/network/switch_wifi.sh lab clyde
 
 # or
-ROBOT_NAME=pinky sudo ./scripts/wifi/switch_wifi.sh lab
-ROBOT_NAME=blinky sudo ./scripts/wifi/switch_wifi.sh lab
-ROBOT_NAME=inky sudo ./scripts/wifi/switch_wifi.sh lab
-ROBOT_NAME=clyde sudo ./scripts/wifi/switch_wifi.sh lab
+ROBOT_NAME=pinky sudo ./scripts/network/switch_wifi.sh lab
+ROBOT_NAME=blinky sudo ./scripts/network/switch_wifi.sh lab
+ROBOT_NAME=inky sudo ./scripts/network/switch_wifi.sh lab
+ROBOT_NAME=clyde sudo ./scripts/network/switch_wifi.sh lab
 ```
 
-If you change the SNS, GCRI_LAB, RaspAP, or TAMU networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/wifi/switch_wifi.sh` accordingly.
+If you change the SNS, GCRI_LAB, RaspAP, or TAMU networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/network/switch_wifi.sh` accordingly.
 
-### Automatic WiFi connection on boot (`scripts/wifi/boot_wifi.sh`)
+### Automatic WiFi connection on boot (`scripts/network/boot_wifi.sh`)
 
 To prevent the robot from being stuck without WiFi when it boots, a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
 
@@ -307,7 +310,7 @@ To prevent the robot from being stuck without WiFi when it boots, a boot-time Wi
 
 ```bash
 cd ~/turtlebot3
-sudo ./scripts/wifi/install_boot_wifi.sh
+sudo ./scripts/network/install_boot_wifi.sh
 ```
 
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
@@ -338,12 +341,12 @@ sudo journalctl -u boot-wifi.service -f
 You can test the boot WiFi script manually (without rebooting):
 
 ```bash
-sudo ./scripts/wifi/boot_wifi.sh
+sudo ./scripts/network/boot_wifi.sh
 # or specify robot name explicitly:
-sudo ./scripts/wifi/boot_wifi.sh pinky
-sudo ./scripts/wifi/boot_wifi.sh blinky
-sudo ./scripts/wifi/boot_wifi.sh inky
-sudo ./scripts/wifi/boot_wifi.sh clyde
+sudo ./scripts/network/boot_wifi.sh pinky
+sudo ./scripts/network/boot_wifi.sh blinky
+sudo ./scripts/network/boot_wifi.sh inky
+sudo ./scripts/network/boot_wifi.sh clyde
 ```
 
 **Disabling boot WiFi (if needed):**
@@ -453,7 +456,7 @@ If `robot.launch.py` shows repeated `nmea_serial_driver` invalid-checksum warnin
 
 ```bash
 cd ~/turtlebot3
-./scripts/debug/diagnose_robot_serial_gps.sh --seconds 8
+./scripts/diagnostics/diagnose_robot_serial_gps.sh --seconds 8
 ```
 
 This checks:
@@ -474,8 +477,8 @@ ros2 launch turtlebot3_bringup robot.launch.py gps_enable_1:=false
 To probe likely baud rates and pick the best candidate:
 
 ```bash
-python3 scripts/debug/probe_gps_baud.py /dev/gps1 --seconds 5
-python3 scripts/debug/probe_gps_baud.py /dev/gps2 --seconds 5
+python3 scripts/diagnostics/probe_gps_baud.py /dev/gps1 --seconds 5
+python3 scripts/diagnostics/probe_gps_baud.py /dev/gps2 --seconds 5
 ```
 
 Then relaunch bringup with explicit baud overrides:
@@ -494,34 +497,52 @@ ros2 launch turtlebot3_bringup robot.launch.py \
 
 ### ROS_DOMAIN_ID
 
-This fleet supports two operating modes:
+This stack supports two comms modes, but **fleet runs must use bridges**.
 
-- `shared_domain` (legacy): all robots + central share one domain (typically `50`)
-- `bridged_domains` (recommended): each robot uses its own domain and central bridges the contract topics/actions
+1) `bridged_domains` (**use this**)
+   - Central uses `fleet_domain_map.central_domain_id` (default `50` in-repo; override in YAML if needed).
+   - Each robot uses a deterministic per-robot domain from `config/fleet_domain_map.yaml`.
+   - Central starts per-robot domain bridges and keeps explorer/action behavior unchanged.
+   - With the default Fast DDS port layout, keep **every** `ROS_DOMAIN_ID` you use (central and each robot) **<= 232** so multicast ports stay valid.
+2) `shared_domain` (legacy compatibility only)
+   - All robots and central share one domain (lab default `50`).
+   - **Not acceptable** for this project's multi-robot SLAM workload (timing, discovery, and load artifacts); do not A/B fleet debugging against shared domain.
 
-For bridged mode, load a robot domain profile before launching bringup/Nav2:
+For bridged mode, load a robot domain profile before launching bringup/Nav2 on each robot:
 
 ```bash
 cd ~/turtlebot3
-source scripts/ros_domain_profile.bash
+source scripts/env/ros_domain_profile.bash
 echo $ROS_DOMAIN_ID
 ```
 
 You can also pass a robot name explicitly if hostnames differ:
 
 ```bash
-source scripts/ros_domain_profile.bash pinky
+source scripts/env/ros_domain_profile.bash pinky
 ```
 
 Domain assignments are defined on central in `ans-central-computer/config/fleet_domain_map.yaml` and must stay in sync with robot hostnames.
 
 ### Multi-robot and central computer
 
+This repository is the **robot side** of a multi-robot SLAM system. Each TurtleBot3 robot runs **bringup + SLAM + Nav2 on the robot SBC**, and the central PC handles coordination (`./scripts/core/start_central.sh`) and visualization (`./scripts/core/start_rviz_central.sh`) from the **`ans-central-computer`** repository.
+
 For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), robots remain namespaced (`/blinky`, `/pinky`, `/inky`, `/clyde`). In `bridged_domains` mode, central bridges only the explicit fleet contract topics/actions; this reduces DDS noise and keeps Nav2 local on each robot.
 
-To check TF and connectivity from the central PC, run (from the central workspace):  
-`ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py`  
-(The script lives in the central repo.) After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
+**Canonical startup sequence (multi-robot default):**
+
+1. **[ROBOT-SBC]** On each robot: run bringup (`robot.launch.py`) in terminal 1.
+2. **[ROBOT-SBC]** On each robot: run SLAM + Nav2 (`navigation2_slam.launch.py`) in terminal 2.
+3. **[CENTRAL-PC]** In `~/central-computer`, run `./scripts/core/start_central.sh`.
+4. **[CENTRAL-PC]** In `~/central-computer`, run `./scripts/core/start_rviz_central.sh`.
+5. In this default flow, central runs `map_merge` and RViz opens in **GLOBAL** mode with `/map`.
+
+If you use `fleet_mode:=auto`, robots may delay Nav2 activation until the central stack publishes required global TF/map links. That delay is expected in auto mode.
+
+To check TF and connectivity from the central PC, run (from `~/central-computer`):  
+`ROS_DOMAIN_ID=50 python3 scripts/diagnostics/diagnose_multirobot_tf.py`  
+After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
 
 #### High-level changes
 
@@ -543,7 +564,7 @@ ros2 launch turtlebot3_bringup robot.launch.py
 
 Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name.
 
-**With the central PC** (`./scripts/start_central.sh` on the remote machine): you **must** enable fleet mode so Nav2 uses global `/tf`, `/tf_static`, and `/map` (merged map from `map_merge`, or a relay of `/<robot>/map` when only one robot runs). Use exactly this pattern:
+**With the central PC** (`~/central-computer/scripts/core/start_central.sh`): you **must** enable fleet mode so Nav2 uses global `/tf`, `/tf_static`, and `/map` (merged map from `map_merge`, or a relay of `/<robot>/map` when only one robot runs). Use exactly this pattern:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -571,21 +592,21 @@ export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
 ```
 
-**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `fleet_mode:=true`, Nav2’s costmaps use **`/map` on the network**: multi-robot **merged** map from the central PC, or **single-robot** relay from `/<robot>/map` started by `start_central.sh`. With `fleet_mode:=false`, the global costmap static layer uses `/<robot>/map` only. On the robot, `navigation2_slam.launch.py` starts a namespaced static TF `map` → `<robot>/map` (identity) in standalone mode so Nav2 and default goals that use frame `map` match SLAM’s `<robot>/map` frame.
+**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `fleet_mode:=true`, Nav2’s costmaps use **`/map` on the network**: multi-robot **merged** map from the central PC, or **single-robot** relay from `/<robot>/map` started by `~/central-computer/scripts/core/start_central.sh`. With `fleet_mode:=false`, the global costmap static layer uses `/<robot>/map` only. On the robot, `navigation2_slam.launch.py` starts a namespaced static TF `map` → `<robot>/map` (identity) in standalone mode so Nav2 and default goals that use frame `map` match SLAM’s `<robot>/map` frame.
 
-**Optional fleet tuning (Wi‑Fi, CPU):** Keep **Chrony** in sync on every Pi and the central PC (`scripts/chrony/setup_chrony_fleet_client.sh`; check with `scripts/chrony/verify_chrony_fleet.sh`). With **`fleet_mode:=true`**, `navigation2_slam.launch.py` supports **`nav2_use_composition:=true`** (default) to run Nav2 in one component container; **`fleet_map_relay_hz:=1.5`** (example) to throttle merged `/map` to `/map_relay` for Nav2; **`nav2_use_local_slam_map:=true`** so Nav2 costmaps use local `/<robot>/map` from SLAM instead of the network `/map` (then send goals in `/<robot>/map` or ensure your central stack transforms goals into that frame); and **`slam_toolbox_mode:=sync`** to try the synchronous SLAM Toolbox node. If both `fleet_map_relay_hz` and `nav2_use_local_slam_map` are set, the relay takes precedence.
+**Optional fleet tuning (Wi‑Fi, CPU):** Keep host clocks in sync on every Pi and the central PC (Chrony or systemd-timesyncd) and verify with `timedatectl`/`chronyc`. With **`fleet_mode:=true`**, `navigation2_slam.launch.py` supports **`nav2_use_composition:=false`** by default (set `true` to run Nav2 in one component container on capable hardware), **`fleet_map_relay_hz:=1.5`** (example) to throttle merged `/map` to `/map_relay` for Nav2, **`nav2_use_local_slam_map:=true`** so Nav2 costmaps use local `/<robot>/map` from SLAM instead of network `/map`, and **`slam_toolbox_mode:=sync`** to try the synchronous SLAM Toolbox node. If both `fleet_map_relay_hz` and `nav2_use_local_slam_map` are set, `nav2_use_local_slam_map` takes precedence and disables the merged-map relay path for Nav2.
 
-> **Note:** The older helper script `scripts/start_slam_with_normalizer.sh` and the global `/scan` + `/scan_normalized` topics are intended for **single-robot** setups only. For typical single-robot and multi-robot operation, prefer `navigation2_slam.launch.py` instead of `start_slam_with_normalizer.sh`.
+> **Note:** The old helper path `scripts/start_slam_with_normalizer.sh` is retired in this workspace. Use `navigation2_slam.launch.py` for SLAM + Nav2; `robot.launch.py` keeps `start_slam_with_normalizer` only as a deprecated no-op compatibility flag.
 
 #### 3. Central computer behavior with namespaces
 
-With this single-domain + namespace setup (standard `robot.launch.py` and `navigation2_slam.launch.py` creating per-robot namespaces automatically):
+With namespaced robots and `bridged_domains` as the fleet policy:
 
-- The central computer also uses **ROS_DOMAIN_ID=50**.
-- Multi-robot tools (RViZ, explorers, custom coordination nodes) can subscribe directly to:
+- The central computer uses the configured central domain (default `50` in `config/fleet_domain_map.yaml` in the central repo).
+- Multi-robot tools (RViz, explorers, custom coordination nodes) can subscribe to bridged fleet topics such as:
   - `/blinky/scan_normalized`, `/blinky/map`, `/blinky/tf`, `/blinky/cmd_vel`
   - `/pinky/…`, `/inky/…`, `/clyde/…`
-- You no longer *need* per-robot domains or domain bridges; robots are distinguished by their namespaces instead of `ROS_DOMAIN_ID`.
+- Fleet behavior remains defined by central bridge contract/domain map configuration rather than a shared single-domain policy.
 
 ### LDS configuration
 
@@ -624,7 +645,7 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 - **Planner: `source_frame` / frame `map` does not exist / "Could not transform the start or goal pose in the costmap frame":**
   - **Robot only** (no central PC): launch with **`fleet_mode:=false`** (default) and rebuild/install so `standalone_world_map_tf.py` runs. Check logs for `standalone_world_map_tf: Publishing static TF map -> <robot>/map`.
   - **If you use `fleet_mode:=true`:** Nav2 listens on **global** `/tf` and **`/map` must be available on the DDS graph** — start **`start_central.sh`** on the PC (multi-robot: `map_merge`; single-robot: `single_robot_map_relay.py` republishes `/<robot>/map` → `/map`). Running `fleet_mode:=true` on the robot **without** the central stack (no relay, no merge) will fail with missing `map` / costmap data.
-- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnose_multirobot_tf.py` (from the central workspace).
+- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=50 python3 scripts/diagnostics/diagnose_multirobot_tf.py` (from `~/central-computer`).
 - **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
 - **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
 - **`Starting point in lethal space` / robot gets stuck near inflated obstacles:** The robot Nav2 behavior tree now runs an explicit lethal-escape sequence on planner failure (short backup -> local/global costmap clear -> replan) before falling back to wider recoveries. This does not change costmap area definitions; it changes recovery priority so the robot actively exits lethal cells and retries planning.
@@ -682,7 +703,7 @@ Robot launch examples:
 
 ```bash
 cd ~/turtlebot3
-./scripts/minimal_rebuild.sh
+./scripts/build/rebuild_common.sh minimal
 
 source /opt/ros/humble/setup.bash
 source ~/turtlebot3/install/setup.bash
@@ -746,9 +767,9 @@ Use this when a robot appears to drive into obstacles even when the assigned goa
 
    ```bash
    cd ~/turtlebot3
-   ./scripts/start_nav2_debug_capture.sh
+   ./scripts/diagnostics/start_nav2_debug_capture.sh
    # Optional explicit robot name:
-   # ./scripts/start_nav2_debug_capture.sh pinky
+   # ./scripts/diagnostics/start_nav2_debug_capture.sh pinky
    ```
 
 #### Files produced
@@ -782,7 +803,7 @@ Use this when a robot appears to "freeze" while Nav2 still has an active goal:
 
 ```bash
 cd ~/turtlebot3
-python3 scripts/analyze_nav2_bag_stop.py \
+python3 scripts/diagnostics/analyze_nav2_bag_stop.py \
   logs/<robot>/bag-YYYYmmdd-HHMMSS \
   --robot <robot> \
   --start <unix_start_s> \
@@ -802,7 +823,7 @@ Use this on the stop interval to pull likely controller/planner reasons from `/r
 
 ```bash
 cd ~/turtlebot3
-python3 scripts/analyze_nav2_bag_rosout.py \
+python3 scripts/diagnostics/analyze_nav2_bag_rosout.py \
   logs/<robot>/bag-YYYYmmdd-HHMMSS \
   --start <interval_start_unix_s> \
   --end <interval_end_unix_s>
@@ -819,9 +840,9 @@ Use this when ultrasonic topics are publishing but obstacle behavior still looks
 
 ```bash
 cd ~/turtlebot3
-./scripts/debug/start_ultrasonic_debug_capture.sh
+./scripts/diagnostics/start_ultrasonic_debug_capture.sh
 # Optional explicit robot name:
-# ./scripts/debug/start_ultrasonic_debug_capture.sh blinky
+# ./scripts/diagnostics/start_ultrasonic_debug_capture.sh blinky
 ```
 
 1. Run your obstacle test, then stop capture with Ctrl+C.
@@ -853,7 +874,7 @@ Use this to get an immediate summary from one ultrasonic diagnostics JSONL:
 
 ```bash
 cd ~/turtlebot3
-python3 scripts/debug/analyze_ultrasonic_debug_session.py \
+python3 scripts/diagnostics/analyze_ultrasonic_debug_session.py \
   logs/<robot>/ultrasonic-session-YYYYmmdd-HHMMSS.jsonl
 ```
 
@@ -865,9 +886,9 @@ For "stopped then drove into bar" episodes, collect a rosbag in parallel with ul
 
 ```bash
 cd ~/turtlebot3
-./scripts/debug/start_nav2_debug_capture.sh
+./scripts/diagnostics/start_nav2_debug_capture.sh
 # Optional explicit robot name:
-# ./scripts/debug/start_nav2_debug_capture.sh blinky
+# ./scripts/diagnostics/start_nav2_debug_capture.sh blinky
 ```
 
 This captures `/map`, local/global costmaps, plan, `cmd_vel`, `odom`, TF, and Nav2 action status so you can align controller intent with obstacle marking over time.

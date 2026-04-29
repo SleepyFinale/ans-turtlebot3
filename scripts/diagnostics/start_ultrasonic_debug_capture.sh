@@ -16,7 +16,7 @@ JSONL_REL="turtlebot3/logs/${ROBOT_NAME}/ultrasonic-session-${SESSION_TS}.jsonl"
 
 mkdir -p "$BASE_OUT"
 
-ANALYZE_CMD="python3 scripts/debug/analyze_ultrasonic_debug_session.py ultrasonic-session-${SESSION_TS}.jsonl"
+ANALYZE_CMD="python3 scripts/diagnostics/analyze_ultrasonic_debug_session.py ultrasonic-session-${SESSION_TS}.jsonl"
 
 echo "=========================================="
 echo " Ultrasonic Debug Capture"
@@ -110,7 +110,7 @@ fi
 
 echo "ERROR: Could not launch ultrasonic_debug_logger via ros2 run or source fallback."
 echo "Try rebuilding and sourcing:"
-echo "  cd ${WORKSPACE_DIR} && ./scripts/clean_rebuild.sh"
+echo "  cd ${WORKSPACE_DIR} && ./scripts/build/rebuild_common.sh clean"
 echo "  source /opt/ros/humble/setup.bash"
 echo "  source ${WORKSPACE_DIR}/install/setup.bash"
 exit 1
