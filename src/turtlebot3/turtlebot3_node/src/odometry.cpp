@@ -41,7 +41,7 @@ Odometry::Odometry(
 
   nh_->declare_parameter<std::string>("odometry.frame_id");
   nh_->declare_parameter<std::string>("odometry.child_frame_id");
-  nh_->declare_parameter<std::string>("namespace");
+  nh_->declare_parameter<std::string>("namespace", "");
 
   nh_->declare_parameter<bool>("odometry.use_imu");
   nh_->declare_parameter<bool>("odometry.publish_tf");
@@ -71,6 +71,8 @@ Odometry::Odometry(
     name_space_,
     std::string(""));
 
+  // The core driver stays namespace-agnostic; odometry frame names are
+  // prefixed here so the same binary works in both single-robot and fleet runs.
   if (name_space_ != "") {
     frame_id_of_odometry_ = name_space_ + "/" + frame_id_of_odometry_;
     child_frame_id_of_odometry_ = name_space_ + "/" + child_frame_id_of_odometry_;
@@ -95,6 +97,8 @@ Odometry::Odometry(
       nh_,
       "imu");
 
+    // Joint states provide wheel travel while IMU provides heading. The
+    // synchronizer keeps those sources close enough in time for fused odometry.
     // connect message filters to synchronizer
     joint_state_imu_sync_->connectInput(*msg_ftr_joint_state_sub_, *msg_ftr_imu_sub_);
 
@@ -186,20 +190,22 @@ void Odometry::publish(const rclcpp::Time & now)
   odom_msg->twist.twist.linear.x = robot_vel_[0];
   odom_msg->twist.twist.angular.z = robot_vel_[2];
 
+  // These covariances are intentionally simple/default-style values. Higher
+  // level localization (EKF / SLAM) is expected to refine the final estimate.
   // TODO(Will Son): Find more accurate covariance.
-  // odom_msg->pose.covariance[0] = 0.05;
-  // odom_msg->pose.covariance[7] = 0.05;
-  // odom_msg->pose.covariance[14] = 1.0e-9;
-  // odom_msg->pose.covariance[21] = 1.0e-9;
-  // odom_msg->pose.covariance[28] = 1.0e-9;
-  // odom_msg->pose.covariance[35] = 0.0872665;
+  odom_msg->pose.covariance[0] = 0.01;
+  odom_msg->pose.covariance[7] = 0.01;
+  odom_msg->pose.covariance[14] = 1.0e9;
+  odom_msg->pose.covariance[21] = 1.0e9;
+  odom_msg->pose.covariance[28] = 1.0e9;
+  odom_msg->pose.covariance[35] = 0.0872665;
 
-  // odom_msg->twist.covariance[0] = 0.001;
-  // odom_msg->twist.covariance[7] = 1.0e-9;
-  // odom_msg->twist.covariance[14] = 1.0e-9;
-  // odom_msg->twist.covariance[21] = 1.0e-9;
-  // odom_msg->twist.covariance[28] = 1.0e-9;
-  // odom_msg->twist.covariance[35] = 0.001;
+  odom_msg->twist.covariance[0] = 0.001;
+  odom_msg->twist.covariance[7] = 1.0e9;
+  odom_msg->twist.covariance[14] = 1.0e9;
+  odom_msg->twist.covariance[21] = 1.0e9;
+  odom_msg->twist.covariance[28] = 1.0e9;
+  odom_msg->twist.covariance[35] = 0.001;
 
   geometry_msgs::msg::TransformStamped odom_tf;
 

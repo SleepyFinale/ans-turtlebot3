@@ -59,6 +59,7 @@ extern const ControlTable extern_control_table;
 class TurtleBot3 : public rclcpp::Node
 {
 public:
+
   typedef struct
   {
     float separation;

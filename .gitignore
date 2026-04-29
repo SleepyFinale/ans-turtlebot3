@@ -2,3 +2,37 @@
 build/
 install/
 log/
+logs/
+/.ros/
+/.colcon/
+
+# Script/runtime logs
+/scripts/monitor/logs/
+scripts/network/netplan-wpa-wlan0.log
+
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE/editor metadata
+.cursor/
+.vscode/
+.idea/
+
+# security: generated/sensitive artifacts (safety net at folder root)
+scripts/security/*.priv
+scripts/security/*.pem
+scripts/security/*.pub
+scripts/security/*.bin
+scripts/security/*.pcap
+scripts/security/*.ctx
+scripts/security/*_test.json
+
+# security: all TPM key material lives here (code lives in scripts/security/auth/)
+scripts/security/tpm/
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~

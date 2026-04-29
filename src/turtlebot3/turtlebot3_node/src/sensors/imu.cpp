@@ -92,6 +92,24 @@ void Imu::publish(
     extern_control_table.imu_linear_acceleration_z.addr,
     extern_control_table.imu_linear_acceleration_z.length);
 
+  imu_msg->orientation_covariance = {
+    0.01, 0,    0,
+    0,    0.01, 0,
+    0,    0,    0.01
+  };
+
+  imu_msg->angular_velocity_covariance = {
+    0.02, 0,    0,
+    0,    0.02, 0,
+    0,    0,    0.02
+  };
+
+  imu_msg->linear_acceleration_covariance = {
+    0.2, 0,   0,
+    0,   0.2, 0,
+    0,   0,   0.2
+  };
+
   auto mag_msg = std::make_unique<sensor_msgs::msg::MagneticField>();
 
   mag_msg->header.frame_id = this->frame_id_;

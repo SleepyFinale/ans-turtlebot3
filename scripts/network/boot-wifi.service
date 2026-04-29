@@ -1,0 +1,23 @@
+[Unit]
+Description=Boot WiFi Connection (SNS, then GCRI_LAB, then RaspAP)
+After=network-pre.target
+Wants=network-pre.target
+Before=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+#
+# NOTE:
+# - This file is primarily a *template/reference* copy kept in the repo.
+# - The recommended installation method is:
+#     sudo ./scripts/network/install_boot_wifi.sh
+#   which writes an authoritative unit to /etc/systemd/system/boot-wifi.service
+#   with the correct absolute workspace path.
+#
+ExecStart=%h/turtlebot3/scripts/network/boot_wifi.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
