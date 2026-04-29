@@ -86,7 +86,7 @@ else
     for pkg in "${MINIMAL_PKGS[@]}"; do
       cache="${WS_DIR}/build/${pkg}/CMakeCache.txt"
       if [[ -f "${cache}" ]]; then
-        home_dir="$(rg -n '^CMAKE_HOME_DIRECTORY:INTERNAL=' "${cache}" | sed -n '1s/^[0-9]*:CMAKE_HOME_DIRECTORY:INTERNAL=//p')"
+        home_dir="$(awk -F= '$1=="CMAKE_HOME_DIRECTORY:INTERNAL"{print $2; exit}' "${cache}")"
         if [[ -n "${home_dir}" && "${home_dir}" != "${WS_DIR}/"* ]]; then
           echo "Removing stale build/${pkg} (CMAKE_HOME_DIRECTORY was ${home_dir})"
           rm -rf "${WS_DIR}/build/${pkg}"
