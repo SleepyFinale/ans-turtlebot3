@@ -167,6 +167,14 @@
 
   <link name="${namespace}imu_link"/>
 
+  <joint name="${namespace}gps_joint" type="fixed">
+    <parent link="${namespace}base_link"/>
+    <child link="${namespace}gps_link"/>
+    <origin xyz="-0.032 0 0.068" rpy="0 0 0"/>
+  </joint>
+
+  <link name="${namespace}gps_link"/>
+
   <joint name="${namespace}scan_joint" type="fixed">
     <parent link="${namespace}base_link"/>
     <child link="${namespace}base_scan"/>
@@ -196,12 +204,28 @@
     </inertial>
   </link>
 
-  <link name="ultrasonic_scan_link"/>
+  <link name="${namespace}ultrasonic_scan_link"/>
 
-  <joint name="ultrasonic_scan_joint" type="fixed">
-    <parent link="base_link"/>
-    <child link="ultrasonic_scan_link"/>
+  <joint name="${namespace}ultrasonic_scan_joint" type="fixed">
+    <parent link="${namespace}base_link"/>
+    <child link="${namespace}ultrasonic_scan_link"/>
     <origin xyz="-0.032 0 0.01" rpy="0 0 0"/>
   </joint>
+
+  <xacro:property name="radius" value="0.12"/>
+
+  <xacro:macro name="ultrasonic_sensor" params="name angle px py pz">
+    <link name="${namespace}ultrasonic_link_${name}"/>
+    <joint name="${namespace}ultrasonic_joint_${name}" type="fixed">
+      <parent link="${namespace}base_link"/>
+      <child link="${namespace}ultrasonic_link_${name}"/>
+      <origin xyz="${px} ${py} ${pz}"
+              rpy="0 0 ${angle}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:ultrasonic_sensor name="left" angle="0.757" px="0.05" py="0.047" pz="0.0"/>
+  <xacro:ultrasonic_sensor name="front" angle="0.0" px="0.05" py="0.0" pz="0.0"/>
+  <xacro:ultrasonic_sensor name="right" angle="-0.757" px="0.05" py="-0.047" pz="0.0"/>
 
 </robot>

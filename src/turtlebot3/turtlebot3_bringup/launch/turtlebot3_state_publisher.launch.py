@@ -42,6 +42,8 @@ def generate_launch_description():
         'urdf',
         urdf_file_name)
 
+    # The xacro takes a namespace prefix so every link/joint frame matches the
+    # namespaced TF tree used by multi-robot bringup and Nav2.
     robot_desc = Command([
         'xacro ',
         urdf,
@@ -49,14 +51,13 @@ def generate_launch_description():
         PythonExpression(['"', namespace, '" + "/" if "', namespace, '" != "" else ""']),
     ])
 
-    # Major refactor of the robot_state_publisher
-    # Reference page: https://github.com/ros2/demos/pull/426
-
     rsp_params = {'robot_description': robot_desc}
 
-    # print (robot_desc) # Printing urdf information.
-
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'namespace',
+            default_value='',
+            description='Robot namespace for multi-robot setups (used for URDF frame prefixing)'),
         DeclareLaunchArgument(
             'use_sim_time',
             default_value='false',
@@ -67,5 +68,8 @@ def generate_launch_description():
             output='screen',
             parameters=[
                     rsp_params,
-                    {'use_sim_time': use_sim_time}])
+                    {'use_sim_time': use_sim_time}],
+            # Publish onto relative tf topics so robot.launch.py can decide
+            # whether they stay namespaced or get relayed to global /tf later.
+            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')]),
     ])

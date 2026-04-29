@@ -16,6 +16,16 @@
   <author email="willson@robotis.com">Will Son</author>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>map_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>

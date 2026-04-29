@@ -19,8 +19,10 @@
 
 #include <memory>
 #include <string>
+#include <array>
 
-#include <sensor_msgs/msg/laser_scan.hpp>
+#include <sensor_msgs/msg/range.hpp>
+
 
 #include "turtlebot3_node/sensors/sensors.hpp"
 
@@ -36,16 +38,27 @@ public:
   explicit Ultrasonic(
     std::shared_ptr<rclcpp::Node> & nh,
     const std::string & ultrasonic_topic_name = "ultrasonic",
-    const std::string & frame_id = "ultrasonic_scan_link");
+    const std::string & frame_id = "ultrasonic_link");
 
   void publish(
     const rclcpp::Time & now,
     std::shared_ptr<DynamixelSDKWrapper> & dxl_sdk_wrapper) override;
 
 private:
-  rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr ultrasonic_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_left_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_front_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_right_pub_;
 
   std::string name_space_;
+  float min_valid_range_ = 0.02f;
+  float max_valid_range_ = 3.0f;
+  float max_delta_per_cycle_ = 0.35f;
+  int max_hold_cycles_ = 12;
+  float release_step_per_cycle_ = 0.08f;
+  bool use_jump_filter_ = true;
+  std::array<float, 3> range_offsets_{{0.0f, 0.0f, 0.0f}};  // [left, front, right]
+  std::array<float, 3> previous_ranges_{{-1.0f, -1.0f, -1.0f}};
+  std::array<int, 3> hold_cycles_{{0, 0, 0}};
 };
 }  // namespace sensors
 }  // namespace turtlebot3
