@@ -46,12 +46,14 @@ Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
 
 Use this table when configuring a given robot. SSH using the hostname or IP for that robot. For fleet runs, follow the `bridged_domains` policy in [ROS_DOMAIN_ID](#ros_domain_id): robots use per-robot domain assignments and central uses the configured central domain (default `50`).
 
-| Robot  | SNS (lab)             | GCRI_LAB (gcri)      | RaspAP (rpi)        |
-| ------ | --------------------- | -------------------- | ------------------- |
-| Blinky | blinky@192.168.0.158  | blinky@192.168.50.158| blinky@10.3.141.158 |
-| Pinky  | pinky@192.168.0.194   | pinky@192.168.50.194 | pinky@10.3.141.194  |
-| Inky   | inky@192.168.0.139    | inky@192.168.50.139  | inky@10.3.141.139   |
-| Clyde  | clyde@192.168.0.236   | clyde@192.168.50.236 | clyde@10.3.141.236  |
+| Robot  | Azure (hotspot)           | TAMU_WiFi (DHCP) |
+| ------ | ------------------------- | ---------------- |
+| Blinky | blinky@172.20.10.13       | `blinky@<dhcp-ip>` / hostname |
+| Pinky  | pinky@172.20.10.14        | `pinky@<dhcp-ip>` / hostname |
+| Inky   | inky@172.20.10.15         | `inky@<dhcp-ip>` / hostname |
+| Clyde  | clyde@172.20.10.16        | `clyde@<dhcp-ip>` / hostname |
+
+On boot the Pi tries **Azure** (phone hotspot, static IPs above) first, then falls back to **TAMU_WiFi** (WPA Enterprise, DHCP). For TAMU, use hostname when mDNS/DNS works, or `./scripts/network/switch_wifi.sh status` / `ip -4 addr show wlan0` on the Pi for the current address.
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
@@ -173,11 +175,11 @@ sudo reboot
 
 ### SSH in from a Remote PC
 
-After reboot, SSH to the SBC. Use the **username@IP** (or hostname) for the robot you’re setting up—see the [Robot fleet reference](#robot-fleet-reference) table. For example, for Pinky on the SNS lab Wi‑Fi: `pinky@192.168.0.194`.
+After reboot, SSH to the SBC. Use the **username@IP** (or hostname) for the robot you’re setting up—see the [Robot fleet reference](#robot-fleet-reference) table. For example, for Pinky on Azure: `ssh pinky@172.20.10.14`; on TAMU_WiFi: `ssh pinky@<dhcp-ip>`.
 
 ```bash
 ssh <USERNAME>@<ROBOT_IP>
-# e.g. ssh pinky@192.168.0.194
+# e.g. ssh pinky@172.20.10.14
 ```
 
 If you need to find the IP on the SBC, Robotis suggests installing net-tools:
@@ -326,12 +328,13 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
 
 ---
 
-## Wi‑Fi switching and static IPs (`scripts/network/switch_wifi.sh`)
+## Wi‑Fi switching (`scripts/network/switch_wifi.sh`)
 
-This repo includes a helper script to switch the robot’s Wi‑Fi network and apply consistent IP settings using **netplan**.
+This repo includes a helper script to switch the robot’s Wi‑Fi between the **Azure** hotspot and **TAMU_WiFi** using **netplan**.
 
 - Script path: `scripts/network/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
+- Default TAMU NetID identity is built into the script (`schen08`); override with `TAMU_IDENTITY` / `TAMU_PASSWORD` if needed.
 
 ### Recommended right after cloning this repo
 
@@ -355,39 +358,21 @@ After cloning `~/turtlebot3` on a robot, set up Wi-Fi management in this order:
 
    ```bash
    cd ~/turtlebot3
-   sudo ./scripts/network/switch_wifi.sh lab
-   sudo ./scripts/network/switch_wifi.sh gcri
-   sudo ./scripts/network/switch_wifi.sh rpi
-   sudo env TAMU_IDENTITY=<netid> TAMU_PASSWORD='<password>' ./scripts/network/switch_wifi.sh tamu
+   sudo ./scripts/network/switch_wifi.sh azure
+   sudo ./scripts/network/switch_wifi.sh tamu
    ./scripts/network/switch_wifi.sh status
    ```
 
-### Static IPs on the SNS lab Wi‑Fi
+### Static IPs on the Azure hotspot
 
-When connected to the **SNS** lab Wi‑Fi, each robot uses a fixed IP (based on the Linux user account running the script):
+When connected to **Azure**, each robot uses a fixed IP (based on the Linux user account running the script):
 
-- **Blinky** (user `blinky`) → `192.168.0.158`
-- **Pinky** (user `pinky`) → `192.168.0.194`
-- **Inky** (user `inky`) → `192.168.0.139`
-- **Clyde** (user `clyde`) → `192.168.0.236`
+- **Blinky** (user `blinky`) → `172.20.10.13`
+- **Pinky** (user `pinky`) → `172.20.10.14`
+- **Inky** (user `inky`) → `172.20.10.15`
+- **Clyde** (user `clyde`) → `172.20.10.16`
 
-### Static IPs on the GCRI_LAB gcri Wi‑Fi
-
-When connected to **GCRI_LAB**, each robot uses the same **last octet** as on the SNS lab network, on subnet `192.168.50.0/24`:
-
-- **Blinky** (user `blinky`) → `192.168.50.158`
-- **Pinky** (user `pinky`) → `192.168.50.194`
-- **Inky** (user `inky`) → `192.168.50.139`
-- **Clyde** (user `clyde`) → `192.168.50.236`
-
-### Static IPs on RaspAP rpi Wi-Fi
-
-When connected to **RaspAP** (e.g. Raspberry Pi hotspot), each robot uses a fixed IP (see `scripts/network/switch_wifi.sh`):
-
-- **Blinky** → `10.3.141.158`
-- **Pinky** → `10.3.141.194`
-- **Inky** → `10.3.141.139`
-- **Clyde** → `10.3.141.236`
+Gateway: `172.20.10.1`, prefix `/28`.
 
 ### Usage
 
@@ -396,49 +381,41 @@ From `~/turtlebot3` on the robot:
 ```bash
 cd ~/turtlebot3
 
-# Connect to SNS lab Wi‑Fi with static IP (per robot/user)
-sudo ./scripts/network/switch_wifi.sh lab
+# Connect to Azure hotspot with static IP (per robot/user)
+sudo ./scripts/network/switch_wifi.sh azure
 
-# Connect to GCRI_LAB with static IP (per robot/user)
-sudo ./scripts/network/switch_wifi.sh gcri
-
-# Connect to RaspAP with static IP (per robot/user)
-sudo ./scripts/network/switch_wifi.sh rpi
-
-# Connect to TAMU_WiFi with DHCP (WPA enterprise)
-sudo env TAMU_IDENTITY=<netid> TAMU_PASSWORD='<password>' ./scripts/network/switch_wifi.sh tamu
+# Connect to TAMU_WiFi with DHCP (WPA enterprise; credentials default in script)
+sudo ./scripts/network/switch_wifi.sh tamu
 
 # Show current Wi‑Fi SSID and wlan0 IP
 ./scripts/network/switch_wifi.sh status
 ```
 
-The script uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly (e.g. when logged in as a different account):
+The Azure mode uses the invoking user (`SUDO_USER`/`$USER`) to choose the static IP. To override explicitly:
 
 ```bash
-sudo ./scripts/network/switch_wifi.sh lab pinky
-sudo ./scripts/network/switch_wifi.sh lab blinky
-sudo ./scripts/network/switch_wifi.sh lab inky
-sudo ./scripts/network/switch_wifi.sh lab clyde
-
+sudo ./scripts/network/switch_wifi.sh azure pinky
 # or
-ROBOT_NAME=pinky sudo ./scripts/network/switch_wifi.sh lab
-ROBOT_NAME=blinky sudo ./scripts/network/switch_wifi.sh lab
-ROBOT_NAME=inky sudo ./scripts/network/switch_wifi.sh lab
-ROBOT_NAME=clyde sudo ./scripts/network/switch_wifi.sh lab
+ROBOT_NAME=pinky sudo ./scripts/network/switch_wifi.sh azure
 ```
 
-If you change the SNS, GCRI_LAB, RaspAP, or TAMU networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/network/switch_wifi.sh` accordingly.
+Optional TAMU overrides:
+
+```bash
+sudo env TAMU_IDENTITY=<netid> TAMU_PASSWORD='<password>' ./scripts/network/switch_wifi.sh tamu
+```
+
+If you change the Azure or TAMU networks (SSID, password, gateway, or IP scheme), update the constants at the top of `scripts/network/switch_wifi.sh` accordingly.
 
 ### Automatic WiFi connection on boot (`scripts/network/boot_wifi.sh`)
 
-To prevent the robot from being stuck without WiFi when it boots, a boot-time WiFi connection script automatically attempts to connect to WiFi networks in priority order.
+To prevent the robot from being stuck without WiFi when it boots, a boot-time WiFi connection script automatically attempts networks in priority order.
 
 **Behavior:**
 
-- On boot, the robot **first attempts to connect to SNS (lab)**.
-- If that fails, it tries **GCRI_LAB (gcri)**.
-- If that fails, it tries **RaspAP (rpi)**.
-- This order helps the robot come up on lab WiFi before falling back to local hotspot WiFi.
+- On boot, the robot **first attempts to connect to Azure** (hotspot).
+- If that fails, it tries **TAMU_WiFi**.
+- Each attempt waits up to 30 seconds (Azure: ping `172.20.10.1`; TAMU: DHCP IP plus reachable gateway or `8.8.8.8`).
 
 **Installation (one-time setup per robot):**
 
@@ -449,10 +426,9 @@ sudo ./scripts/network/install_boot_wifi.sh
 
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
 
-- Detects the robot name from the hostname
-- Attempts SNS first (waits up to 30 seconds per network)
-- Then GCRI_LAB, then RaspAP, each with the same timeout behavior
-- Logs all connection attempts to the systemd journal
+- Detects the robot name from the hostname (needed for Azure static IP)
+- Attempts Azure first, then TAMU_WiFi
+- Logs connection attempts to the systemd journal
 
 **Checking boot WiFi status:**
 

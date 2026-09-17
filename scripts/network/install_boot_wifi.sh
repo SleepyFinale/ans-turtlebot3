@@ -35,7 +35,7 @@ fi
 # Create the service file with the correct workspace path
 cat > "$TARGET_SERVICE" << EOF
 [Unit]
-Description=Boot WiFi Connection (lab, then gcri, then rpi)
+Description=Boot WiFi Connection (Azure, then TAMU_WiFi)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target
@@ -65,7 +65,7 @@ echo "To check status: sudo systemctl status $SERVICE_NAME"
 echo "To view logs: sudo journalctl -u $SERVICE_NAME"
 echo "To test now: sudo systemctl start $SERVICE_NAME"
 echo ""
-echo "Prereq: only one netplan file should configure wlan0. If \`switch_wifi.sh\` applies lab/gcri/rpi,"
+echo "Prereq: only one netplan file should configure wlan0. If \`switch_wifi.sh\` applies azure/tamu,"
 echo "  remove the wifis/wlan0 block from /etc/netplan/50-cloud-init.yaml (see scripts/network/switch_wifi.sh"
 echo "  header), then: sudo netplan apply"
 
