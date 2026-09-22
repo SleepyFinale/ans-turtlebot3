@@ -1,0 +1,64 @@
+////
+//// Central PC: Zenoh router + ros2dds bridge for one robot domain.
+//// Injects robot topics into the robot ROS_DOMAIN_ID on localhost so
+//// existing domain_bridge (robot domain -> central 50) keeps working.
+//// DDS stays on localhost; Zenoh crosses Tailscale/TAMU_WiFi.
+////
+//// NOTE: Do not wrap allow patterns in ^...$ — zenoh-plugin-ros2dds already
+//// anchors regexes, and "^/foo$" becomes "^^/foo$$" (matches nothing).
+////
+{
+  mode: "router",
+  listen: {
+    endpoints: ["tcp/0.0.0.0:7447"],
+  },
+  // Prefer Tailscale/unicast; disable multicast scouting on hostile Wi-Fi.
+  scouting: {
+    multicast: { enabled: false },
+  },
+  plugins: {
+    ros2dds: {
+      domain: 80,
+      ros_localhost_only: true,
+      nodename: "zenoh_bridge_central_clyde",
+      allow: {
+        publishers: [
+          "/clyde/map",
+          "/clyde/map_wire_z",
+          "/clyde/tf",
+          "/clyde/tf_static",
+          "/clyde/nav2_collision_ahead",
+          "/clyde/nav2_retrace_active",
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
+        ],
+        subscribers: [
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
+        ],
+        service_servers: [
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
+        ],
+        service_clients: [
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
+        ],
+        action_servers: [
+          "/clyde/navigate_to_pose",
+          "/clyde/compute_path_to_pose",
+        ],
+        action_clients: [
+          "/clyde/navigate_to_pose",
+          "/clyde/compute_path_to_pose",
+        ],
+      },
+      pub_max_frequencies: [
+        "/clyde/map=1",
+        "/clyde/map_wire_z=1",
+        "/clyde/tf=10",
+        "/clyde/tf_static=1",
+      ],
+    },
+  },
+}
