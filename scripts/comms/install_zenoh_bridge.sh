@@ -13,7 +13,7 @@
 # Installs to: <workspace>/third_party/zenoh/zenoh-bridge-ros2dds
 # Symlink:     ~/.local/bin/zenoh-bridge-ros2dds
 #
-# Use the SAME ZENOH_BRIDGE_VERSION on central and Clyde.
+# Use the SAME ZENOH_BRIDGE_VERSION on central and every robot.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

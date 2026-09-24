@@ -1,0 +1,64 @@
+////
+//// Robot Zenoh client + ros2dds bridge (any fleet robot).
+//// Placeholders: __ROBOT__, __DOMAIN__, __CENTRAL_HOST__
+////
+//// Robot->central sensor topics: publishers ONLY.
+//// Do NOT put map/tf under subscribers — that creates Zenoh→ROS
+//// reinjection and stale/looped TF (map→odom "Transform data too old").
+//// Actions stay bidirectional.
+////
+{
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/__CENTRAL_HOST__:7447"],
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+  plugins: {
+    ros2dds: {
+      domain: __DOMAIN__,
+      // false: discover robot Nav2/SLAM nodes without ROS_LOCALHOST_ONLY
+      ros_localhost_only: false,
+      nodename: "zenoh_bridge___ROBOT__",
+      allow: {
+        publishers: [
+          "/__ROBOT__/map",
+          "/__ROBOT__/map_wire_z",
+          "/__ROBOT__/tf",
+          "/__ROBOT__/tf_static",
+          "/__ROBOT__/nav2_collision_ahead",
+          "/__ROBOT__/nav2_retrace_active",
+          "/__ROBOT__/navigate_to_pose/_action/.*",
+          "/__ROBOT__/compute_path_to_pose/_action/.*",
+        ],
+        subscribers: [
+          "/__ROBOT__/navigate_to_pose/_action/.*",
+          "/__ROBOT__/compute_path_to_pose/_action/.*",
+        ],
+        service_servers: [
+          "/__ROBOT__/navigate_to_pose/_action/.*",
+          "/__ROBOT__/compute_path_to_pose/_action/.*",
+        ],
+        service_clients: [
+          "/__ROBOT__/navigate_to_pose/_action/.*",
+          "/__ROBOT__/compute_path_to_pose/_action/.*",
+        ],
+        action_servers: [
+          "/__ROBOT__/navigate_to_pose",
+          "/__ROBOT__/compute_path_to_pose",
+        ],
+        action_clients: [
+          "/__ROBOT__/navigate_to_pose",
+          "/__ROBOT__/compute_path_to_pose",
+        ],
+      },
+      pub_max_frequencies: [
+        "/__ROBOT__/map=1",
+        "/__ROBOT__/map_wire_z=1",
+        "/__ROBOT__/tf=10",
+        "/__ROBOT__/tf_static=1",
+      ],
+    },
+  },
+}
