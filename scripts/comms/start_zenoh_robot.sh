@@ -64,7 +64,12 @@ PY
 
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-$DOMAIN_ID}"
-export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
+# Do NOT default ROS_LOCALHOST_ONLY=1 on the robot. CycloneDDS localhost mode
+# has a tiny MaxAutoParticipantIndex; Nav2/SLAM + helpers exhaust it
+# ("Failed to find a free participant index for domain N").
+# Leave unset so local nodes use normal Cyclone discovery; Zenoh still
+# tunnels only the allow-listed topics over Tailscale.
+unset ROS_LOCALHOST_ONLY
 export ROS_DISTRO="${ROS_DISTRO:-humble}"
 if [[ -f /opt/ros/${ROS_DISTRO}/setup.bash ]]; then
   # shellcheck disable=SC1090
@@ -72,6 +77,7 @@ if [[ -f /opt/ros/${ROS_DISTRO}/setup.bash ]]; then
   source "/opt/ros/${ROS_DISTRO}/setup.bash"
   set -u
   export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+  unset ROS_LOCALHOST_ONLY
 fi
 
 echo "Starting Zenoh robot bridge"
@@ -82,6 +88,7 @@ echo "  config:   ${RUNTIME_CONFIG}"
 echo "  domain:   ${ROS_DOMAIN_ID}"
 echo "  RMW:      ${RMW_IMPLEMENTATION}"
 echo "  distro:   ${ROS_DISTRO}"
+echo "  ROS_LOCALHOST_ONLY: (unset — required for Nav2/SLAM participant count)"
 echo ""
 
 exec "${ZENOH_BIN}" -c "$RUNTIME_CONFIG"

@@ -1,12 +1,15 @@
 ////
 //// Clyde (robot): Zenoh client + ros2dds bridge.
 //// Connects to central Tailscale host (default MagicDNS: reverie).
-//// DDS stays on localhost; only Zenoh crosses TAMU_WiFi.
+////
+//// Robot->central sensor topics: publishers ONLY.
+//// Do NOT put map/tf under subscribers here — that creates Zenoh→ROS
+//// reinjection and stale/looped TF (map→odom "Transform data too old").
+//// Actions stay bidirectional.
 ////
 {
   mode: "client",
   connect: {
-    // Overridden by start_zenoh_robot.sh first argument host -> tcp/<host>:7447
     endpoints: ["tcp/reverie:7447"],
   },
   scouting: {
@@ -15,45 +18,46 @@
   plugins: {
     ros2dds: {
       domain: 80,
-      ros_localhost_only: true,
+      // false: discover robot Nav2/SLAM nodes without ROS_LOCALHOST_ONLY
+      ros_localhost_only: false,
       nodename: "zenoh_bridge_clyde",
       allow: {
         publishers: [
-          "^/clyde/map$",
-          "^/clyde/map_wire_z$",
-          "^/clyde/tf$",
-          "^/clyde/tf_static$",
-          "^/clyde/nav2_collision_ahead$",
-          "^/clyde/nav2_retrace_active$",
-          "^/clyde/navigate_to_pose/_action/.*",
-          "^/clyde/compute_path_to_pose/_action/.*",
+          "/clyde/map",
+          "/clyde/map_wire_z",
+          "/clyde/tf",
+          "/clyde/tf_static",
+          "/clyde/nav2_collision_ahead",
+          "/clyde/nav2_retrace_active",
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
         ],
         subscribers: [
-          "^/clyde/navigate_to_pose/_action/.*",
-          "^/clyde/compute_path_to_pose/_action/.*",
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
         ],
         service_servers: [
-          "^/clyde/navigate_to_pose/_action/.*",
-          "^/clyde/compute_path_to_pose/_action/.*",
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
         ],
         service_clients: [
-          "^/clyde/navigate_to_pose/_action/.*",
-          "^/clyde/compute_path_to_pose/_action/.*",
+          "/clyde/navigate_to_pose/_action/.*",
+          "/clyde/compute_path_to_pose/_action/.*",
         ],
         action_servers: [
-          "^/clyde/navigate_to_pose$",
-          "^/clyde/compute_path_to_pose$",
+          "/clyde/navigate_to_pose",
+          "/clyde/compute_path_to_pose",
         ],
         action_clients: [
-          "^/clyde/navigate_to_pose$",
-          "^/clyde/compute_path_to_pose$",
+          "/clyde/navigate_to_pose",
+          "/clyde/compute_path_to_pose",
         ],
       },
       pub_max_frequencies: [
-        "^/clyde/map$=1",
-        "^/clyde/map_wire_z$=1",
-        "^/clyde/tf$=10",
-        "^/clyde/tf_static$=1",
+        "/clyde/map=1",
+        "/clyde/map_wire_z=1",
+        "/clyde/tf=10",
+        "/clyde/tf_static=1",
       ],
     },
   },

@@ -1,14 +1,15 @@
 ////
 //// Clyde (robot): Zenoh client + ros2dds bridge.
 //// Connects to central Tailscale host (default MagicDNS: reverie).
-//// DDS stays on localhost; only Zenoh crosses TAMU_WiFi.
 ////
-//// NOTE: Do not wrap allow patterns in ^...$ — the plugin already anchors them.
+//// Robot->central sensor topics: publishers ONLY.
+//// Do NOT put map/tf under subscribers here — that creates Zenoh→ROS
+//// reinjection and stale/looped TF (map→odom "Transform data too old").
+//// Actions stay bidirectional.
 ////
 {
   mode: "client",
   connect: {
-    // Overridden by start_zenoh_robot.sh first argument host -> tcp/<host>:7447
     endpoints: ["tcp/reverie:7447"],
   },
   scouting: {
@@ -17,7 +18,8 @@
   plugins: {
     ros2dds: {
       domain: 80,
-      ros_localhost_only: true,
+      // false: discover robot Nav2/SLAM nodes without ROS_LOCALHOST_ONLY
+      ros_localhost_only: false,
       nodename: "zenoh_bridge_clyde",
       allow: {
         publishers: [
