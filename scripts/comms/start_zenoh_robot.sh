@@ -95,6 +95,14 @@ if [[ -f /opt/ros/${ROS_DISTRO}/setup.bash ]]; then
   unset ROS_LOCALHOST_ONLY
 fi
 
+# Same loopback-only Cyclone config as ros_robot_env.bash. The bridge must
+# share it with Nav2/SLAM or it will not see their topics.
+_cyclone_cfg="${WORKSPACE_DIR}/config/cyclonedds/robot_localhost.xml"
+if [[ -f "${_cyclone_cfg}" ]]; then
+  export CYCLONEDDS_URI="file://${_cyclone_cfg}"
+fi
+unset _cyclone_cfg
+
 echo "Starting Zenoh robot bridge"
 echo "  robot:    ${ROBOT} (auto-detected)"
 echo "  central:  ${CENTRAL_HOST}"
@@ -103,7 +111,20 @@ echo "  config:   ${RUNTIME_CONFIG}"
 echo "  domain:   ${ROS_DOMAIN_ID}"
 echo "  RMW:      ${RMW_IMPLEMENTATION}"
 echo "  distro:   ${ROS_DISTRO}"
-echo "  ROS_LOCALHOST_ONLY: (unset — required for Nav2/SLAM participant count)"
+echo "  ROS_LOCALHOST_ONLY: (unset)"
+echo "  CYCLONEDDS_URI: ${CYCLONEDDS_URI:-unset}"
+echo "  tf relay: /${ROBOT}/tf -> /${ROBOT}/tf_zenoh (best-effort; bridge does not subscribe to /tf)"
 echo ""
 
-exec "${ZENOH_BIN}" -c "$RUNTIME_CONFIG"
+RELAY_PID=""
+cleanup() {
+  if [[ -n "${RELAY_PID}" ]] && kill -0 "${RELAY_PID}" 2>/dev/null; then
+    kill "${RELAY_PID}" 2>/dev/null || true
+    wait "${RELAY_PID}" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+python3 "${SCRIPT_DIR}/tf_zenoh_publish.py" "${ROBOT}" &
+RELAY_PID=$!
+
+"${ZENOH_BIN}" -c "$RUNTIME_CONFIG"

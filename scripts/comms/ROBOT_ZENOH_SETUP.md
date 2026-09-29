@@ -30,9 +30,9 @@ Keep `ZENOH_BRIDGE_VERSION` the same on central and every robot (default `1.7.2`
 
 ## 2. Runtime (each session)
 
-`source scripts/env/ros_robot_env.bash` sets CycloneDDS and clears `ROS_LOCALHOST_ONLY` (required so Nav2/SLAM do not exhaust Cyclone participant indices). Do not set `ROS_LOCALHOST_ONLY=1` on the robot afterward.
+`source scripts/env/ros_robot_env.bash` sets CycloneDDS, clears `ROS_LOCALHOST_ONLY`, and points `CYCLONEDDS_URI` at `config/cyclonedds/robot_localhost.xml`. That file binds DDS to loopback and raises `MaxAutoParticipantIndex` so Nav2/SLAM fit. Do not set `ROS_LOCALHOST_ONLY=1` on the robot afterward, and do not unset `CYCLONEDDS_URI`.
 
-Zenoh still carries cross-host traffic over Tailscale; local DDS on the Pi uses normal Cyclone discovery.
+Zenoh still carries cross-host traffic over Tailscale. Local DDS does not use Wi-Fi, so a roam does not flood the terminal with `ddsi_udp_conn_write` errors.
 
 Order:
 

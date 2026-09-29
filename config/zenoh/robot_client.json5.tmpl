@@ -3,8 +3,9 @@
 //// Placeholders: __ROBOT__, __DOMAIN__, __CENTRAL_HOST__
 ////
 //// Robot->central sensor topics: publishers ONLY.
-//// Do NOT put map/tf under subscribers — that creates Zenoh→ROS
-//// reinjection and stale/looped TF (map→odom "Transform data too old").
+//// TF is /tf_zenoh (best-effort relay), never /tf — a reliable
+//// Zenoh subscription on /tf stalls slam_toolbox and freezes map→odom.
+//// Do NOT put map/tf under subscribers — that reinjects TF.
 //// Actions stay bidirectional.
 ////
 {
@@ -18,15 +19,20 @@
   plugins: {
     ros2dds: {
       domain: __DOMAIN__,
-      // false: discover robot Nav2/SLAM nodes without ROS_LOCALHOST_ONLY
+      // false: do not override CYCLONEDDS_URI. Robot DDS is loopback-only
+      // via config/cyclonedds/robot_localhost.xml.
       ros_localhost_only: false,
       nodename: "zenoh_bridge___ROBOT__",
+      // false: if Zenoh falls behind, drop samples instead of blocking the
+      // ROS publisher. Blocking stalls slam_toolbox /tf (map->odom goes stale
+      // and Nav2 reports a false goal success).
+      reliable_routes_blocking: false,
       allow: {
         publishers: [
           "/__ROBOT__/map",
           "/__ROBOT__/map_wire_z",
-          "/__ROBOT__/tf",
-          "/__ROBOT__/tf_static",
+          "/__ROBOT__/tf_zenoh",
+          "/__ROBOT__/tf_static_zenoh",
           "/__ROBOT__/nav2_collision_ahead",
           "/__ROBOT__/nav2_retrace_active",
           "/__ROBOT__/navigate_to_pose/_action/.*",
@@ -56,8 +62,8 @@
       pub_max_frequencies: [
         "/__ROBOT__/map=1",
         "/__ROBOT__/map_wire_z=1",
-        "/__ROBOT__/tf=10",
-        "/__ROBOT__/tf_static=1",
+        "/__ROBOT__/tf_zenoh=10",
+        "/__ROBOT__/tf_static_zenoh=1",
       ],
     },
   },
