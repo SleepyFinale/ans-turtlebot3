@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Robot DDS stays on the loopback interface.
+
+  Zenoh carries traffic to the central PC. If Cyclone also joins Wi-Fi, it
+  remembers those peers and, once the robot drives out of range, every node
+  logs "ddsi_udp_conn_write ... failed with retcode -1".
+
+  MaxAutoParticipantIndex is raised because a loopback-only domain discovers
+  with participant indices. The default cap is too small for Nav2 plus SLAM.
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" priority="default" multicast="false"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
