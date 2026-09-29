@@ -133,8 +133,10 @@ controller_server:
     # doesn't interfere with controller logic / progress checks.
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
-    # Slightly more patience under fleet TF/map jitter before aborting follow_path.
-    failure_tolerance: 0.45
+    # Patience before follow_path aborts on repeated "collision ahead" exceptions.
+    # Long enough for one replan (~1 Hz) to replace a grazing arc, short enough
+    # that a truly blocked heading still falls through to recovery.
+    failure_tolerance: 0.8
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     # Explicitly set which goal checker to use (silences "No goal checker was specified" warning)
@@ -158,13 +160,21 @@ controller_server:
       yaw_goal_tolerance: 3.14
 
     # Regulated Pure Pursuit (replaces DWB): follows global path geometry; avoids DWB
-    # GoalDist local minima at corners/doorways. Tune lookahead on-robot if needed.
+    # GoalDist local minima at corners/doorways.
+    #
+    # min_lookahead_dist must stay above general_goal_checker.xy_goal_tolerance
+    # (0.25 m). RPP treats a carrot closer than that tolerance as "at the goal"
+    # and commands zero linear velocity (rotate to heading only). A 0.20 m
+    # minimum froze the robot in place and tripped "Failed to make progress".
+    # Doorway corner-cutting is handled by the planner (cost_travel_multiplier
+    # and smoother.w_data below), not by shrinking lookahead under 0.25 m.
+    # At 0.22 m/s, velocity scaling yields about 0.40 m of lookahead.
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.22
-      lookahead_dist: 0.55
+      lookahead_dist: 0.45
       min_lookahead_dist: 0.35
-      max_lookahead_dist: 0.85
+      max_lookahead_dist: 0.55
       lookahead_time: 1.8
       rotate_to_heading_angular_vel: 1.0
       # Match SLAM / map–odom timing (same rationale as prior DWB block).
@@ -185,6 +195,8 @@ controller_server:
       regulated_linear_scaling_min_radius: 0.75
       regulated_linear_scaling_min_speed: 0.12
       use_rotate_to_heading: true
+      # ~30 deg. Lower values make the robot spin in place on ordinary curves;
+      # SimpleProgressChecker does not count rotation as movement.
       rotate_to_heading_min_angle: 0.52
       max_angular_accel: 3.2
       allow_reversing: false
@@ -335,13 +347,20 @@ planner_server:
       downsample_costmap: false
       use_final_approach_orientation: true
       max_on_approach_iterations: 5000 
-      # Stronger avoidance of inflated / high-cost cells (2D Smac); steers paths
-      # through open corridors when a detour exists. Tune 2.0–3.5 if needed.
-      cost_travel_multiplier: 2.0
+      # Stronger avoidance of inflated / high-cost cells (2D Smac). Keeps the
+      # global path in the middle of corridors and doorways so the approach is
+      # closer to head-on, instead of shaving the jamb that pure pursuit then
+      # refuses to enter. Tune 2.5–4.0 if doors are skipped or still grazed.
+      cost_travel_multiplier: 3.0
       # Allow planning through unknown space (needed for SLAM/exploration; avoids "no valid path found" when goal is in growing map).
       allow_unknown: true
       max_iterations: 1000000
       smooth_path: true
+      # Default w_data (0.2) lets the smoother chord-cut corners into door
+      # jambs. A higher data weight keeps the path on the cost-aware A* line.
+      smoother:
+        w_smooth: 0.25
+        w_data: 0.6
 
 planner_server_rclcpp_node:
   ros__parameters:
