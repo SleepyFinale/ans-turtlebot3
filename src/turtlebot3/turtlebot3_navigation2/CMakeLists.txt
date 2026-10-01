@@ -24,7 +24,6 @@ install(
   PROGRAMS
     scripts/map_wire_compressed_republisher.py
     scripts/map_throttle_relay.py
-    scripts/open_ray_map_clear.py
     scripts/scan_costmap_relay.py
     scripts/startup_map_seeder.py
     scripts/normalize_laser_scan.py
