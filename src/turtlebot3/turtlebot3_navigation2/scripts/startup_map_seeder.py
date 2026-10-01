@@ -65,6 +65,11 @@ class StartupMapSeeder(Node):
         self._segment_index = -1
         self._segment_started = self.get_clock().now()
         self._state = 'wait_service'
+        self._state_future = None
+        self._state_requested_at = self.get_clock().now()
+        # controller_server often cannot send get_state while it is configuring.
+        # That reply is dropped and the future never completes, so retry.
+        self._state_call_timeout_sec = 2.0
 
         self._timer = self.create_timer(1.0 / self._publish_hz, self._tick)
         self.get_logger().info(
@@ -95,9 +100,24 @@ class StartupMapSeeder(Node):
 
         if self._state == 'wait_active':
             req = GetState.Request()
-            future = self._state_client.call_async(req)
-            future.add_done_callback(self._on_state_response)
+            self._state_future = self._state_client.call_async(req)
+            self._state_requested_at = self.get_clock().now()
+            self._state_future.add_done_callback(self._on_state_response)
             self._state = 'wait_active_result'
+            return
+
+        if self._state == 'wait_active_result':
+            if self._timeout_hit():
+                self.get_logger().warn('Timeout while polling ACTIVE state; ending seeding')
+                self._finish()
+                return
+            future = self._state_future
+            if future is not None and not future.done():
+                waited = (self.get_clock().now() - self._state_requested_at).nanoseconds / 1e9
+                if waited >= self._state_call_timeout_sec:
+                    self._state = 'wait_active'
+                    self._state_future = None
+                    future.cancel()
             return
 
         if self._state == 'run':
