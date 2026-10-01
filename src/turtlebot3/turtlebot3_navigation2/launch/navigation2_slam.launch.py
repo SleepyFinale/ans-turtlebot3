@@ -900,35 +900,10 @@ def _launch_setup(context):
         parameters=[slam_params_file, slam_overrides],
         remappings=tf_remappings + [
             ('/scan', 'scan_normalized'),
-            # Publish the raw SLAM grid off the public map topics. open_ray_map_clear
-            # republishes /<robot>/map after marking the first 8 m of over-range
-            # beams free. Both spellings are remapped because slam_toolbox has
-            # shipped the map publisher as relative "map" and as absolute "/map".
-            ('map', 'map_slam'),
-            ('/map', 'map_slam'),
-            ('map_metadata', 'map_metadata_slam'),
-            ('/map_metadata', 'map_metadata_slam'),
-            ('map_updates', 'map_updates_slam'),
-            ('/map_updates', 'map_updates_slam'),
+            ('/map', 'map'),
+            ('/map_metadata', 'map_metadata'),
+            ('/map_updates', 'map_updates'),
         ],
-    ))
-
-    # Clears unknown cells out to clear_range along scan beams longer than that.
-    # Scan matching still uses scan_normalized, so those beams are not fake hits.
-    actions.append(Node(
-        package='turtlebot3_navigation2',
-        executable='open_ray_map_clear.py',
-        name='open_ray_map_clear',
-        namespace=ns if ns else None,
-        parameters=[{
-            'use_sim_time': use_sim_time_str.lower() == 'true',
-            'input_map_topic': 'map_slam',
-            'output_map_topic': 'map',
-            'scan_topic': 'scan_normalized',
-            'clear_range': 8.0,
-        }],
-        remappings=tf_remappings,
-        output='screen',
     ))
 
     # --- Wait for TF ---
