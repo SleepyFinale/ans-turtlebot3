@@ -53,7 +53,7 @@ Use this table when configuring a given robot. SSH using the hostname or IP for 
 | Inky   | inky@172.20.10.15         | `inky@<dhcp-ip>` / hostname |
 | Clyde  | clyde@172.20.10.16        | `clyde@<dhcp-ip>` / hostname |
 
-On boot the Pi tries **Azure** (phone hotspot, static IPs above) first, then falls back to **TAMU_WiFi** (WPA Enterprise, DHCP). For TAMU, use hostname when mDNS/DNS works, or `./scripts/network/switch_wifi.sh status` / `ip -4 addr show wlan0` on the Pi for the current address.
+On boot the Pi tries **TAMU_WiFi** (WPA Enterprise, DHCP) first, then falls back to **Azure** (phone hotspot, static IPs above). For TAMU, use hostname when mDNS/DNS works, or `./scripts/network/switch_wifi.sh status` / `ip -4 addr show wlan0` on the Pi for the current address.
 
 - **Platform**: TurtleBot3 Burger  
 - **SBC**: Raspberry Pi (Ubuntu Server)  
@@ -413,9 +413,9 @@ To prevent the robot from being stuck without WiFi when it boots, a boot-time Wi
 
 **Behavior:**
 
-- On boot, the robot **first attempts to connect to Azure** (hotspot).
-- If that fails, it tries **TAMU_WiFi**.
-- Each attempt waits up to 30 seconds (Azure: ping `172.20.10.1`; TAMU: DHCP IP plus reachable gateway or `8.8.8.8`).
+- On boot, the robot **first attempts to connect to TAMU_WiFi**.
+- If that fails, it tries **Azure** (hotspot).
+- Each attempt waits up to 30 seconds (TAMU: DHCP IP plus reachable gateway or `8.8.8.8`; Azure: ping `172.20.10.1`).
 
 **Installation (one-time setup per robot):**
 
@@ -427,7 +427,7 @@ sudo ./scripts/network/install_boot_wifi.sh
 This installs a systemd service (`boot-wifi.service`) that runs on every boot. The service:
 
 - Detects the robot name from the hostname (needed for Azure static IP)
-- Attempts Azure first, then TAMU_WiFi
+- Attempts TAMU_WiFi first, then Azure
 - Logs connection attempts to the systemd journal
 
 **Checking boot WiFi status:**

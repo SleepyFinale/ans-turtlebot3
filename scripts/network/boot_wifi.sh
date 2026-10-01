@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Boot-time WiFi connection script: tries Azure (hotspot), then TAMU_WiFi.
+# Boot-time WiFi connection script: tries TAMU_WiFi, then Azure (hotspot).
 #
 # This script is called by systemd on boot to ensure the robot connects to WiFi.
-# Order: azure -> tamu (each step runs only if the previous did not get connectivity).
+# Order: tamu -> azure (each step runs only if the previous did not get connectivity).
 #
 # Usage: sudo ./scripts/network/boot_wifi.sh [robot]
 #   robot: optional robot name (blinky/pinky/inky/clyde). If not provided, detected from hostname.
@@ -127,19 +127,8 @@ main() {
   
   echo "[boot_wifi] Starting WiFi connection for robot: $robot_name"
   
-  # Step 1: Try Azure hotspot
-  echo "[boot_wifi] Attempting to connect to Azure (hotspot)..."
-  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
-  
-  if wait_for_connection "$AZURE_GATEWAY" "$CONNECTION_TIMEOUT"; then
-    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
-    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
-    echo "[boot_wifi] Successfully connected to Azure (SSID: $current_ssid, IP: $current_ip)"
-    exit 0
-  fi
-  
-  # Step 2: Azure failed, try TAMU_WiFi
-  echo "[boot_wifi] Azure connection failed, attempting TAMU_WiFi..."
+  # Step 1: Try TAMU_WiFi
+  echo "[boot_wifi] Attempting to connect to TAMU_WiFi..."
   "$SWITCH_WIFI_SCRIPT" tamu
   
   if wait_for_connection "" "$CONNECTION_TIMEOUT"; then
@@ -149,7 +138,18 @@ main() {
     exit 0
   fi
   
-  echo "[boot_wifi] ERROR: Failed to connect to Azure (hotspot) or TAMU_WiFi"
+  # Step 2: TAMU_WiFi failed, try Azure hotspot
+  echo "[boot_wifi] TAMU_WiFi connection failed, attempting Azure (hotspot)..."
+  ROBOT_NAME="$robot_name" "$SWITCH_WIFI_SCRIPT" azure "$robot_name"
+  
+  if wait_for_connection "$AZURE_GATEWAY" "$CONNECTION_TIMEOUT"; then
+    local current_ssid=$(iwgetid -r 2>/dev/null || echo "unknown")
+    local current_ip=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | head -1)
+    echo "[boot_wifi] Successfully connected to Azure (SSID: $current_ssid, IP: $current_ip)"
+    exit 0
+  fi
+  
+  echo "[boot_wifi] ERROR: Failed to connect to TAMU_WiFi or Azure (hotspot)"
   echo "[boot_wifi] ERROR: Please check your WiFi connections and try again."
   exit 1
 }

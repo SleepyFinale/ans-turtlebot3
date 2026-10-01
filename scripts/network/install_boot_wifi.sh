@@ -35,7 +35,7 @@ fi
 # Create the service file with the correct workspace path
 cat > "$TARGET_SERVICE" << EOF
 [Unit]
-Description=Boot WiFi Connection (Azure, then TAMU_WiFi)
+Description=Boot WiFi Connection (TAMU_WiFi, then Azure)
 After=network-pre.target
 Wants=network-pre.target
 Before=network-online.target
