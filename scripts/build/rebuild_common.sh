@@ -95,7 +95,10 @@ else
     done
 
     echo "Running minimal rebuild (workers=${PARALLEL_JOBS})..."
+    # status- : live status line races on a TTY and aborts colcon
+    # (TypeError in colcon_notification status.py, package 0.3.3).
     colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}" \
+      --event-handlers status- \
       --packages-select \
       "${MINIMAL_PKGS[@]}" \
       --allow-overriding \
@@ -105,7 +108,8 @@ else
       turtlebot3_navigation2
   else
     echo "Running clean/full rebuild (workers=${PARALLEL_JOBS})..."
-    colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}"
+    colcon build --symlink-install --parallel-workers "${PARALLEL_JOBS}" \
+      --event-handlers status-
   fi
 fi
 
