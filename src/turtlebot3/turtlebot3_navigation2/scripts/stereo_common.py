@@ -33,7 +33,7 @@ def calibration_file_path(namespace: str, override: str = '') -> str:
 
 
 def calibration_is_usable(path: str) -> bool:
-    """True when the file exists and contains a real left-camera focal length."""
+    """True when the yaml exists and the stereo solution is physically plausible."""
     if not path or not os.path.isfile(path):
         return False
     try:
@@ -42,32 +42,109 @@ def calibration_is_usable(path: str) -> bool:
             data = yaml.safe_load(handle)
     except Exception:
         return False
+    ok, _reason = calibration_data_usable(data)
+    return ok
+
+
+def calibration_data_usable(data) -> Tuple[bool, str]:
+    """Reject solutions whose focal point, error, or baseline cannot be a real rig."""
     if not isinstance(data, dict):
-        return False
-    matrix = data.get('left_camera_matrix')
-    if not isinstance(matrix, (list, tuple)) or len(matrix) < 1:
-        return False
+        return False, 'calibration file is empty'
     try:
-        return float(matrix[0]) > 1.0
+        width = int(data.get('image_width') or 0)
+        height = int(data.get('image_height') or 0)
+        rms = float(data.get('rms'))
+        measured = float(data.get('baseline_m') or 0.0)
+        fitted = float(data.get('baseline_calibrated_m') or 0.0)
     except (TypeError, ValueError):
-        return False
+        return False, 'calibration is missing image size, rms, or baseline'
+    if width < 2 or height < 2:
+        return False, 'image size is invalid'
+    if rms > 1.0:
+        return False, f'rms {rms:.2f} px is above 1.0'
+    for name in ('left_camera_matrix', 'right_camera_matrix'):
+        matrix = data.get(name)
+        if not isinstance(matrix, (list, tuple)) or len(matrix) < 9:
+            return False, f'{name} is incomplete'
+        try:
+            fx = float(matrix[0])
+            fy = float(matrix[4])
+            cx = float(matrix[2])
+            cy = float(matrix[5])
+        except (TypeError, ValueError):
+            return False, f'{name} is not numeric'
+        if fx <= 1.0 or fy <= 1.0:
+            return False, f'{name} focal length is not real'
+        if not (0.0 < cx < width and 0.0 < cy < height):
+            return False, f'{name} principal point ({cx:.1f}, {cy:.1f}) is outside the image'
+    if measured <= 0.0 or fitted <= 0.0:
+        return False, 'baseline is missing'
+    translation = data.get('T')
+    if isinstance(translation, (list, tuple)) and len(translation) >= 3:
+        try:
+            tx, ty, tz = (abs(float(v)) for v in translation[:3])
+        except (TypeError, ValueError):
+            return False, 'T is not numeric'
+        # The pair sits side by side, so T is mostly along x. A large y or z
+        # part means the chessboard views did not pin the geometry down.
+        if max(ty, tz) > 0.35 * max(tx, 1e-6):
+            return False, (
+                f'T ({tx:.3f}, {ty:.3f}, {tz:.3f}) m is not side by side; '
+                'recalibrate with the board across the whole image'
+            )
+    ratio = fitted / measured
+    if ratio < 0.5 or ratio > 2.0:
+        return False, (
+            f'fitted baseline {fitted:.3f} m is not near the measured {measured:.3f} m'
+        )
+    return True, ''
+
+
+# Platform image processors on the Pi, not lenses. /dev/video14 is often bcm2835-isp.
+_SKIP_DRIVERS = frozenset({
+    'bcm2835-isp',
+    'bcm2835-codec',
+    'pispbe',
+    'rpivid',
+})
+
+
+def _video_index(path: str) -> int:
+    digits = ''.join(ch for ch in os.path.basename(path) if ch.isdigit())
+    try:
+        return int(digits)
+    except ValueError:
+        return 0
+
+
+def list_stereo_cameras() -> List[dict]:
+    """USB capture nodes first, in numeric /dev/videoN order.
+
+    Lexicographic order picks /dev/video14 before /dev/video2. The Pi ISP also
+    advertises a capture node, so two Arducams must be chosen by driver.
+    """
+    found: List[dict] = []
+    for path in sorted(glob.glob('/dev/video*'), key=_video_index):
+        info = _query_capture_device(path)
+        if info is not None:
+            found.append(info)
+    usb = [info for info in found if info['driver'] == 'uvcvideo']
+    if len(usb) >= 2:
+        return usb
+    return [info for info in found if info['driver'] not in _SKIP_DRIVERS]
 
 
 def list_capture_devices() -> List[str]:
-    """Return sorted V4L capture nodes, skipping metadata-only video nodes."""
-    found: List[str] = []
-    for path in sorted(glob.glob('/dev/video*')):
-        if _is_capture_device(path):
-            found.append(path)
-    return found
+    """Return capture-node paths suitable for a stereo pair."""
+    return [info['path'] for info in list_stereo_cameras()]
 
 
-def _is_capture_device(path: str) -> bool:
+def _query_capture_device(path: str) -> Optional[dict]:
     try:
         import fcntl
         import ctypes
     except ImportError:
-        return False
+        return None
 
     class V4L2Capability(ctypes.Structure):
         _fields_ = [
@@ -83,20 +160,26 @@ def _is_capture_device(path: str) -> bool:
     try:
         fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
     except OSError:
-        return False
+        return None
     try:
         cap = V4L2Capability()
         try:
             fcntl.ioctl(fd, VIDIOC_QUERYCAP, cap)
         except OSError:
-            return False
+            return None
     finally:
         os.close(fd)
 
     caps = int(cap.device_caps) if (int(cap.capabilities) & V4L2_CAP_DEVICE_CAPS) else int(cap.capabilities)
     if caps & V4L2_CAP_META_CAPTURE and not (caps & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)):
-        return False
-    return bool(caps & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE))
+        return None
+    if not (caps & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)):
+        return None
+    return {
+        'path': path,
+        'driver': cap.driver.split(b'\x00', 1)[0].decode('utf-8', errors='replace'),
+        'card': cap.card.split(b'\x00', 1)[0].decode('utf-8', errors='replace'),
+    }
 
 
 def rotation_matrix_to_quaternion(rotation: np.ndarray) -> Tuple[float, float, float, float]:
@@ -171,6 +254,123 @@ def right_camera_pose_in_left(rotation: np.ndarray, translation: np.ndarray) -> 
     return -r.T @ t, r.T
 
 
+def match_stereo_features(left: np.ndarray, right: np.ndarray, max_features: int = 2000):
+    """Matched raw pixel positions (Nx2 left, Nx2 right) between two mono images.
+
+    SGBM only searches along rows, so these matches are how a bumped camera is
+    noticed. CLAHE lifts the carpet texture enough to match in dim rooms.
+    """
+    import cv2
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    left = clahe.apply(np.asarray(left, dtype=np.uint8))
+    right = clahe.apply(np.asarray(right, dtype=np.uint8))
+    if hasattr(cv2, 'SIFT_create'):
+        detector = cv2.SIFT_create(int(max_features))
+        norm = cv2.NORM_L2
+    else:
+        detector = cv2.ORB_create(int(max_features))
+        norm = cv2.NORM_HAMMING
+    kp_l, des_l = detector.detectAndCompute(left, None)
+    kp_r, des_r = detector.detectAndCompute(right, None)
+    empty = np.zeros((0, 2), dtype=float)
+    if des_l is None or des_r is None or len(kp_l) < 2 or len(kp_r) < 2:
+        return empty, empty
+    pairs = cv2.BFMatcher(norm).knnMatch(des_l, des_r, k=2)
+    left_pts = []
+    right_pts = []
+    for pair in pairs:
+        if len(pair) < 2:
+            continue
+        best, second = pair
+        if best.distance < 0.8 * second.distance:
+            left_pts.append(kp_l[best.queryIdx].pt)
+            right_pts.append(kp_r[best.trainIdx].pt)
+    if not left_pts:
+        return empty, empty
+    return np.asarray(left_pts, dtype=float), np.asarray(right_pts, dtype=float)
+
+
+def _rectify(k1, d1, k2, d2, size, rotation, translation):
+    import cv2
+    return cv2.stereoRectify(
+        k1, d1, k2, d2, size, rotation, np.asarray(translation, dtype=float).reshape(3, 1),
+        flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
+    )
+
+
+def rectified_row_error(left_pts, right_pts, k1, d1, k2, d2, size, rotation, translation) -> np.ndarray:
+    """Rectified left row minus right row for each match. Zero for a good calibration."""
+    import cv2
+    left_pts = np.asarray(left_pts, dtype=float).reshape(-1, 2)
+    right_pts = np.asarray(right_pts, dtype=float).reshape(-1, 2)
+    if left_pts.size == 0:
+        return np.zeros(0, dtype=float)
+    r1, r2, p1, p2, _q, _roi1, _roi2 = _rectify(k1, d1, k2, d2, size, rotation, translation)
+    a = cv2.undistortPoints(left_pts.reshape(-1, 1, 2), k1, d1, R=r1, P=p1).reshape(-1, 2)
+    b = cv2.undistortPoints(right_pts.reshape(-1, 1, 2), k2, d2, R=r2, P=p2).reshape(-1, 2)
+    return a[:, 1] - b[:, 1]
+
+
+def refine_extrinsics(
+    left_pts,
+    right_pts,
+    k1, d1, k2, d2,
+    size,
+    rotation,
+    translation,
+    iterations: int = 25,
+):
+    """Re-fit R and the off-axis part of T so matched features share a rectified row.
+
+    Intrinsics and the baseline length stay from the chessboard. Pitch and roll
+    between the cameras are what a bump changes, and they are what SGBM cannot
+    tolerate. Yaw only shows up as a range bias, which row error cannot see,
+    so it is kept from the chessboard too.
+
+    Returns (rotation, translation, rms_before_px, rms_after_px, inliers).
+    """
+    import cv2
+    left_pts = np.asarray(left_pts, dtype=float).reshape(-1, 2)
+    right_pts = np.asarray(right_pts, dtype=float).reshape(-1, 2)
+    t0 = np.asarray(translation, dtype=float).reshape(3)
+    baseline = float(np.linalg.norm(t0))
+    sign = -1.0 if t0[0] <= 0.0 else 1.0
+    params = np.r_[cv2.Rodrigues(np.asarray(rotation, dtype=float).reshape(3, 3))[0].ravel(), 0.0, 0.0]
+    # rx (pitch), rz (roll), ty, tz. ry (yaw) stays fixed.
+    free = [0, 2, 3, 4]
+
+    def _unpack(x):
+        ty, tz = float(x[3]), float(x[4])
+        tx = sign * math.sqrt(max(1e-8, baseline * baseline - ty * ty - tz * tz))
+        return cv2.Rodrigues(np.asarray(x[:3], dtype=float))[0], np.array([tx, ty, tz])
+
+    def _residual(x, keep):
+        r, t = _unpack(x)
+        return rectified_row_error(left_pts[keep], right_pts[keep], k1, d1, k2, d2, size, r, t)
+
+    keep = np.ones(len(left_pts), dtype=bool)
+    before = _residual(params, keep)
+    rms_before = float(np.sqrt(np.mean(before ** 2))) if before.size else float('nan')
+    for it in range(int(iterations)):
+        if int(np.count_nonzero(keep)) < 20:
+            break
+        r = _residual(params, keep)
+        jac = np.zeros((r.size, len(free)))
+        for j, i in enumerate(free):
+            step = params.copy()
+            step[i] += 1e-5
+            jac[:, j] = (_residual(step, keep) - r) / 1e-5
+        delta = np.linalg.lstsq(jac, -r, rcond=None)[0]
+        params[free] += delta
+        if it in (4, 9, 14):
+            err = np.abs(_residual(params, np.ones(len(left_pts), dtype=bool)))
+            keep = err < max(1.5, 3.0 * float(np.median(err)))
+    rot, trans = _unpack(params)
+    after = _residual(params, keep)
+    rms_after = float(np.sqrt(np.mean(after ** 2))) if after.size else float('nan')
+    return rot, trans, rms_before, rms_after, int(np.count_nonzero(keep))
+
+
 def rectified_to_base(
     points_rect: np.ndarray,
     rectify_rotation: np.ndarray,
@@ -188,11 +388,300 @@ def rectified_to_base(
     return pts_shape(left @ base_rot.T + np.asarray(camera_translation, dtype=float).reshape(3))
 
 
+def filter_disparity_to_ground(
+    disparity: np.ndarray,
+    *,
+    num_disparities: int,
+    ground_band_px: float = 4.0,
+    min_obstacle_rows: int = 8,
+) -> np.ndarray:
+    """Keep the floor line, real obstacles, and real drops. Discard the rest.
+
+    In the v-disparity image the floor is a line: disparity grows toward the
+    bottom of the frame. Pixels on that line are the floor. An obstacle is a
+    vertical run of pixels clearly closer than the line. A drop is a patch
+    much farther than the line. Pixels only a few disparities off the line are
+    the usual floor mismatch, and those were being rebuilt as a near obstacle.
+    """
+    disp = np.asarray(disparity, dtype=np.float32)
+    if disp.ndim != 2 or disp.size == 0:
+        return disp
+    valid = disp > 0.5
+    line = _ground_disparity_line(disp, valid, int(num_disparities))
+    if line is None:
+        return disp
+    slope, intercept = line
+    rows = np.arange(disp.shape[0], dtype=np.float32)
+    ground = slope * rows[:, None] + intercept
+    ground = np.broadcast_to(ground, disp.shape).copy()
+    usable = (ground > 1.0) & (ground < float(num_disparities) - 1.0)
+    delta = disp - ground
+    on_ground = valid & usable & (np.abs(delta) <= float(ground_band_px))
+    above = valid & usable & (delta > float(ground_band_px))
+    drop_gap = np.maximum(6.0, 0.25 * ground)
+    below = valid & usable & (delta < -drop_gap)
+    upright = _vertical_runs(above, int(min_obstacle_rows))
+    out = np.zeros_like(disp)
+    out[on_ground] = ground[on_ground]
+    out[below] = disp[below]
+    out[upright] = disp[upright]
+    return out
+
+
+def _ground_disparity_line(
+    disp: np.ndarray,
+    valid: np.ndarray,
+    num_disparities: int,
+) -> Optional[Tuple[float, float]]:
+    """Weighted line through the dominant disparity of each lower image row."""
+    height, width = disp.shape
+    bins = np.arange(0, max(2, num_disparities) + 1, 1)
+    rows = []
+    peaks = []
+    weights = []
+    # The upper rows look above the horizon on this downward camera.
+    for row in range(int(height * 0.20), height):
+        samples = disp[row, valid[row]]
+        if samples.size < max(12, width // 20):
+            continue
+        hist, _ = np.histogram(samples, bins=bins)
+        peak = int(np.argmax(hist))
+        if int(hist[peak]) < 8:
+            continue
+        rows.append(float(row))
+        peaks.append(float(peak) + 0.5)
+        weights.append(float(hist[peak]))
+    if len(rows) < 10:
+        return None
+    row_v = np.asarray(rows, dtype=float)
+    peak_v = np.asarray(peaks, dtype=float)
+    weight_v = np.asarray(weights, dtype=float)
+
+    def _fit(row_v, peak_v, weight_v):
+        total = float(weight_v.sum())
+        if total <= 0.0:
+            return None
+        mean_row = float((weight_v * row_v).sum() / total)
+        mean_peak = float((weight_v * peak_v).sum() / total)
+        variance = float((weight_v * (row_v - mean_row) ** 2).sum())
+        if variance < 1e-3:
+            return None
+        slope = float((weight_v * (row_v - mean_row) * (peak_v - mean_peak)).sum() / variance)
+        return slope, mean_peak - slope * mean_row
+
+    first = _fit(row_v, peak_v, weight_v)
+    if first is None:
+        return None
+    error = np.abs(peak_v - (first[0] * row_v + first[1]))
+    keep = error <= 4.0
+    if int(np.count_nonzero(keep)) < 8:
+        return None
+    second = _fit(row_v[keep], peak_v[keep], weight_v[keep])
+    if second is None or second[0] <= 0.02:
+        # A closer floor is lower in the image, so disparity must increase with row.
+        return None
+    return second
+
+
+def _vertical_runs(mask: np.ndarray, min_rows: int) -> np.ndarray:
+    """True where a vertical run of mask pixels is at least min_rows tall."""
+    on = np.asarray(mask, dtype=bool)
+    height, width = on.shape
+    run = np.zeros(width, dtype=np.int32)
+    length = np.zeros((height, width), dtype=np.int32)
+    for row in range(height):
+        run = np.where(on[row], run + 1, 0)
+        length[row] = run
+    span = np.zeros(width, dtype=np.int32)
+    keep = np.zeros_like(on)
+    for row in range(height - 1, -1, -1):
+        span = np.where(on[row], np.maximum(span, length[row]), 0)
+        keep[row] = span >= int(min_rows)
+    return keep
+
+
 def pts_shape(points: np.ndarray) -> np.ndarray:
     arr = np.asarray(points, dtype=float)
     if arr.ndim == 1:
         return arr.reshape(1, 3)
     return arr.reshape(-1, 3)
+
+
+def _corridor_step(
+    pts: np.ndarray,
+    floor_z: float,
+    *,
+    obstacle_range_m: Optional[float],
+    ground_x_min: float,
+    ground_x_max: float,
+    ground_y_abs: float,
+    ground_z_abs: float,
+    drop_z: float,
+    corridor_half_angle: float,
+    ground_min_points: int,
+) -> Tuple[bool, Optional[float]]:
+    """A drop is a step down from a solid nearer floor, across the corridor.
+
+    Slices are pooled over the forward view. A single noisy beam does not
+    count, and neither does the shadow just past an object. Past about 0.7 m
+    a few disparity pixels are already taller than a step, so that region is
+    left alone. A slice that returns to the floor is a bad match, not a hole.
+    """
+    if pts.size == 0:
+        return False, None
+    x = pts[:, 0]
+    y = pts[:, 1]
+    z_rel = pts[:, 2] - float(floor_z)
+    ang = np.arctan2(y, x)
+    near = float(ground_x_min)
+    far = min(float(ground_x_max), 0.72)
+    if far - near < 0.20:
+        return False, None
+    band = (
+        (x >= near) & (x <= far)
+        & (np.abs(y) <= float(ground_y_abs))
+        & (np.abs(ang) <= float(corridor_half_angle))
+        & np.isfinite(z_rel)
+    )
+    xb = x[band]
+    zb = z_rel[band]
+    edges = np.arange(near, far + 1e-9, 0.10)
+    if edges.size < 3:
+        return False, None
+    slices = []
+    for i in range(edges.size - 1):
+        slices.append(zb[(xb >= edges[i]) & (xb < edges[i + 1])])
+    min_count = max(20, int(ground_min_points))
+
+    def _solid_floor(zz: np.ndarray) -> bool:
+        if zz.size < min_count:
+            return False
+        med = float(np.median(zz))
+        inliers = float(np.mean(np.abs(zz) <= float(ground_z_abs)))
+        return inliers >= 0.50 and abs(med) <= float(ground_z_abs)
+
+    def _solid_low(zz: np.ndarray) -> bool:
+        if zz.size < min_count:
+            return False
+        med = float(np.median(zz))
+        high = float(np.percentile(zz, 75))
+        inliers = float(np.mean(np.abs(zz) <= float(ground_z_abs)))
+        return inliers <= 0.20 and med < float(drop_z) and high < float(drop_z) + 0.05
+
+    seen_floor = False
+    empty_run = 0
+    floor_end = None
+    shadow_until = None
+    if obstacle_range_m is not None and math.isfinite(float(obstacle_range_m)):
+        shadow_until = float(obstacle_range_m) + 0.30
+    for i, zz in enumerate(slices):
+        if _solid_floor(zz):
+            seen_floor = True
+            empty_run = 0
+            floor_end = float(edges[i + 1])
+            continue
+        if not seen_floor:
+            continue
+        start = float(edges[i])
+        if shadow_until is not None and start < shadow_until:
+            empty_run = 0
+            continue
+        later = slices[i + 1:]
+        if _solid_low(zz):
+            if any(_solid_floor(rest) for rest in later):
+                continue
+            return True, start
+        if zz.size < 8:
+            empty_run += 1
+            if empty_run >= 2 and floor_end is not None and not any(
+                _solid_floor(rest) for rest in later
+            ):
+                return True, floor_end
+        else:
+            empty_run = 0
+    return False, None
+
+
+def _fit_floor_plane(
+    pts: np.ndarray,
+    x_min: float = 0.22,
+    x_max: float = 0.45,
+) -> Optional[Tuple[float, float, float]]:
+    """Fit z = a*x + b*y + c to the ground. None when the cloud will not support it.
+
+    A single height treats a tilted floor as a near obstacle and hides the
+    real object behind that reading. RANSAC keeps the large flat set and
+    leaves an object standing above the plane.
+    """
+    # Stop before the object and the drop window so neither one can tilt the plane.
+    band = (pts[:, 0] >= float(x_min)) & (pts[:, 0] <= float(x_max)) & (np.abs(pts[:, 1]) <= 0.35)
+    sample = pts[band]
+    if sample.shape[0] < 40:
+        return None
+    step = max(1, sample.shape[0] // 1500)
+    sample = sample[::step]
+    count = sample.shape[0]
+    if count < 40:
+        return None
+    rng = np.random.default_rng(0)
+    best = None
+    best_inliers = 0
+    best_mask = None
+    xyz = sample
+    for _ in range(60):
+        picked = xyz[rng.choice(count, 3, replace=False)]
+        design = np.column_stack([picked[:, 0], picked[:, 1], np.ones(3)])
+        coeff, _, _, _ = np.linalg.lstsq(design, picked[:, 2], rcond=None)
+        if abs(float(coeff[0])) > 0.6 or abs(float(coeff[1])) > 0.6:
+            continue
+        residual = xyz[:, 2] - (coeff[0] * xyz[:, 0] + coeff[1] * xyz[:, 1] + coeff[2])
+        mask = np.abs(residual) <= 0.025
+        inliers = int(np.count_nonzero(mask))
+        if inliers > best_inliers:
+            best_inliers = inliers
+            best = coeff
+            best_mask = mask
+    if best is None or best_inliers < max(40, int(0.35 * count)) or best_mask is None:
+        return None
+    design = np.column_stack([
+        xyz[best_mask, 0], xyz[best_mask, 1], np.ones(best_inliers),
+    ])
+    coeff, _, _, _ = np.linalg.lstsq(design, xyz[best_mask, 2], rcond=None)
+    if abs(float(coeff[0])) > 0.6 or abs(float(coeff[1])) > 0.6:
+        return None
+    return float(coeff[0]), float(coeff[1]), float(coeff[2])
+
+
+def _local_slice_floor(pts: np.ndarray, x_min: float = 0.36) -> np.ndarray:
+    """Height most of the points share in each small patch of the view.
+
+    Only the ground past the steep near field votes. A lower tail in the same
+    patch must not become the floor, or the surface itself is marked as an obstacle.
+    """
+    floors = np.full(len(pts), np.nan)
+    if len(pts) == 0:
+        return floors
+    x = pts[:, 0]
+    y = pts[:, 1]
+    z = pts[:, 2]
+    ang = np.arctan2(y, x)
+    x_edges = np.arange(float(x_min), 1.14, 0.06)
+    a_edges = np.arange(-0.80, 0.80 + 1e-6, 0.16)
+    hist_edges = np.arange(-0.40, 0.50, 0.02)
+    for i in range(x_edges.size - 1):
+        for j in range(a_edges.size - 1):
+            sel = (
+                (x >= x_edges[i]) & (x < x_edges[i + 1])
+                & (ang >= a_edges[j]) & (ang < a_edges[j + 1])
+            )
+            if int(np.count_nonzero(sel)) < 12:
+                continue
+            counts, _ = np.histogram(z[sel], bins=hist_edges)
+            peak = int(np.argmax(counts))
+            if int(counts[peak]) < 5:
+                continue
+            floors[sel] = float(hist_edges[peak] + 0.01)
+    return floors
 
 
 def build_blob_scan(
@@ -203,32 +692,68 @@ def build_blob_scan(
     angle_increment: float = 0.0174533,
     min_range: float = 0.12,
     max_range: float = 1.5,
-    min_height: float = 0.03,
+    min_height: float = 0.025,
     max_height: float = 0.182,
-    ground_x_min: float = 0.40,
+    # Closer than this, the downward view rebuilds the floor as a near wall.
+    obstacle_x_min: float = 0.40,
+    # Past this, one disparity pixel is already taller than a low object.
+    obstacle_x_max: float = 0.80,
+    ground_x_min: float = 0.22,
     ground_x_max: float = 1.20,
     ground_y_abs: float = 0.40,
     ground_z_abs: float = 0.04,
-    drop_z: float = -0.08,
+    drop_z: float = -0.15,
     drop_min_points: int = 12,
     ground_min_points: int = 8,
     corridor_half_angle: float = 0.60,
+    obstacle_textured: Optional[np.ndarray] = None,
+    shadow_obstacle_m: Optional[float] = None,
 ) -> dict:
     """Project blind-band obstacles and floor drops into one forward LaserScan.
 
-    A missing floor is marked only when neighboring or side bins still see the
-    ground. A fully failed match, or one isolated textured patch, does not
-    invent a wall.
+    A drop is a step down from floor that is still visible closer in. A failed
+    match, or a low patch that the next slice shows is still floor, does not
+    invent a hole.
     """
     n = max(2, int(round((angle_max - angle_min) / angle_increment)) + 1)
     ranges = np.full(n, np.inf, dtype=float)
-    ground_counts = np.zeros(n, dtype=int)
-    drop_counts = np.zeros(n, dtype=int)
-    drop_ranges = np.full(n, np.inf, dtype=float)
+    obstacle_ranges_by_bin: list[list[float]] = [[] for _ in range(n)]
+    floor_counts = np.zeros(n, dtype=int)
 
     pts = np.asarray(points_base, dtype=float).reshape(-1, 3) if np.size(points_base) else np.zeros((0, 3))
     finite = np.isfinite(pts).all(axis=1) if len(pts) else np.zeros(0, dtype=bool)
+    if obstacle_textured is None:
+        textured = np.ones(len(pts), dtype=bool)
+    else:
+        textured = np.asarray(obstacle_textured, dtype=bool).reshape(-1)
+        if textured.shape[0] != pts.shape[0]:
+            textured = np.ones(pts.shape[0], dtype=bool)
     pts = pts[finite]
+    textured = textured[finite] if len(finite) else textured
+    # One floor for the whole view, so an object cannot set the floor of its
+    # own patch and disappear. The height most points share wins.
+    floor_z = 0.0
+    if len(pts):
+        support = (pts[:, 0] >= 0.40) & (pts[:, 0] <= 0.90) & (np.abs(pts[:, 1]) <= 0.35)
+        zz = pts[support, 2]
+        zz = zz[np.isfinite(zz) & (np.abs(zz) <= 0.25)]
+        if zz.size >= 30:
+            edges = np.arange(-0.20, 0.25, 0.02)
+            counts, _ = np.histogram(zz, bins=edges)
+            floor_z = float(edges[int(np.argmax(counts))] + 0.01)
+    plane = _fit_floor_plane(pts) if len(pts) else None
+    obstacle_plane = _fit_floor_plane(pts, 0.40, 0.80) if len(pts) else None
+    drop_pts = pts
+    if plane is not None:
+        drop_pts = np.array(pts, dtype=float, copy=True)
+        drop_pts[:, 2] = pts[:, 2] - (plane[0] * pts[:, 0] + plane[1] * pts[:, 1] + plane[2])
+    elif len(pts):
+        near = (pts[:, 0] >= 0.22) & (pts[:, 0] <= 0.50) & (np.abs(pts[:, 1]) < 0.30)
+        if int(np.count_nonzero(near)) >= 30:
+            zz = pts[near, 2]
+            edges = np.arange(-0.30, 0.40, 0.02)
+            counts, _ = np.histogram(zz, bins=edges)
+            floor_z = float(np.clip(edges[int(np.argmax(counts))] + 0.01, -0.10, 0.10))
 
     def _bin_of(angle: float) -> Optional[int]:
         if angle < angle_min or angle > angle_max:
@@ -238,31 +763,46 @@ def build_blob_scan(
             return None
         return idx
 
-    for x, y, z in pts:
+    for (x, y, z), is_textured in zip(pts, textured):
         rng = math.hypot(float(x), float(y))
         if rng < min_range or rng > max_range or float(x) <= 0.0:
             continue
         ang = math.atan2(float(y), float(x))
         idx = _bin_of(ang)
-        if idx is None:
+        if idx is None or float(x) < obstacle_x_min or float(x) > obstacle_x_max:
             continue
-        if min_height < float(z) < max_height:
-            if rng < ranges[idx]:
-                ranges[idx] = rng
-        in_ground_band = (
-            ground_x_min <= float(x) <= ground_x_max and abs(float(y)) <= ground_y_abs
-        )
-        if not in_ground_band:
+        if obstacle_plane is not None:
+            z_ref = (
+                float(obstacle_plane[0]) * float(x)
+                + float(obstacle_plane[1]) * float(y)
+                + float(obstacle_plane[2])
+            )
+        else:
+            z_ref = floor_z
+        z_rel = float(z) - z_ref
+        if not is_textured:
             continue
-        if abs(float(z)) <= ground_z_abs:
-            ground_counts[idx] += 1
-        elif float(z) < drop_z:
-            drop_counts[idx] += 1
-            if rng < drop_ranges[idx]:
-                drop_ranges[idx] = rng
+        if min_height < z_rel < max_height:
+            obstacle_ranges_by_bin[idx].append(rng)
+        elif abs(z_rel) <= float(ground_z_abs):
+            floor_counts[idx] += 1
+
+    for idx in range(n):
+        samples = obstacle_ranges_by_bin[idx]
+        if len(samples) < drop_min_points:
+            continue
+        med = float(np.median(samples))
+        # Inside 0.50 m a thin tail above the floor is the near-field smear.
+        # A real object fills its beam, so it has to outnumber the floor there.
+        if med < 0.50 and len(samples) <= int(floor_counts[idx]):
+            continue
+        ranges[idx] = med
 
     positive = ranges[np.isfinite(ranges)]
     positive_range = float(np.min(positive)) if positive.size else None
+    shadow_range = positive_range
+    if shadow_range is None and shadow_obstacle_m is not None and math.isfinite(float(shadow_obstacle_m)):
+        shadow_range = float(shadow_obstacle_m)
 
     corridor = []
     for idx in range(n):
@@ -270,51 +810,22 @@ def build_blob_scan(
         if abs(ang) <= corridor_half_angle:
             corridor.append(idx)
 
-    bins_with_ground = [idx for idx in corridor if ground_counts[idx] >= ground_min_points]
-    ground_set = set(bins_with_ground)
-    drop_marked = False
-    drop_range = None
-    for idx in corridor:
-        if drop_counts[idx] >= drop_min_points and math.isfinite(drop_ranges[idx]):
-            if drop_ranges[idx] < ranges[idx]:
-                ranges[idx] = drop_ranges[idx]
-            drop_marked = True
-            if drop_range is None or drop_ranges[idx] < drop_range:
-                drop_range = float(drop_ranges[idx])
-            continue
-        if ground_counts[idx] >= ground_min_points or not ground_set:
-            continue
-        # A hole counts only when floor is still visible on both sides of it.
-        # One textured patch must not turn the neighboring empty bins into a cliff.
-        if (idx - 1) not in ground_set or (idx + 1) not in ground_set:
-            continue
-        mark = max(min_range, ground_x_min)
-        if mark < ranges[idx]:
-            ranges[idx] = mark
-        drop_marked = True
-        if drop_range is None or mark < drop_range:
-            drop_range = float(mark)
-
-    # Center corridor empty while the sides still see the floor: the ground
-    # ends in front of the robot (a stair edge wider than one angular bin).
-    center = []
-    sides = []
-    for idx in corridor:
-        ang = angle_min + idx * angle_increment
-        if abs(ang) <= 0.25:
-            center.append(idx)
-        elif abs(ang) <= corridor_half_angle:
-            sides.append(idx)
-    if any(idx in ground_set for idx in sides):
-        for idx in center:
-            if idx in ground_set:
-                continue
-            mark = max(min_range, ground_x_min)
-            if mark < ranges[idx]:
-                ranges[idx] = mark
-            drop_marked = True
-            if drop_range is None or mark < drop_range:
-                drop_range = float(mark)
+    drop_marked, drop_range = _corridor_step(
+        drop_pts,
+        0.0 if plane is not None else floor_z,
+        obstacle_range_m=shadow_range,
+        ground_x_min=ground_x_min,
+        ground_x_max=min(float(ground_x_max), 0.72),
+        ground_y_abs=ground_y_abs,
+        ground_z_abs=ground_z_abs,
+        drop_z=drop_z,
+        corridor_half_angle=corridor_half_angle,
+        ground_min_points=ground_min_points,
+    )
+    if drop_marked and drop_range is not None:
+        for idx in corridor:
+            if drop_range < ranges[idx]:
+                ranges[idx] = drop_range
 
     return {
         'ranges': ranges.tolist(),
@@ -322,6 +833,10 @@ def build_blob_scan(
         'angle_max': float(angle_min + (n - 1) * angle_increment),
         'angle_increment': float(angle_increment),
         'obstacle_range_m': positive_range,
+        'floor_z_m': float(
+            obstacle_plane[2] + 0.55 * obstacle_plane[0]
+            if obstacle_plane is not None else floor_z
+        ),
         'drop': bool(drop_marked),
         'drop_range_m': drop_range,
     }

@@ -7,9 +7,19 @@
 # Mount fields are measured on the robot, not estimated by the chessboard:
 #   camera_x_m:        forward offset of the pair from base_footprint
 #   camera_height_m:   height of the cameras above the ground
-#   camera_pitch_rad:  downward pitch (0.35 rad is about 20 degrees)
+#   camera_pitch_rad:  downward pitch (Inky: 0.354706 rad, about 20.3 degrees)
 #   baseline_m:        measured center-to-center distance; the calibrated
 #                      baseline is also stored as baseline_calibrated_m
+#
+# Optional fixed focus (v4l2 focus_absolute). The Arducams autofocus by
+# default, which blurs the image and changes the focal length the calibration
+# measured. stereo.launch.py locks each camera to these values; leave them out
+# to keep autofocus. Inky: left (1080P) 330, right (IMX219) 230.
+#   left_focus_absolute, right_focus_absolute
+#
+# If a camera gets bumped, the depth node logs "out of alignment" and turns
+# stereo hazards off. Re-align without a chessboard (robot still, stereo
+# running): ros2 run turtlebot3_navigation2 stereo_refine_extrinsics.py --ros-args -r __ns:=/inky
 
 image_width: 320
 image_height: 240
@@ -19,9 +29,9 @@ right_camera_matrix: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 right_distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
 R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 T: [-0.08, 0.0, 0.0]
-baseline_m: 0.08
+baseline_m: 0.0508
 baseline_calibrated_m: 0.0
-camera_x_m: 0.05
-camera_height_m: 0.08
-camera_pitch_rad: 0.35
+camera_x_m: 0.0254
+camera_height_m: 0.127
+camera_pitch_rad: 0.354706
 rms: 0.0
