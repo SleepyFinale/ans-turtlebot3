@@ -11,7 +11,10 @@ import os
 
 from ament_index_python.packages import get_package_prefix
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction, RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -31,6 +34,51 @@ def _load_stereo_common():
     return module
 
 
+def _calibration_focus(path: str):
+    """Fixed focus (left, right) stored with the calibration, or None for each.
+
+    Both Arducams default to continuous autofocus. The lens moves while the
+    robot drives, which blurs the image and changes the focal length the
+    calibration measured, so a calibrated pair runs at a fixed focus.
+    """
+    try:
+        import yaml
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = yaml.safe_load(handle) or {}
+    except Exception:
+        return None, None
+    out = []
+    for key in ('left_focus_absolute', 'right_focus_absolute'):
+        try:
+            out.append(int(data[key]))
+        except (KeyError, TypeError, ValueError):
+            out.append(None)
+    return out[0], out[1]
+
+
+def _focus_command(devices_and_focus):
+    """One shell step that locks focus on each camera before its driver opens it.
+
+    UVC cameras time out (and can wedge until a USB reset) when controls are
+    written while the driver is starting, so this runs alone and the camera
+    nodes start after it exits. focus_absolute is ignored while autofocus is
+    on, and v4l2_camera writes focus_absolute before autofocus, so autofocus
+    has to be off already when the node starts.
+    """
+    steps = []
+    for device, focus in devices_and_focus:
+        if focus is None:
+            continue
+        steps.append(
+            f'timeout 5 v4l2-ctl -d {device} -c focus_automatic_continuous=0 && '
+            f'timeout 5 v4l2-ctl -d {device} -c focus_absolute={int(focus)} || '
+            f'echo "could not lock focus on {device}; it stays on autofocus" >&2'
+        )
+    if not steps:
+        return None
+    return ExecuteProcess(cmd=['bash', '-c', '; '.join(steps)], output='screen')
+
+
 def _setup(context):
     ns = LaunchConfiguration('namespace').perform(context).strip().strip('/')
     calib_override = LaunchConfiguration('calibration_file').perform(context)
@@ -43,18 +91,20 @@ def _setup(context):
     close_obstacle_m = float(LaunchConfiguration('close_obstacle_m').perform(context))
 
     common = _load_stereo_common()
-    devices = common.list_capture_devices()
-    if len(devices) < 2:
+    cameras = common.list_stereo_cameras()
+    if len(cameras) < 2:
         return [LogInfo(
             msg=(
-                f'stereo: found {len(devices)} capture device(s) {devices}; '
+                f'stereo: found {len(cameras)} camera(s) {cameras}; '
                 'not starting cameras or the depth node'
             )
         )]
 
-    left_dev, right_dev = devices[0], devices[1]
+    left_cam, right_cam = cameras[0], cameras[1]
     if swap:
-        left_dev, right_dev = right_dev, left_dev
+        left_cam, right_cam = right_cam, left_cam
+    left_dev = left_cam['path']
+    right_dev = right_cam['path']
 
     calib_path = common.calibration_file_path(ns, calib_override)
     prefix = f'{ns}/' if ns else ''
@@ -63,19 +113,27 @@ def _setup(context):
     left_ns = f'{prefix}stereo_left'
     right_ns = f'{prefix}stereo_right'
 
-    def _camera(device: str, namespace: str, frame_id: str, name: str) -> Node:
+    left_focus, right_focus = _calibration_focus(calib_path)
+
+    def _camera(device: str, namespace: str, frame_id: str, name: str, focus) -> Node:
+        params = {
+            'video_device': device,
+            'pixel_format': pixel_format,
+            'output_encoding': 'rgb8',
+            'image_size': [width, height],
+            'camera_frame_id': frame_id,
+        }
+        if focus is not None:
+            # v4l2_camera writes every control back to its default on start,
+            # which turns autofocus on again unless these are given.
+            params['focus_automatic_continuous'] = False
+            params['focus_absolute'] = int(focus)
         return Node(
             package='v4l2_camera',
             executable='v4l2_camera_node',
             name=name,
             namespace=namespace,
-            parameters=[{
-                'video_device': device,
-                'pixel_format': pixel_format,
-                'output_encoding': 'rgb8',
-                'image_size': [width, height],
-                'camera_frame_id': frame_id,
-            }],
+            parameters=[params],
             output='screen',
         )
 
@@ -91,13 +149,9 @@ def _setup(context):
         'close_obstacle_m': close_obstacle_m,
     }
 
-    return [
-        LogInfo(msg=(
-            f'stereo: left={left_dev} right={right_dev} '
-            f'size={width}x{height} calibration={calib_path}'
-        )),
-        _camera(left_dev, left_ns, left_frame, 'v4l2_camera'),
-        _camera(right_dev, right_ns, right_frame, 'v4l2_camera'),
+    nodes = [
+        _camera(left_dev, left_ns, left_frame, 'v4l2_camera', left_focus),
+        _camera(right_dev, right_ns, right_frame, 'v4l2_camera', right_focus),
         Node(
             package='turtlebot3_navigation2',
             executable='stereo_depth_node.py',
@@ -106,6 +160,21 @@ def _setup(context):
             parameters=[depth_params],
             output='screen',
         ),
+    ]
+    focus = _focus_command([(left_dev, left_focus), (right_dev, right_focus)])
+    info = LogInfo(msg=(
+        f'stereo: left={left_dev} ({left_cam["card"]}) '
+        f'right={right_dev} ({right_cam["card"]}) '
+        f'size={width}x{height} calibration={calib_path} '
+        f'focus={left_focus if left_focus is not None else "auto"}/'
+        f'{right_focus if right_focus is not None else "auto"}'
+    ))
+    if focus is None:
+        return [info, *nodes]
+    return [
+        info,
+        focus,
+        RegisterEventHandler(OnProcessExit(target_action=focus, on_exit=nodes)),
     ]
 
 

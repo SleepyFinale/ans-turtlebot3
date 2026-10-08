@@ -100,22 +100,22 @@ DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
 def _stereo_calibration_usable(path: str) -> bool:
-    """True when the yaml exists and the left focal length is a real calibration."""
-    if not path or not os.path.isfile(path):
-        return False
+    """True when the stereo yaml passes the shared physical sanity checks."""
     try:
-        with open(path, 'r', encoding='utf-8') as handle:
-            data = yaml.safe_load(handle)
+        import importlib.util
+        common_path = os.path.join(
+            get_package_prefix('turtlebot3_navigation2'),
+            'lib',
+            'turtlebot3_navigation2',
+            'stereo_common.py',
+        )
+        spec = importlib.util.spec_from_file_location('stereo_common_gate', common_path)
+        if spec is None or spec.loader is None:
+            return False
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return bool(module.calibration_is_usable(path))
     except Exception:
-        return False
-    if not isinstance(data, dict):
-        return False
-    matrix = data.get('left_camera_matrix')
-    if not isinstance(matrix, (list, tuple)) or len(matrix) < 1:
-        return False
-    try:
-        return float(matrix[0]) > 1.0
-    except (TypeError, ValueError):
         return False
 
 

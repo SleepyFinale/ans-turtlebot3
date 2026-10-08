@@ -48,18 +48,26 @@ class StereoDepthNode(Node):
         self.declare_parameter('sync_slop_sec', 0.03)
         self.declare_parameter('min_range_m', 0.12)
         self.declare_parameter('max_range_m', 1.5)
-        self.declare_parameter('min_obstacle_height_m', 0.03)
+        self.declare_parameter('min_obstacle_height_m', 0.025)
         # base_scan is 0.172 m above base_link, and base_link is 0.010 m above
         # base_footprint, so the lidar plane is 0.182 m above the ground.
         self.declare_parameter('lidar_height_m', 0.182)
-        self.declare_parameter('ground_x_min_m', 0.40)
+        self.declare_parameter('ground_x_min_m', 0.22)
         self.declare_parameter('ground_x_max_m', 1.20)
-        self.declare_parameter('drop_z_m', -0.08)
+        self.declare_parameter('drop_z_m', -0.15)
         self.declare_parameter('min_valid_ratio', 0.05)
         self.declare_parameter('cloud_stride', 4)
         self.declare_parameter('num_disparities', 128)
         self.declare_parameter('block_size', 5)
         self.declare_parameter('close_obstacle_m', 0.45)
+        # StereoBM's textureThreshold, applied to SGBM output. Blank floor
+        # matches are not obstacles.
+        self.declare_parameter('texture_threshold', 12.0)
+        # SGBM only searches along rows. When a camera is bumped, features land
+        # rows apart and every depth is noise, so the node checks the row error
+        # against real matches and goes quiet instead of reporting garbage.
+        self.declare_parameter('alignment_check_sec', 5.0)
+        self.declare_parameter('max_row_error_px', 2.0)
 
         ns = _namespace_of(self)
         calib_param = str(self.get_parameter('calibration_file').value).strip()
@@ -84,15 +92,26 @@ class StereoDepthNode(Node):
         self._drop_z = float(self.get_parameter('drop_z_m').value)
         self._min_valid_ratio = float(self.get_parameter('min_valid_ratio').value)
         self._close_obstacle_m = float(self.get_parameter('close_obstacle_m').value)
+        self._texture_threshold = float(self.get_parameter('texture_threshold').value)
         self._cloud_stride = max(1, int(self.get_parameter('cloud_stride').value))
+        self._alignment_period = max(0.0, float(self.get_parameter('alignment_check_sec').value))
+        self._max_row_error = float(self.get_parameter('max_row_error_px').value)
+        self._last_alignment_s = 0.0
+        self._row_error_px = None
+        self._misaligned_checks = 0
+        self._misaligned = False
 
         self._bridge = CvBridge()
         self._last_process_s = 0.0
+        self._last_status_s = 0.0
         self._obstacle_streak = 0
         self._drop_streak = 0
+        self._shadow_obstacle_m = None
+        self._shadow_until_s = 0.0
         self._warned_uncalibrated = False
         self._calibrated = False
         self._maps = None
+        self._num_disp = 128
 
         self._scan_pub = self.create_publisher(LaserScan, 'stereo_blob_scan', 10)
         self._points_pub = self.create_publisher(PointCloud2, 'stereo/points', 5)
@@ -148,6 +167,7 @@ class StereoDepthNode(Node):
             map2 = cv2.initUndistortRectifyMap(k2, d2, _r2, _p2, size, cv2.CV_32FC1)
             num_disp = int(self.get_parameter('num_disparities').value)
             num_disp = max(16, num_disp - (num_disp % 16))
+            self._num_disp = num_disp
             block = int(self.get_parameter('block_size').value)
             if block % 2 == 0:
                 block += 1
@@ -159,19 +179,20 @@ class StereoDepthNode(Node):
                 P1=8 * block * block,
                 P2=32 * block * block,
                 disp12MaxDiff=1,
-                uniquenessRatio=10,
+                preFilterCap=31,
+                uniquenessRatio=15,
                 speckleWindowSize=50,
                 speckleRange=2,
                 mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
             )
             baseline = float(np.linalg.norm(translation))
             if baseline < 1e-4:
-                baseline = float(data.get('baseline_m', 0.08))
-            optical_r = stereo_common.left_optical_rotation(float(data.get('camera_pitch_rad', 0.35)))
+                baseline = float(data.get('baseline_m', 0.0508))
+            optical_r = stereo_common.left_optical_rotation(float(data.get('camera_pitch_rad', 0.354706)))
             optical_t = stereo_common.left_camera_translation(
-                float(data.get('camera_x_m', 0.05)),
+                float(data.get('camera_x_m', 0.0254)),
                 baseline,
-                float(data.get('camera_height_m', 0.08)),
+                float(data.get('camera_height_m', 0.127)),
             )
             right_t, right_r = stereo_common.right_camera_pose_in_left(rotation, translation)
         except Exception as exc:
@@ -188,6 +209,9 @@ class StereoDepthNode(Node):
             'matcher': matcher,
             'optical_r': optical_r,
             'optical_t': optical_t,
+            'k1': k1, 'd1': d1, 'k2': k2, 'd2': d2,
+            'rotation': rotation,
+            'translation': translation,
         }
         self._calibrated = True
         self._publish_static_tf(optical_r, optical_t, right_r, right_t)
@@ -265,12 +289,28 @@ class StereoDepthNode(Node):
             left = cv2.resize(left, (width, height), interpolation=cv2.INTER_AREA)
         if right.shape[1] != width or right.shape[0] != height:
             right = cv2.resize(right, (width, height), interpolation=cv2.INTER_AREA)
+        stamp = left_msg.header.stamp
+        self._check_alignment(left, right)
+        if self._misaligned:
+            self._obstacle_streak = 0
+            self._drop_streak = 0
+            self._publish_scan(stamp, None)
+            self._publish_debug({
+                'status': 'misaligned',
+                'calibrated': True,
+                'row_error_px': self._row_error_px,
+                'obstacle_range_m': None,
+                'drop': False,
+                'drop_range_m': None,
+                'obstacle_streak': 0,
+                'drop_streak': 0,
+            })
+            return
         left_r = cv2.remap(left, self._maps['map1'][0], self._maps['map1'][1], cv2.INTER_LINEAR)
         right_r = cv2.remap(right, self._maps['map2'][0], self._maps['map2'][1], cv2.INTER_LINEAR)
         disparity = self._maps['matcher'].compute(left_r, right_r).astype(np.float32) / 16.0
         valid = disparity > 0.0
         valid_ratio = float(np.count_nonzero(valid)) / float(valid.size)
-        stamp = left_msg.header.stamp
 
         if valid_ratio < self._min_valid_ratio:
             self._obstacle_streak = 0
@@ -299,6 +339,10 @@ class StereoDepthNode(Node):
             self._maps['optical_r'],
             self._maps['optical_t'],
         )
+        grad_x = cv2.Sobel(left_r, cv2.CV_32F, 1, 0, ksize=3)
+        texture = cv2.boxFilter(np.abs(grad_x), cv2.CV_32F, (5, 5))
+        now_s = time.monotonic()
+        remembered = self._shadow_obstacle_m if now_s <= self._shadow_until_s else None
         blob = stereo_common.build_blob_scan(
             base,
             min_range=self._min_range,
@@ -308,7 +352,12 @@ class StereoDepthNode(Node):
             ground_x_min=self._ground_x_min,
             ground_x_max=self._ground_x_max,
             drop_z=self._drop_z,
+            obstacle_textured=texture[mask] >= self._texture_threshold,
+            shadow_obstacle_m=remembered,
         )
+        if blob['obstacle_range_m'] is not None:
+            self._shadow_obstacle_m = blob['obstacle_range_m']
+            self._shadow_until_s = now_s + 1.0
         close = (
             blob['obstacle_range_m'] is not None
             and blob['obstacle_range_m'] <= self._close_obstacle_m
@@ -321,12 +370,61 @@ class StereoDepthNode(Node):
             'status': 'ok',
             'calibrated': True,
             'valid_ratio': valid_ratio,
+            'row_error_px': self._row_error_px,
             'obstacle_range_m': blob['obstacle_range_m'],
+            'floor_z_m': blob['floor_z_m'],
             'drop': blob['drop'],
             'drop_range_m': blob['drop_range_m'],
             'obstacle_streak': self._obstacle_streak,
             'drop_streak': self._drop_streak,
         })
+        now = time.monotonic()
+        if (now - self._last_status_s) > 2.0:
+            self._last_status_s = now
+            obstacle = blob['obstacle_range_m']
+            obstacle_text = 'none' if obstacle is None else f'{obstacle:.2f} m'
+            drop_text = 'no' if not blob['drop'] else f'yes at {blob["drop_range_m"]:.2f} m'
+            row_text = '?' if self._row_error_px is None else f'{self._row_error_px:.1f} px'
+            self.get_logger().info(
+                f'stereo floor_z={blob["floor_z_m"]:.3f} m obstacle={obstacle_text} '
+                f'drop={drop_text} row_error={row_text}'
+            )
+
+    def _check_alignment(self, left: np.ndarray, right: np.ndarray) -> None:
+        """Measure how far apart matched features sit after rectification."""
+        if self._alignment_period <= 0.0:
+            return
+        now = time.monotonic()
+        if self._last_alignment_s and (now - self._last_alignment_s) < self._alignment_period:
+            return
+        self._last_alignment_s = now
+        m = self._maps
+        pts_l, pts_r = stereo_common.match_stereo_features(left, right, max_features=1000)
+        if len(pts_l) < 30:
+            return
+        rows = stereo_common.rectified_row_error(
+            pts_l, pts_r, m['k1'], m['d1'], m['k2'], m['d2'], m['size'],
+            m['rotation'], m['translation'],
+        )
+        # Most matches are right; the median ignores the odd wrong one.
+        error = float(np.median(np.abs(rows)))
+        self._row_error_px = error
+        if error > self._max_row_error:
+            self._misaligned_checks += 1
+        else:
+            self._misaligned_checks = 0
+        was = self._misaligned
+        self._misaligned = self._misaligned_checks >= 2
+        if self._misaligned:
+            self.get_logger().error(
+                f'Stereo cameras are out of alignment: matched features are {error:.1f} px '
+                f'apart vertically (limit {self._max_row_error:.1f} px). A camera moved since '
+                'calibration. Stereo obstacles and drops are OFF. With the robot still, run: '
+                'ros2 run turtlebot3_navigation2 stereo_refine_extrinsics.py '
+                f'--ros-args -r __ns:={self.get_namespace()}'
+            )
+        elif was:
+            self.get_logger().info(f'Stereo alignment recovered ({error:.1f} px)')
 
     def _publish_scan(self, stamp, blob) -> None:
         msg = LaserScan()
