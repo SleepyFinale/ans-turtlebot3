@@ -37,6 +37,10 @@ install(
     scripts/orca_shadow_advisor.py
     scripts/standalone_world_map_tf.py
     scripts/namespace_tf_to_global_tf_relay.py
+    scripts/stereo_common.py
+    scripts/stereo_calibrate.py
+    scripts/stereo_depth_node.py
+    scripts/stereo_cmd_vel_enforcer.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

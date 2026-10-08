@@ -99,6 +99,26 @@ def _default_robot_name():
 DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
+def _stereo_calibration_usable(path: str) -> bool:
+    """True when the yaml exists and the left focal length is a real calibration."""
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = yaml.safe_load(handle)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    matrix = data.get('left_camera_matrix')
+    if not isinstance(matrix, (list, tuple)) or len(matrix) < 1:
+        return False
+    try:
+        return float(matrix[0]) > 1.0
+    except (TypeError, ValueError):
+        return False
+
+
 def _make_wait_tf_exit_handler(nav2_group, delay_sec: float):
     """Start Nav2 only when wait_for_tf exits 0; otherwise shut the launch down."""
 
@@ -165,6 +185,9 @@ def _generate_nav2_params(
     ultrasonic_emergency_obstacle_max_range: float = 0.65,
     ultrasonic_side_obstacle_max_range: float = 0.55,
     use_custom_bt_recovery_tree: bool = False,
+    nav2_enable_stereo_blob_layer: bool = False,
+    stereo_obstacle_max_range: float = 1.5,
+    stereo_observation_persistence: float = 0.40,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -325,6 +348,36 @@ def _generate_nav2_params(
                 'observation_persistence': side_persist,
                 'expected_update_rate': 0.0
             }
+
+    if nav2_enable_stereo_blob_layer:
+        # Local costmap only. Stereo must not rewrite the SLAM map, and a
+        # failed match must not clear cells (marking on, clearing off).
+        stereo_topic = 'stereo_blob_scan'
+        if namespace:
+            stereo_topic = f'/{namespace}/stereo_blob_scan'
+        costmap_node = (
+            params.get('local_costmap', {}).get('local_costmap', {}).get('ros__parameters', {})
+        )
+        if isinstance(costmap_node, dict):
+            obstacle = costmap_node.get('obstacle_layer')
+            if isinstance(obstacle, dict):
+                obs_sources = str(obstacle.get('observation_sources', 'scan')).split()
+                if 'stereo_blob' not in obs_sources:
+                    obs_sources.append('stereo_blob')
+                obstacle['observation_sources'] = ' '.join(obs_sources)
+                obstacle['stereo_blob'] = {
+                    'topic': stereo_topic,
+                    'max_obstacle_height': 2.0,
+                    'clearing': False,
+                    'marking': True,
+                    'data_type': 'LaserScan',
+                    'raytrace_max_range': stereo_obstacle_max_range,
+                    'raytrace_min_range': 0.05,
+                    'obstacle_max_range': stereo_obstacle_max_range,
+                    'obstacle_min_range': 0.05,
+                    'observation_persistence': stereo_observation_persistence,
+                    'expected_update_rate': 0.0,
+                }
 
     if use_custom_bt_recovery_tree:
         # Optional custom BT; baseline mode keeps stock Nav2 behavior tree.
@@ -511,6 +564,14 @@ def _launch_setup(context):
         'orca_stop_time_max_sec').perform(context)
     orca_min_predicted_separation_m_str = LaunchConfiguration(
         'orca_min_predicted_separation_m').perform(context)
+    nav2_enable_stereo_blob_layer_str = LaunchConfiguration(
+        'nav2_enable_stereo_blob_layer').perform(context)
+    enable_stereo_cmd_vel_enforcer_str = LaunchConfiguration(
+        'enable_stereo_cmd_vel_enforcer').perform(context)
+    stereo_calibration_file_str = LaunchConfiguration(
+        'stereo_calibration_file').perform(context)
+    stereo_close_obstacle_m_str = LaunchConfiguration(
+        'stereo_close_obstacle_m').perform(context)
 
     # Normalize the fleet-mode flags once so the rest of the launch can branch
     # on "standalone robot" vs "robot participating in a central-managed fleet".
@@ -572,7 +633,40 @@ def _launch_setup(context):
 
     tf_remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
+    stereo_ns = (ns or '').strip().strip('/')
+    if stereo_calibration_file_str.strip():
+        stereo_calib_path = os.path.expanduser(stereo_calibration_file_str.strip())
+    else:
+        stereo_calib_path = os.path.join(
+            workspace_dir, 'config', 'stereo', f'{stereo_ns or "robot"}.yaml')
+    stereo_calibrated = _stereo_calibration_usable(stereo_calib_path)
+    stereo_blob_enabled = (
+        nav2_enable_stereo_blob_layer_str.lower() in ('1', 'true', 'yes')
+        and stereo_calibrated
+    )
+    stereo_stop_enabled = (
+        enable_stereo_cmd_vel_enforcer_str.lower() in ('1', 'true', 'yes')
+        and stereo_calibrated
+    )
+
     actions = []
+
+    # Cameras and the depth node start whenever two capture devices exist.
+    # The blob scan stays empty until stereo_calib_path is a real calibration.
+    actions.append(IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(turtlebot3_nav2_launch_dir, 'stereo.launch.py')),
+        launch_arguments={
+            'namespace': ns,
+            'calibration_file': stereo_calib_path,
+            'close_obstacle_m': stereo_close_obstacle_m_str,
+        }.items(),
+    ))
+    actions.append(LogInfo(msg=(
+        f'stereo calibration {stereo_calib_path}: '
+        f'usable={stereo_calibrated} '
+        f'local_costmap={stereo_blob_enabled} stop_gate={stereo_stop_enabled}'
+    )))
 
     # --- Laser scan normalizer ---
     # Keep SLAM/Nav2 fed with a fixed-width scan stream even when the lidar
@@ -980,6 +1074,7 @@ def _launch_setup(context):
         ),
         use_custom_bt_recovery_tree=(
             use_custom_bt_recovery_tree_str.lower() in ('1', 'true', 'yes')),
+        nav2_enable_stereo_blob_layer=stereo_blob_enabled,
     )
 
     if fleet_map_relay:
@@ -1218,6 +1313,25 @@ def _launch_setup(context):
         output='screen',
         condition=IfCondition(enable_ultrasonic_cmd_vel_enforcer_str),
     ))
+
+    # Stereo stop is armed only after a usable calibration file exists.
+    # One bad frame is ignored inside the enforcer (required_streak >= 2).
+    if stereo_stop_enabled:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='stereo_cmd_vel_enforcer.py',
+            name='stereo_cmd_vel_enforcer',
+            namespace=ns if ns else None,
+            parameters=[{
+                'debug_topic': 'stereo/debug',
+                'cmd_vel_topic': 'cmd_vel',
+                'publish_hz': 20.0,
+                'hold_sec': 0.50,
+                'close_obstacle_m': float(stereo_close_obstacle_m_str),
+                'required_streak': 2,
+            }],
+            output='screen',
+        ))
 
     # --- ORCA shadow/advisory module ---
     # This stays decoupled from core Nav2 control so teams can run it in
@@ -1626,6 +1740,25 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'orca_min_predicted_separation_m', default_value='0.26',
             description='Predicted minimum separation threshold used for ORCA conflict checks (m).'),
+        DeclareLaunchArgument(
+            'nav2_enable_stereo_blob_layer', default_value='true',
+            description=(
+                'Inject stereo_blob_scan into the local costmap when '
+                'config/stereo/<namespace>.yaml is a usable calibration. '
+                'Does nothing without that file, and never writes the global costmap.')),
+        DeclareLaunchArgument(
+            'enable_stereo_cmd_vel_enforcer', default_value='true',
+            description=(
+                'Zero cmd_vel on a close stereo obstacle or a confirmed drop. '
+                'Starts only when the stereo calibration file is usable.')),
+        DeclareLaunchArgument(
+            'stereo_calibration_file', default_value='',
+            description=(
+                'Override for ~/turtlebot3/config/stereo/<namespace>.yaml. '
+                'Empty uses that default path.')),
+        DeclareLaunchArgument(
+            'stereo_close_obstacle_m', default_value='0.45',
+            description='Forward range (m) at which a stereo obstacle triggers the stop gate.'),
         DeclareLaunchArgument(
             'nav2_enable_ultrasonic_blob_layer', default_value='true',
             description='Inject ultrasonic_blob_scan into Nav2 obstacle_layer sources.'),

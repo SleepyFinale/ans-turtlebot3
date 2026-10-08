@@ -1,0 +1,27 @@
+# Schema for config/stereo/<namespace>.yaml
+#
+# stereo_calibrate.py writes this file (for Inky: config/stereo/inky.yaml).
+# The depth node ignores a file whose left_camera_matrix focal length is not
+# greater than 1, so this template does not arm Nav2 or the stop gate.
+#
+# Mount fields are measured on the robot, not estimated by the chessboard:
+#   camera_x_m:        forward offset of the pair from base_footprint
+#   camera_height_m:   height of the cameras above the ground
+#   camera_pitch_rad:  downward pitch (0.35 rad is about 20 degrees)
+#   baseline_m:        measured center-to-center distance; the calibrated
+#                      baseline is also stored as baseline_calibrated_m
+
+image_width: 320
+image_height: 240
+left_camera_matrix: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+left_distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+right_camera_matrix: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+right_distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+T: [-0.08, 0.0, 0.0]
+baseline_m: 0.08
+baseline_calibrated_m: 0.0
+camera_x_m: 0.05
+camera_height_m: 0.08
+camera_pitch_rad: 0.35
+rms: 0.0
