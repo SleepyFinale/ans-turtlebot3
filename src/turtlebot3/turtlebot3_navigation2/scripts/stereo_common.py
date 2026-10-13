@@ -388,6 +388,131 @@ def rectified_to_base(
     return pts_shape(left @ base_rot.T + np.asarray(camera_translation, dtype=float).reshape(3))
 
 
+def expected_floor_disparity(
+    size: Tuple[int, int],
+    rect_projection: np.ndarray,
+    rectify_rotation: np.ndarray,
+    optical_rotation: np.ndarray,
+    camera_translation: np.ndarray,
+    baseline_m: float,
+) -> dict:
+    """Where each rectified-left pixel's ray meets the floor, and the disparity it would have.
+
+    Pixels whose ray does not reach the floor ahead get NaN. The mount (height,
+    pitch) fixes this map, so it is built once per calibration.
+    """
+    width, height = int(size[0]), int(size[1])
+    p = np.asarray(rect_projection, dtype=float)
+    f, cx, cy = float(p[0, 0]), float(p[0, 2]), float(p[1, 2])
+    uu, vv = np.meshgrid(np.arange(width, dtype=float), np.arange(height, dtype=float))
+    rays = np.stack([(uu - cx) / f, (vv - cy) / f, np.ones_like(uu)], axis=-1)
+    to_base = np.asarray(optical_rotation, dtype=float) @ np.asarray(rectify_rotation, dtype=float).T
+    dirs = rays @ to_base.T
+    origin = np.asarray(camera_translation, dtype=float).reshape(3)
+    down = dirs[..., 2] < -1e-6
+    # Rays have rectified depth 1, so the scale to the floor is the rectified depth.
+    depth = np.where(down, -origin[2] / np.where(down, dirs[..., 2], -1.0), np.nan)
+    x = origin[0] + depth * dirs[..., 0]
+    y = origin[1] + depth * dirs[..., 1]
+    return {
+        'x': x,
+        'y': y,
+        'disparity': f * float(baseline_m) / depth,
+    }
+
+
+def ray_drop_check(
+    disparity: np.ndarray,
+    texture: np.ndarray,
+    floor: dict,
+    *,
+    x_min: float = 0.15,
+    x_max: float = 0.72,
+    bin_m: float = 0.05,
+    y_abs: float = 0.25,
+    texture_min: float = 20.0,
+    min_hole_px: int = 40,
+    hole_fraction: float = 0.25,
+    hole_ratio: float = 3.0,
+    below_scale: float = 0.6,
+    min_column: int = 0,
+) -> Tuple[bool, Optional[float]]:
+    """A drop is where pixels aimed at the floor see something much farther away.
+
+    Each pixel aimed at the floor within x_min..x_max is compared with the
+    disparity the floor would give there. Much smaller disparity means the
+    surface is below the floor: over an edge the ray reaches the ground far
+    below. The 3D cloud cannot show this because that ground is usually past
+    the range cut. Only textured pixels count, since blank surfaces match
+    nothing reliably. A glossy surface mirrors the room, so a few of its
+    pixels also read as far away (about 3-12% of a band on Inky's table);
+    over a real edge it is 40-60%. With no floor seen, a band is a hole only
+    when hole_fraction of all its pixels say so. Once real floor has matched
+    closer in, a band whose textured pixels are mostly far below counts on
+    its own: past a stair edge the view is often a plain wall, so only 13-18%
+    of the band has texture at all. min_column is the first column SGBM can
+    match (numDisparities); pixels left of it never have a disparity.
+
+    Returns (drop, range_m). A hole followed by floor farther out is a bad
+    patch, not an edge.
+    """
+    disp = np.asarray(disparity, dtype=np.float32)
+    tex = np.asarray(texture, dtype=np.float32)
+    x = floor['x']
+    expect = floor['disparity']
+    in_band = (
+        np.isfinite(x) & (np.abs(floor['y']) <= float(y_abs))
+        & (x >= float(x_min)) & (x < float(x_max))
+    )
+    in_band[:, :max(0, int(min_column))] = False
+    usable = in_band & (disp > 0.0) & (tex >= float(texture_min))
+    if not np.any(usable):
+        return False, None
+    band_x = x[in_band]
+    xs = x[usable]
+    d = disp[usable]
+    e = expect[usable]
+    tol = np.maximum(3.0, 0.25 * e)
+    on_floor = np.abs(d - e) <= tol
+    below = d < float(below_scale) * e
+    above = d > e + tol
+    edges = np.arange(float(x_min), float(x_max) + 1e-9, float(bin_m))
+    states = []
+    seen_floor = False
+    for i in range(edges.size - 1):
+        sel = (xs >= edges[i]) & (xs < edges[i + 1])
+        n_floor = int(np.count_nonzero(on_floor & sel))
+        n_below = int(np.count_nonzero(below & sel))
+        n_above = int(np.count_nonzero(above & sel))
+        n_band = int(np.count_nonzero((band_x >= edges[i]) & (band_x < edges[i + 1])))
+        dominant = (
+            n_below >= int(min_hole_px)
+            and n_below >= float(hole_ratio) * (n_floor + n_above)
+        )
+        if dominant and (seen_floor or n_below >= float(hole_fraction) * n_band):
+            states.append('hole')
+        elif n_floor >= int(min_hole_px) and n_floor >= n_below:
+            states.append('floor')
+            seen_floor = True
+        else:
+            states.append('unknown')
+    for i, state in enumerate(states):
+        if state != 'hole':
+            continue
+        later = states[i + 1:]
+        if 'floor' in later:
+            continue
+        # One hole bin at the far end is enough; otherwise the next bin must agree.
+        if later and later[0] != 'hole':
+            continue
+        # The band before the first hole straddles the edge unless it is
+        # clearly floor, so the edge may be anywhere in it. Report its start.
+        if i > 0 and states[i - 1] != 'floor':
+            return True, float(edges[i - 1])
+        return True, float(edges[i])
+    return False, None
+
+
 def filter_disparity_to_ground(
     disparity: np.ndarray,
     *,
@@ -708,6 +833,7 @@ def build_blob_scan(
     corridor_half_angle: float = 0.60,
     obstacle_textured: Optional[np.ndarray] = None,
     shadow_obstacle_m: Optional[float] = None,
+    drop_result: Optional[Tuple[bool, Optional[float]]] = None,
 ) -> dict:
     """Project blind-band obstacles and floor drops into one forward LaserScan.
 
@@ -810,7 +936,8 @@ def build_blob_scan(
         if abs(ang) <= corridor_half_angle:
             corridor.append(idx)
 
-    drop_marked, drop_range = _corridor_step(
+    # drop_result comes from ray_drop_check, which sees ground past the range cut.
+    drop_marked, drop_range = drop_result if drop_result is not None else _corridor_step(
         drop_pts,
         0.0 if plane is not None else floor_z,
         obstacle_range_m=shadow_range,

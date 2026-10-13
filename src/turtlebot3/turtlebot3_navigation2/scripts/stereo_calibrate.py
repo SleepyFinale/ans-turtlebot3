@@ -433,6 +433,13 @@ class StereoCalibrate(Node):
         for key in ('left_focus_absolute', 'right_focus_absolute'):
             if key in previous:
                 payload[key] = previous[key]
+        # Pitch and height fitted to the floor beat the built-in defaults; keep
+        # them unless a different value was passed on the command line.
+        defaults = {'camera_x_m': 0.0254, 'camera_height_m': 0.127,
+                    'camera_pitch_rad': 0.354706, 'baseline_m': 0.0508}
+        for key, default in defaults.items():
+            if key in previous and abs(float(self._mount[key]) - default) < 1e-9:
+                payload[key] = previous[key]
         ok, reason = stereo_common.calibration_data_usable(payload)
         if not ok:
             self.get_logger().error(
