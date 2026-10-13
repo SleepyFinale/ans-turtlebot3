@@ -834,6 +834,7 @@ def build_blob_scan(
     obstacle_textured: Optional[np.ndarray] = None,
     shadow_obstacle_m: Optional[float] = None,
     drop_result: Optional[Tuple[bool, Optional[float]]] = None,
+    free_min_points: int = 8,
 ) -> dict:
     """Project blind-band obstacles and floor drops into one forward LaserScan.
 
@@ -845,6 +846,10 @@ def build_blob_scan(
     ranges = np.full(n, np.inf, dtype=float)
     obstacle_ranges_by_bin: list[list[float]] = [[] for _ in range(n)]
     floor_counts = np.zeros(n, dtype=int)
+    floor_far = np.zeros(n, dtype=float)
+    # Nearest above-floor return per beam, textured or not, weak or not.
+    above_counts = np.zeros(n, dtype=int)
+    above_near = np.full(n, np.inf, dtype=float)
 
     pts = np.asarray(points_base, dtype=float).reshape(-1, 3) if np.size(points_base) else np.zeros((0, 3))
     finite = np.isfinite(pts).all(axis=1) if len(pts) else np.zeros(0, dtype=bool)
@@ -906,12 +911,16 @@ def build_blob_scan(
         else:
             z_ref = floor_z
         z_rel = float(z) - z_ref
+        if min_height < z_rel < max_height:
+            above_counts[idx] += 1
+            above_near[idx] = min(above_near[idx], rng)
         if not is_textured:
             continue
         if min_height < z_rel < max_height:
             obstacle_ranges_by_bin[idx].append(rng)
         elif abs(z_rel) <= float(ground_z_abs):
             floor_counts[idx] += 1
+            floor_far[idx] = max(floor_far[idx], rng)
 
     for idx in range(n):
         samples = obstacle_ranges_by_bin[idx]
@@ -923,6 +932,18 @@ def build_blob_scan(
         if med < 0.50 and len(samples) <= int(floor_counts[idx]):
             continue
         ranges[idx] = med
+    obstacle_ranges = ranges.copy()
+
+    # Beams where the floor itself was matched and nothing stood on it. These
+    # clear remembered marks; beams with no floor match say nothing.
+    # The camera sits above a low object and can see floor past it, so a
+    # beam stops short of anything standing up in it, even returns too weak
+    # to count as an obstacle. Otherwise it would erase a remembered object.
+    stop = np.where(above_counts >= 3, above_near - 0.05, np.inf)
+    free_ranges = np.where(
+        (floor_counts >= int(free_min_points)) & ~np.isfinite(ranges),
+        np.minimum(floor_far, stop), np.inf,
+    )
 
     positive = ranges[np.isfinite(ranges)]
     positive_range = float(np.min(positive)) if positive.size else None
@@ -956,6 +977,8 @@ def build_blob_scan(
 
     return {
         'ranges': ranges.tolist(),
+        'obstacle_ranges': obstacle_ranges.tolist(),
+        'free_ranges': free_ranges.tolist(),
         'angle_min': float(angle_min),
         'angle_max': float(angle_min + (n - 1) * angle_increment),
         'angle_increment': float(angle_increment),
