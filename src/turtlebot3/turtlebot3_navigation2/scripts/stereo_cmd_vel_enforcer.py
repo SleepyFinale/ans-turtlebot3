@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Zero forward cmd_vel when stereo reports a close obstacle or a drop.
+"""Block forward cmd_vel when stereo reports a close obstacle or a drop.
 
 The gate waits for a second consecutive frame so one bad match does not stop
-the robot. It never stops while the depth node is uncalibrated.
+the robot. It never stops while the depth node is uncalibrated. Turning and
+reversing from the controller still pass through, so a robot stopped facing a
+remembered obstacle can still turn away from it.
 """
 
 import json
@@ -19,6 +21,9 @@ class StereoCmdVelEnforcer(Node):
         super().__init__('stereo_cmd_vel_enforcer')
         self.declare_parameter('debug_topic', 'stereo/debug')
         self.declare_parameter('cmd_vel_topic', 'cmd_vel')
+        # Controller output before the velocity smoother (Nav2 remaps cmd_vel to this).
+        self.declare_parameter('nav_cmd_topic', 'cmd_vel_nav')
+        self.declare_parameter('nav_cmd_fresh_sec', 0.3)
         self.declare_parameter('publish_hz', 20.0)
         self.declare_parameter('hold_sec', 0.50)
         self.declare_parameter('close_obstacle_m', 0.45)
@@ -32,6 +37,12 @@ class StereoCmdVelEnforcer(Node):
         self._last_hazard_time_s: Optional[float] = None
         self._last_state: Optional[bool] = None
         self._last_reason = ''
+        self._nav_cmd: Optional[Twist] = None
+        self._nav_cmd_time_s = 0.0
+        self._nav_fresh_sec = float(self.get_parameter('nav_cmd_fresh_sec').value)
+        self.create_subscription(
+            Twist, str(self.get_parameter('nav_cmd_topic').value), self._on_nav_cmd, 10,
+        )
 
         self.create_subscription(
             String,
@@ -86,6 +97,10 @@ class StereoCmdVelEnforcer(Node):
         self._last_reason = reason
         self._last_hazard_time_s = self.get_clock().now().nanoseconds * 1e-9
 
+    def _on_nav_cmd(self, msg: Twist) -> None:
+        self._nav_cmd = msg
+        self._nav_cmd_time_s = self.get_clock().now().nanoseconds * 1e-9
+
     def _tick(self) -> None:
         now_s = self.get_clock().now().nanoseconds * 1e-9
         active = (
@@ -93,7 +108,12 @@ class StereoCmdVelEnforcer(Node):
             and (now_s - self._last_hazard_time_s) <= self._hold_sec
         )
         if active:
-            self._pub.publish(Twist())
+            out = Twist()
+            nav = self._nav_cmd
+            if nav is not None and (now_s - self._nav_cmd_time_s) <= self._nav_fresh_sec:
+                out.linear.x = min(0.0, float(nav.linear.x))
+                out.angular.z = float(nav.angular.z)
+            self._pub.publish(out)
         if self._last_state is None or self._last_state != active:
             self.get_logger().info(
                 f'stereo_stop_active={active} reason={self._last_reason or "none"}'

@@ -117,7 +117,14 @@ class StereoDepthNode(Node):
         self._maps = None
         self._num_disp = 128
 
+        # Two scans for one costmap layer: stereo_blob_scan marks confirmed
+        # obstacles and drops, stereo_clear_scan clears only along beams where
+        # the floor itself was matched. Marks persist (memory) until a clear
+        # beam passes through them, so a moved object is forgotten only once
+        # the cameras see floor where it stood.
         self._scan_pub = self.create_publisher(LaserScan, 'stereo_blob_scan', 10)
+        self._clear_pub = self.create_publisher(LaserScan, 'stereo_clear_scan', 10)
+        self._prev_obstacles = None
         self._points_pub = self.create_publisher(PointCloud2, 'stereo/points', 5)
         self._debug_pub = self.create_publisher(String, 'stereo/debug', 10)
         self._tf_broadcaster = StaticTransformBroadcaster(self)
@@ -440,24 +447,53 @@ class StereoDepthNode(Node):
         elif was:
             self.get_logger().info(f'Stereo alignment recovered ({error:.1f} px)')
 
+    def _confirmed_marks(self, blob) -> np.ndarray:
+        """Hits seen in this frame and the previous one, so one bad frame is not remembered.
+
+        A neighbour within 3 beams and 0.10 m counts, which allows for the
+        robot turning between frames. Drops use the node's drop streak.
+        """
+        now = np.asarray(blob['obstacle_ranges'], dtype=float)
+        prev = self._prev_obstacles
+        self._prev_obstacles = now
+        marks = np.full(now.shape, np.inf)
+        if prev is not None and prev.shape == now.shape:
+            for i in np.flatnonzero(np.isfinite(now)):
+                lo, hi = max(0, i - 3), min(now.size, i + 4)
+                if np.any(np.abs(prev[lo:hi] - now[i]) <= 0.10):
+                    marks[i] = now[i]
+        if blob['drop'] and self._drop_streak >= 2:
+            marks = np.minimum(marks, np.asarray(blob['ranges'], dtype=float))
+        return marks
+
     def _publish_scan(self, stamp, blob) -> None:
         msg = LaserScan()
         msg.header.stamp = stamp
         msg.header.frame_id = self._parent_frame
+        msg.range_min = float(self._min_range)
+        msg.range_max = float(self._max_range)
         if blob is None:
+            self._prev_obstacles = None
             msg.angle_min = -1.5707963
             msg.angle_max = 1.5707963
             msg.angle_increment = 0.0174533
             count = int(round((msg.angle_max - msg.angle_min) / msg.angle_increment)) + 1
             msg.ranges = [float('inf')] * count
-        else:
-            msg.angle_min = float(blob['angle_min'])
-            msg.angle_max = float(blob['angle_max'])
-            msg.angle_increment = float(blob['angle_increment'])
-            msg.ranges = [float(v) for v in blob['ranges']]
-        msg.range_min = float(self._min_range)
-        msg.range_max = float(self._max_range)
+            self._scan_pub.publish(msg)
+            self._clear_pub.publish(msg)
+            return
+        msg.angle_min = float(blob['angle_min'])
+        msg.angle_max = float(blob['angle_max'])
+        msg.angle_increment = float(blob['angle_increment'])
+        marks = self._confirmed_marks(blob)
+        msg.ranges = [float(v) for v in marks]
         self._scan_pub.publish(msg)
+        # Clear up to a confirmed hit, or up to the farthest floor match on an
+        # empty beam. inf (no evidence) leaves the remembered cells alone.
+        free = np.asarray(blob['free_ranges'], dtype=float)
+        clear = np.where(np.isfinite(marks), marks, free)
+        msg.ranges = [float(v) for v in clear]
+        self._clear_pub.publish(msg)
 
     def _publish_cloud(self, stamp, points_base: np.ndarray) -> None:
         pts = np.asarray(points_base, dtype=float)

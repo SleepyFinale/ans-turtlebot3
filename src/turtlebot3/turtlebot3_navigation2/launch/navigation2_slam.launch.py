@@ -32,6 +32,7 @@
 # fleet_map_relay_hz, nav2_use_local_slam_map, scan_costmap_max_hz (costmap-only scan throttle),
 # slam_toolbox_mode (async|sync). Robot-side README: ans-turtlebot3 repo root.
 
+import copy
 import os
 import socket
 import tempfile
@@ -186,8 +187,8 @@ def _generate_nav2_params(
     ultrasonic_side_obstacle_max_range: float = 0.55,
     use_custom_bt_recovery_tree: bool = False,
     nav2_enable_stereo_blob_layer: bool = False,
-    stereo_obstacle_max_range: float = 1.5,
-    stereo_observation_persistence: float = 0.40,
+    stereo_obstacle_max_range: float = 1.0,
+    stereo_clear_min_range: float = 0.40,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -350,34 +351,59 @@ def _generate_nav2_params(
             }
 
     if nav2_enable_stereo_blob_layer:
-        # Local costmap only. Stereo must not rewrite the SLAM map, and a
-        # failed match must not clear cells (marking on, clearing off).
-        stereo_topic = 'stereo_blob_scan'
-        if namespace:
-            stereo_topic = f'/{namespace}/stereo_blob_scan'
-        costmap_node = (
-            params.get('local_costmap', {}).get('local_costmap', {}).get('ros__parameters', {})
-        )
-        if isinstance(costmap_node, dict):
-            obstacle = costmap_node.get('obstacle_layer')
-            if isinstance(obstacle, dict):
-                obs_sources = str(obstacle.get('observation_sources', 'scan')).split()
-                if 'stereo_blob' not in obs_sources:
-                    obs_sources.append('stereo_blob')
-                obstacle['observation_sources'] = ' '.join(obs_sources)
-                obstacle['stereo_blob'] = {
-                    'topic': stereo_topic,
-                    'max_obstacle_height': 2.0,
-                    'clearing': False,
-                    'marking': True,
-                    'data_type': 'LaserScan',
-                    'raytrace_max_range': stereo_obstacle_max_range,
-                    'raytrace_min_range': 0.05,
-                    'obstacle_max_range': stereo_obstacle_max_range,
-                    'obstacle_min_range': 0.05,
-                    'observation_persistence': stereo_observation_persistence,
-                    'expected_update_rate': 0.0,
-                }
+        # Stereo gets its own ObstacleLayer in both costmaps. Sharing the lidar
+        # layer would let lidar beams, which pass over a low object, clear it.
+        # The global costmap is fixed to the map frame, so its marks are the
+        # robot's memory: an object seen on route A stays until stereo sees
+        # floor through it again, and the planner and the explorer's path
+        # precheck route around it meanwhile. The SLAM map is never touched.
+        prefix = f'/{namespace}/' if namespace else ''
+        stereo_layer = {
+            'plugin': 'nav2_costmap_2d::ObstacleLayer',
+            'enabled': True,
+            'observation_sources': 'stereo_mark stereo_clear',
+            'footprint_clearing_enabled': True,
+            # Marks: confirmed low obstacles and drop edges.
+            'stereo_mark': {
+                'topic': f'{prefix}stereo_blob_scan',
+                'data_type': 'LaserScan',
+                'marking': True,
+                'clearing': False,
+                'max_obstacle_height': 2.0,
+                'obstacle_min_range': 0.05,
+                'obstacle_max_range': stereo_obstacle_max_range,
+                'observation_persistence': 0.0,
+                'expected_update_rate': 0.0,
+                'inf_is_valid': False,
+            },
+            # Clears: beams where the floor was matched. It starts at
+            # stereo_clear_min_range, the nearest range stereo checks for
+            # obstacles, so closer remembered cells are not erased by
+            # a beam that never looked at them.
+            'stereo_clear': {
+                'topic': f'{prefix}stereo_clear_scan',
+                'data_type': 'LaserScan',
+                'marking': False,
+                'clearing': True,
+                'max_obstacle_height': 2.0,
+                'raytrace_min_range': stereo_clear_min_range,
+                'raytrace_max_range': stereo_obstacle_max_range,
+                'observation_persistence': 0.0,
+                'expected_update_rate': 0.0,
+                'inf_is_valid': False,
+            },
+        }
+        for section in ('local_costmap', 'global_costmap'):
+            costmap_node = params.get(section, {}).get(section, {}).get('ros__parameters', {})
+            if not isinstance(costmap_node, dict):
+                continue
+            plugins = list(costmap_node.get('plugins', []))
+            if 'stereo_layer' not in plugins:
+                # Before inflation so stereo marks get the same safety halo.
+                at = plugins.index('inflation_layer') if 'inflation_layer' in plugins else len(plugins)
+                plugins.insert(at, 'stereo_layer')
+            costmap_node['plugins'] = plugins
+            costmap_node['stereo_layer'] = copy.deepcopy(stereo_layer)
 
     if use_custom_bt_recovery_tree:
         # Optional custom BT; baseline mode keeps stock Nav2 behavior tree.
