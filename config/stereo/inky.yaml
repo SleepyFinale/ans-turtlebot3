@@ -1,5 +1,8 @@
 # Stereo calibration. Mount fields are the values passed to stereo_calibrate.py.
 # R and T re-aligned by stereo_refine_extrinsics.py.
+# 2026-10-13: yaw in R corrected by +0.0184 rad so a block at 0.52 m reads 0.52 m;
+# camera_pitch_rad and camera_height_m fitted to the floor plane (checked against a
+# table edge at 0.36 m, read 0.34 m).
 image_width: 320
 image_height: 240
 left_camera_matrix:
@@ -35,25 +38,25 @@ right_distortion:
 - 0.00335121308860343
 - 0.6684918114398495
 R:
-- 0.9998795490006539
-- 0.0020798714757618076
-- 0.015380559966828503
-- -0.0036673400221218454
-- 0.9945792134213665
-- 0.10391698055321914
-- -0.01508105127008852
-- -0.10396086939219147
-- 0.994467042957085
+- 0.999266841656066
+- 0.01801600887878636
+- 0.03378169017071185
+- -0.01850601678611156
+- 0.9997272097355283
+- 0.014248980915395627
+- -0.03351576508783048
+- -0.014863698681507333
+- 0.9993276559527825
 T:
-- -0.04996588520089514
-- -0.003835612172020017
-- 0.005388339013024365
+- -0.04910357718759039
+- 0.000154202641359996
+- 0.011364450311836943
 baseline_calibrated_m: 0.05040174403691266
 rms: 0.8565776411840461
 camera_x_m: 0.0254
-camera_height_m: 0.127
-camera_pitch_rad: 0.354706
+camera_height_m: 0.1388
+camera_pitch_rad: 0.2691
 baseline_m: 0.0508
 left_focus_absolute: 330
 right_focus_absolute: 230
-extrinsics_refined_row_rms_px: 1.3472156150185701
+extrinsics_refined_row_rms_px: 1.0602379170677982

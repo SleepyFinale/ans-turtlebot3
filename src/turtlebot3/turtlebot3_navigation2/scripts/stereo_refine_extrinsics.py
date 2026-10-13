@@ -63,12 +63,30 @@ class StereoRefineExtrinsics(Node):
                            qos_profile=qos_profile_sensor_data)
         self._sync = ApproximateTimeSynchronizer([left, right], queue_size=5, slop=0.03)
         self._sync.registerCallback(self._on_pair)
+        self._got_images = False
+        self.create_timer(5.0, self._warn_no_images)
         self.get_logger().info(
             f'Collecting {self._num_pairs} pairs to re-align {self._path}. '
-            'Keep the robot still.'
+            'No chessboard needed: aim at any textured scene and keep the robot still.'
+        )
+
+    def _warn_no_images(self) -> None:
+        if self._got_images or self._done:
+            return
+        self.get_logger().warning(
+            f'No synced images on {self._sync_topics()}. Start the cameras first '
+            '(stereo.launch.py, or the SLAM/Nav2 launch) with the same ROS_DOMAIN_ID.'
+        )
+
+    def _sync_topics(self) -> str:
+        ns = self.get_namespace().rstrip('/')
+        return ' and '.join(
+            f'{ns}/{self.get_parameter(name).value}'
+            for name in ('left_image_topic', 'right_image_topic')
         )
 
     def _on_pair(self, left_msg: Image, right_msg: Image) -> None:
+        self._got_images = True
         if self._done:
             return
         now = time.monotonic()

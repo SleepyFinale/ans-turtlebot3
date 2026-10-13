@@ -63,6 +63,9 @@ class StereoDepthNode(Node):
         # StereoBM's textureThreshold, applied to SGBM output. Blank floor
         # matches are not obstacles.
         self.declare_parameter('texture_threshold', 12.0)
+        # Drops only trust pixels with clear texture. Glossy or blank surfaces
+        # mirror the room and would otherwise read as a hole.
+        self.declare_parameter('drop_texture_threshold', 20.0)
         # SGBM only searches along rows. When a camera is bumped, features land
         # rows apart and every depth is noise, so the node checks the row error
         # against real matches and goes quiet instead of reporting garbage.
@@ -93,6 +96,7 @@ class StereoDepthNode(Node):
         self._min_valid_ratio = float(self.get_parameter('min_valid_ratio').value)
         self._close_obstacle_m = float(self.get_parameter('close_obstacle_m').value)
         self._texture_threshold = float(self.get_parameter('texture_threshold').value)
+        self._drop_texture_threshold = float(self.get_parameter('drop_texture_threshold').value)
         self._cloud_stride = max(1, int(self.get_parameter('cloud_stride').value))
         self._alignment_period = max(0.0, float(self.get_parameter('alignment_check_sec').value))
         self._max_row_error = float(self.get_parameter('max_row_error_px').value)
@@ -205,6 +209,9 @@ class StereoDepthNode(Node):
             'map1': map1,
             'map2': map2,
             'q': q,
+            'floor': stereo_common.expected_floor_disparity(
+                size, p1, r1, optical_r, optical_t, baseline,
+            ),
             'r1': np.asarray(r1, dtype=float),
             'matcher': matcher,
             'optical_r': optical_r,
@@ -354,6 +361,13 @@ class StereoDepthNode(Node):
             drop_z=self._drop_z,
             obstacle_textured=texture[mask] >= self._texture_threshold,
             shadow_obstacle_m=remembered,
+            drop_result=stereo_common.ray_drop_check(
+                disparity, texture, self._maps['floor'],
+                x_min=max(0.15, self._min_range),
+                x_max=min(0.72, self._ground_x_max),
+                texture_min=self._drop_texture_threshold,
+                min_column=self._num_disp,
+            ),
         )
         if blob['obstacle_range_m'] is not None:
             self._shadow_obstacle_m = blob['obstacle_range_m']
