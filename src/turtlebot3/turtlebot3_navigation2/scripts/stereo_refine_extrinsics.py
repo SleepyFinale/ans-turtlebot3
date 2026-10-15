@@ -6,6 +6,10 @@ furniture work), run this while stereo.launch.py is publishing, and it re-fits
 the rotation between the cameras so matched features land on the same
 rectified row. Intrinsics and the baseline length stay from stereo_calibrate.py.
 The previous file is kept as <name>.yaml.bak.
+
+It can only correct how the cameras sit relative to each other. When the lens
+model from the chessboard is itself off, rows stay misaligned whatever the
+pose, and the fix is a new chessboard calibration.
 """
 
 import os
@@ -134,8 +138,10 @@ class StereoRefineExtrinsics(Node):
         )
         if not np.isfinite(after) or after > self._max_rms or inliers < 50:
             self.get_logger().error(
-                'Re-alignment did not converge; the file was not updated. '
-                'Aim at a well lit, textured scene, or rerun stereo_calibrate.py.'
+                f'Re-alignment left {after:.2f} px of row error (limit {self._max_rms:.2f} px); '
+                'the file was not updated. If the scene was well lit and textured, the lens '
+                'calibration itself is off and only a new chessboard calibration fixes it: '
+                'ros2 run turtlebot3_navigation2 stereo_calibrate.py --ros-args -r __ns:=/inky'
             )
             raise SystemExit(1)
         payload = dict(self._data)

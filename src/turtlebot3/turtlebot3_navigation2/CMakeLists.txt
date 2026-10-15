@@ -39,6 +39,7 @@ install(
     scripts/stereo_refine_extrinsics.py
     scripts/stereo_depth_node.py
     scripts/stereo_cmd_vel_enforcer.py
+    scripts/stereo_visual_odometry.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

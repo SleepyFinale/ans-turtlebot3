@@ -34,6 +34,11 @@ class StereoCalibrate(Node):
         self.declare_parameter('long_square_m', 0.2159 / 11.0)
         self.declare_parameter('short_square_m', 0.1651 / 8.0)
         self.declare_parameter('num_pairs', 12)
+        # The lens model is only right where the board has been. Views only
+        # near the top of the frame left Inky's corners and floor rows wrong,
+        # so collection continues until every cell of a 3x3 grid has seen
+        # corners in both cameras, or max_pairs is reached.
+        self.declare_parameter('max_pairs', 30)
         self.declare_parameter('min_corner_shift_px', 30.0)
         self.declare_parameter('min_pair_interval_sec', 2.0)
         self.declare_parameter('max_corner_mismatch_px', 12.0)
@@ -52,6 +57,9 @@ class StereoCalibrate(Node):
         self._long_square = float(self.get_parameter('long_square_m').value)
         self._short_square = float(self.get_parameter('short_square_m').value)
         self._num_pairs = max(4, int(self.get_parameter('num_pairs').value))
+        self._max_pairs = max(self._num_pairs, int(self.get_parameter('max_pairs').value))
+        self._covered = (set(), set())
+        self._last_coverage_log_s = 0.0
         self._min_shift = float(self.get_parameter('min_corner_shift_px').value)
         self._min_pair_interval = max(0.0, float(self.get_parameter('min_pair_interval_sec').value))
         self._max_corner_mismatch = float(self.get_parameter('max_corner_mismatch_px').value)
@@ -153,19 +161,65 @@ class StereoCalibrate(Node):
             elapsed = time.monotonic() - self._last_accept_s
             if shift < self._min_shift or elapsed < self._min_pair_interval:
                 return
+        size = (left.shape[1], left.shape[0])
+        cells_l = self._cells(corners_l, size)
+        cells_r = self._cells(corners_r, size)
+        adds = bool((cells_l - self._covered[0]) | (cells_r - self._covered[1]))
+        if len(self._objpoints) >= self._num_pairs and not adds:
+            # Enough views already; only take ones that reach new parts of the image.
+            self._log_missing_coverage()
+            return
         self._last_left = corners_l
         self._last_accept_s = time.monotonic()
-        self._image_size = (left.shape[1], left.shape[0])
+        self._image_size = size
         self._objpoints.append(self._pattern.copy())
         self._left_points.append(corners_l)
         self._right_points.append(corners_r)
+        self._covered[0].update(cells_l)
+        self._covered[1].update(cells_r)
+        missing = self._missing_cells()
         self.get_logger().info(
             f'Accepted pair {len(self._objpoints)}/{self._num_pairs} '
-            f'(corner match {match_px:.1f} px, contrast {min(contrast_l, contrast_r):.0f})'
+            f'(corner match {match_px:.1f} px, contrast {min(contrast_l, contrast_r):.0f}); '
+            + (f'still need the board near: {", ".join(missing)}' if missing else 'image fully covered')
         )
-        if len(self._objpoints) >= self._num_pairs:
+        enough = len(self._objpoints) >= self._num_pairs
+        if (enough and not missing) or len(self._objpoints) >= self._max_pairs:
+            if missing:
+                self.get_logger().warning(
+                    f'Stopping at {self._max_pairs} pairs without the board near: '
+                    f'{", ".join(missing)}. Depth there will be less accurate.'
+                )
             self._done = True
             self._solve_and_write()
+
+    _CELL_NAMES = (
+        ('top-left', 'top', 'top-right'),
+        ('left', 'center', 'right'),
+        ('bottom-left', 'bottom', 'bottom-right'),
+    )
+
+    def _cells(self, corners, size):
+        pts = self._np.asarray(corners, dtype=float).reshape(-1, 2)
+        cols = self._np.clip((pts[:, 0] * 3 / size[0]).astype(int), 0, 2)
+        rows = self._np.clip((pts[:, 1] * 3 / size[1]).astype(int), 0, 2)
+        return set(zip(rows.tolist(), cols.tolist()))
+
+    def _missing_cells(self):
+        both = self._covered[0] & self._covered[1]
+        return [
+            self._CELL_NAMES[r][c] for r in range(3) for c in range(3) if (r, c) not in both
+        ]
+
+    def _log_missing_coverage(self) -> None:
+        now = time.monotonic()
+        if now - self._last_coverage_log_s < 3.0:
+            return
+        self._last_coverage_log_s = now
+        self.get_logger().info(
+            'Move the board toward: ' + ', '.join(self._missing_cells())
+            + ' (it must be fully visible in both cameras).'
+        )
 
     def _detect_board(self, image):
         cv2 = self._cv2

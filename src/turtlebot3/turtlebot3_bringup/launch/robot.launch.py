@@ -173,6 +173,84 @@ def launch_gps_nodes(context, *args, **kwargs):
 
     return nodes
 
+def _truthy(context, name):
+    return LaunchConfiguration(name).perform(context).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def launch_base_and_fusion(context, *args, **kwargs):
+    """turtlebot3_node plus the EKF that fuses wheels, IMU, stereo VO (and GPS outdoors).
+
+    With use_ekf:=true (default) the EKF owns odom -> base_footprint and the
+    odom topic; turtlebot3_node publishes plain wheel odometry on odom/wheel
+    with no TF and without substituting the IMU heading, so the EKF gets
+    wheels and IMU as two independent measurements. use_ekf:=false restores
+    the stock driver: IMU heading inside wheel odometry, driver-owned TF.
+    """
+    robot_name = LaunchConfiguration('robot_name').perform(context)
+    namespace_override = LaunchConfiguration('namespace').perform(context)
+    ns = namespace_override if namespace_override else robot_name
+    use_ekf = _truthy(context, 'use_ekf')
+    outdoor = _truthy(context, 'outdoor')
+    usb_port = LaunchConfiguration('usb_port').perform(context)
+    tb3_param_dir = LaunchConfiguration('tb3_param_dir').perform(context)
+    ekf_param_dir = LaunchConfiguration('ekf_param_dir').perform(context)
+    ekf_gps_param_dir = os.path.join(os.path.dirname(ekf_param_dir), 'ekf_gps.yaml')
+    tf_remaps = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
+
+    base_params = [tb3_param_dir, {'namespace': ns}]
+    base_remaps = list(tf_remaps)
+    if use_ekf:
+        base_params.append({'odometry.publish_tf': False, 'odometry.use_imu': False})
+        base_remaps.append(('odom', 'odom/wheel'))
+
+    actions = [Node(
+        package='turtlebot3_node',
+        executable='turtlebot3_ros',
+        parameters=base_params,
+        arguments=['-i', usb_port],
+        remappings=base_remaps,
+        output='screen')]
+
+    if not use_ekf:
+        print('[robot.launch.py] use_ekf:=false; turtlebot3_node publishes odom and its TF directly.')
+        if outdoor:
+            print('[robot.launch.py] WARNING: outdoor GPS needs the EKF; GPS is read but not fused.')
+        return actions
+
+    ekf_files = [ekf_param_dir] + ([ekf_gps_param_dir] if outdoor else [])
+    frames = {
+        'map_frame': f'{ns}/map',
+        'odom_frame': f'{ns}/odom',
+        'base_link_frame': f'{ns}/base_footprint',
+        'world_frame': f'{ns}/odom',
+    }
+    print(f'[robot.launch.py] EKF fusing wheels + IMU + stereo VO{" + GPS" if outdoor else ""} -> {ns}/odom')
+    actions.append(Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        remappings=tf_remaps + [('odometry/filtered', 'odom')],
+        parameters=ekf_files + [dict(frames, frequency=float(
+            LaunchConfiguration('ekf_frequency').perform(context)))],
+    ))
+    if outdoor:
+        actions.append(Node(
+            package='robot_localization',
+            executable='navsat_transform_node',
+            name='navsat_transform',
+            output='screen',
+            # navsat_transform consumes the fused fix topic from auto_gps_fusion
+            # and the EKF output, and feeds odometry/gps back into the EKF.
+            remappings=tf_remaps + [('gps/fix', 'fix'), ('odometry/filtered', 'odom')],
+            parameters=[ekf_gps_param_dir, {
+                'frequency': float(LaunchConfiguration('navsat_frequency').perform(context)),
+                'world_frame': f'{ns}/odom',
+            }],
+        ))
+    return actions
+
+
 def generate_launch_description():
     TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
     ROS_DISTRO = os.environ.get('ROS_DISTRO')
@@ -278,9 +356,19 @@ def generate_launch_description():
             default_value='true',
             description='Enable GPS 2 nmea_serial_driver node'),
         DeclareLaunchArgument(
+            'use_ekf',
+            default_value='true',
+            description=(
+                'Fuse wheels, IMU, stereo visual odometry (and GPS outdoors) in an EKF that '
+                'publishes odom and odom->base_footprint. false = stock wheel+IMU odometry')),
+        DeclareLaunchArgument(
             'ekf_frequency',
-            default_value='4.0',
-            description='EKF output frequency (Hz)'),
+            default_value='30.0',
+            description='EKF output frequency (Hz); also the odom->base_footprint TF rate'),
+        DeclareLaunchArgument(
+            'ekf_param_dir',
+            default_value=ekf_param_dir,
+            description='EKF parameter file; ekf_gps.yaml next to it is added outdoors'),
         DeclareLaunchArgument(
             'navsat_frequency',
             default_value='4.0',
@@ -336,15 +424,7 @@ def generate_launch_description():
         OpaqueFunction(function=validate_opencr_port),
         OpaqueFunction(function=launch_gps_nodes),
 
-        Node(
-            package='turtlebot3_node',
-            executable='turtlebot3_ros',
-            parameters=[
-                tb3_param_dir,
-                {'namespace': effective_namespace}],
-            arguments=['-i', usb_port],
-            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
-            output='screen'),
+        OpaqueFunction(function=launch_base_and_fusion),
 
         LogInfo(
             condition=IfCondition(start_slam_with_normalizer),
@@ -364,36 +444,5 @@ def generate_launch_description():
             # Publish a single fused "fix" topic so downstream localization nodes
             # do not need to know whether one or two receivers are active.
             parameters=[{'namespace': namespace}],
-        ),
-        # The EKF only fuses GPS. Indoors nothing reads odometry/filtered
-        # (publish_tf is false), so it runs with the GPS nodes only.
-        Node(
-            package='robot_localization',
-            executable='ekf_node',
-            name='ekf_filter_node',
-            condition=IfCondition(outdoor),
-            output='screen',
-            remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
-            parameters=[ekf_param_dir, {
-                'frequency': LaunchConfiguration('ekf_frequency'),
-                'map_frame': [effective_namespace, '/map'],
-                'odom_frame': [effective_namespace, '/odom'],
-                'base_link_frame': [effective_namespace, '/base_footprint'],
-                'world_frame': [effective_namespace, '/odom'],
-            }],
-        ),
-        Node(
-            package='robot_localization',
-            executable='navsat_transform_node',
-            name='navsat_transform',
-            condition=IfCondition(outdoor),
-            output='screen',
-            # navsat_transform consumes the fused fix topic produced above and
-            # keeps GPS integration optional for indoor/default runs.
-            remappings=[('gps/fix','fix'), ('/tf', 'tf'), ('/tf_static', 'tf_static')],
-            parameters=[ekf_param_dir, {
-                'frequency': LaunchConfiguration('navsat_frequency'),
-                'world_frame': [effective_namespace, '/odom'],
-            }],
         ),
     ])
