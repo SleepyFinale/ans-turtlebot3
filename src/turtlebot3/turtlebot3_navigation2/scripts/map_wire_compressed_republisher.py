@@ -6,15 +6,15 @@ lower-bandwidth ``map_wire_z`` stream that central-side tooling can bridge more
 cheaply across Wi-Fi.
 """
 
-import zlib
+import array
 import time
+import zlib
 
 import rclpy
 from nav_msgs.msg import OccupancyGrid
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from rclpy.serialization import serialize_message
 from std_msgs.msg import UInt8MultiArray
 
 MAP_QOS = QoSProfile(
@@ -46,22 +46,24 @@ class MapWireCompressedRepublisher(Node):
         # full grid without waiting for a fresh SLAM publication.
         self._pub = self.create_publisher(
             UInt8MultiArray, output_topic, MAP_QOS)
+        # raw=True hands over the serialized grid, which is what goes on the
+        # wire anyway, so the map is never deserialized in Python.
         self.create_subscription(
-            OccupancyGrid, input_topic, self._cb, MAP_QOS)
+            OccupancyGrid, input_topic, self._cb, MAP_QOS, raw=True)
         self.get_logger().info(
             f'Map wire: {input_topic} -> {output_topic} '
             f'(zlib OccupancyGrid, <= {max_publish_hz:.2f} Hz, '
             f'compression={self._compression_level})'
         )
 
-    def _cb(self, msg: OccupancyGrid):
+    def _cb(self, raw: bytes):
         now = time.monotonic()
         if (now - self._last_publish_time) < self._min_publish_period:
             return
-        raw = serialize_message(msg)
         out = UInt8MultiArray()
-        out.data = list(
-            zlib.compress(raw, level=self._compression_level))
+        # array('B') skips rclpy's per-element range check on uint8[].
+        out.data = array.array(
+            'B', zlib.compress(raw, level=self._compression_level))
         self._pub.publish(out)
         self._last_publish_time = now
 

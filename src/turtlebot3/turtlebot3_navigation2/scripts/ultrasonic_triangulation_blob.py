@@ -7,6 +7,7 @@ standard obstacle-layer plugins without pretending the ultrasonic sensors are a
 full 360-degree lidar.
 """
 
+import array
 import json
 import math
 from typing import Dict, Optional, Tuple
@@ -491,7 +492,8 @@ class UltrasonicTriangulationBlob(Node):
         emergency_scan.range_min = scan.range_min
         emergency_scan.range_max = scan.range_max
         emergency_scan.intensities = []
-        emergency_scan.ranges = [math.inf] * len(scan.ranges)
+        # array('f') skips rclpy's per-element float check on assignment.
+        emergency_scan.ranges = array.array('f', [math.inf]) * len(scan.ranges)
         side_scan = LaserScan()
         side_scan.header = scan.header
         side_scan.angle_min = scan.angle_min
@@ -500,7 +502,7 @@ class UltrasonicTriangulationBlob(Node):
         side_scan.range_min = scan.range_min
         side_scan.range_max = scan.range_max
         side_scan.intensities = []
-        side_scan.ranges = [math.inf] * len(scan.ranges)
+        side_scan.ranges = array.array('f', [math.inf]) * len(scan.ranges)
         c = str(cluster)
         emergency_hit = False
         side_hit = False
@@ -518,9 +520,9 @@ class UltrasonicTriangulationBlob(Node):
         else:
             side_hit = True
         if emergency_hit:
-            emergency_scan.ranges = list(scan.ranges)
+            emergency_scan.ranges = array.array('f', scan.ranges)
         if side_hit:
-            side_scan.ranges = list(scan.ranges)
+            side_scan.ranges = array.array('f', scan.ranges)
         self._scan_pub_emergency.publish(emergency_scan)
         self._scan_pub_side.publish(side_scan)
 
@@ -642,7 +644,7 @@ class UltrasonicTriangulationBlob(Node):
         scan.range_max = self._max_valid_range
         span = scan.angle_max - scan.angle_min
         count = int(max(2, round(span / scan.angle_increment) + 1))
-        scan.ranges = [math.inf] * count
+        scan.ranges = array.array('f', [math.inf]) * count
         scan.intensities = []
 
         debug = {

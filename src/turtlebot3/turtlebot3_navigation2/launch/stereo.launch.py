@@ -119,7 +119,9 @@ def _setup(context):
         params = {
             'video_device': device,
             'pixel_format': pixel_format,
-            'output_encoding': 'rgb8',
+            # Every stereo consumer reads mono8. Asking the driver for it skips
+            # an rgb8 conversion and sends a third of the bytes per frame.
+            'output_encoding': 'mono8',
             'image_size': [width, height],
             'camera_frame_id': frame_id,
         }

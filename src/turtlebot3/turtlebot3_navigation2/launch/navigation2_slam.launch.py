@@ -16,21 +16,17 @@
 #
 # Namespacing-aware SLAM + Nav2 launch for TurtleBot3.
 #
-# Single-robot (no namespace):
-#   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
-#       use_sim_time:=False use_rviz:=False
+# Default (fleet, driven by the central PC over Zenoh):
+#   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py
 #
-# Multi-robot (with namespace):
-#   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
-#       robot_name:=blinky use_sim_time:=False use_rviz:=False
+# Bench test without the central PC (adds a static map -> <robot>/map so RViz
+# goals in frame `map` work):
+#   ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py fleet_mode:=false
 #
-# With central PC (start_central.sh: map_merge + tf_relay + explorer), enable
-# global TF + merged map so Nav2 goals in frame `map` match the central stack:
-#   fleet_mode:=true
-#
-# Optional: nav2_use_composition (default false on Pi), nav2_use_isolated_container (default false),
-# fleet_map_relay_hz, nav2_use_local_slam_map, scan_costmap_max_hz (costmap-only scan throttle),
-# slam_toolbox_mode (async|sync). Robot-side README: ans-turtlebot3 repo root.
+# Everything runs under the robot namespace (default: USER when the hostname is
+# a stock name such as `ubuntu`). Nav2 plans on this robot's own SLAM map and
+# TF (/<robot>/map, /<robot>/tf). The central PC never sends TF or maps back,
+# so the robot keeps driving if the link drops.
 
 import copy
 import os
@@ -171,10 +167,7 @@ def _rewrite_frame(d, key, old_val, new_val):
 def _generate_nav2_params(
     source_file,
     namespace,
-    fleet_mode: bool,
     *,
-    fleet_use_local_slam_map: bool = False,
-    fleet_map_relay: bool = False,
     costmap_scan_relay: bool = False,
     nav2_enable_range_layer: bool = False,
     nav2_enable_ultrasonic_blob_layer: bool = False,
@@ -192,12 +185,8 @@ def _generate_nav2_params(
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
-    When namespace is set and fleet_mode is False (robot alone), SLAM uses
-    frame {namespace}/map; Nav2 global frames and map_topic follow that.
-    When fleet_mode is True, Nav2 uses world frame ``map`` and merged ``/map``.
-    When fleet_mode and fleet_use_local_slam_map, Nav2 uses local SLAM ``/{ns}/map``
-    (no network ``/map`` subscription) while TF can remain global via remappings.
-    When fleet_map_relay, static layer ``map_topic`` points at ``/map_relay``.
+    With a namespace, every frame gets the ``{namespace}/`` prefix and the
+    global costmap reads this robot's SLAM map ``/{namespace}/map``.
     """
     with open(source_file) as f:
         params = yaml.safe_load(f)
@@ -235,27 +224,11 @@ def _generate_nav2_params(
             _rewrite_frame(params, 'topics', f'ultrasonic_{label}', ultra_abs+label)
             _rewrite_frame(params, 'range_topic', f'/ultrasonic_{label}', ultra_abs+label)
             _rewrite_frame(params, 'range_topic', f'ultrasonic_{label}', ultra_abs+label)
-        if not fleet_mode:
-            # Standalone namespaced robot: SLAM map frame is {ns}/map.
-            _rewrite_frame(params, 'global_frame', 'map',
-                            f'{namespace}/map')
-            _rewrite_frame(params, 'global_frame_id', 'map',
-                            f'{namespace}/map')
-            # Global costmap static layer uses this robot's SLAM map topic.
-            _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
-            _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
-        elif fleet_mode and fleet_use_local_slam_map:
-            # Fleet TF from central, but costmaps use local SLAM map (less DDS load).
-            _rewrite_frame(params, 'global_frame', 'map',
-                            f'{namespace}/map')
-            _rewrite_frame(params, 'global_frame_id', 'map',
-                            f'{namespace}/map')
-            _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
-            _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
-
-    if namespace and fleet_mode and fleet_map_relay and not fleet_use_local_slam_map:
-        _rewrite_frame(params, 'map_topic', '/map', '/map_relay')
-        _rewrite_frame(params, 'map_topic', 'map', '/map_relay')
+        # SLAM map frame is {ns}/map; the global costmap reads this robot's map.
+        _rewrite_frame(params, 'global_frame', 'map', f'{namespace}/map')
+        _rewrite_frame(params, 'global_frame_id', 'map', f'{namespace}/map')
+        _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
+        _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
 
     if nav2_enable_range_layer:
         for costmap_root in ('local_costmap', 'global_costmap'):
@@ -461,30 +434,8 @@ def _launch_setup(context):
     debug_log_dir = LaunchConfiguration('debug_log_dir').perform(context)
     debug_log_rate_hz = LaunchConfiguration('debug_log_rate_hz').perform(context)
     fleet_mode_str = LaunchConfiguration('fleet_mode').perform(context)
-    auto_fleet_wait_timeout_str = LaunchConfiguration(
-        'auto_fleet_wait_timeout_sec').perform(context)
-    auto_fleet_tf_max_age_str = LaunchConfiguration(
-        'auto_fleet_tf_max_age_sec').perform(context)
-    use_central_tf_map_str = LaunchConfiguration('use_central_tf_map').perform(
-        context)
-    fleet_map_relay_hz_str = LaunchConfiguration('fleet_map_relay_hz').perform(
-        context)
-    nav2_use_local_slam_map_str = LaunchConfiguration(
-        'nav2_use_local_slam_map').perform(context)
-    nav2_use_composition_str = LaunchConfiguration('nav2_use_composition').perform(
-        context)
-    nav2_container_name_str = LaunchConfiguration('nav2_container_name').perform(
-        context)
     slam_toolbox_mode_str = LaunchConfiguration('slam_toolbox_mode').perform(
         context)
-    container_sigterm_timeout_str = LaunchConfiguration(
-        'container_sigterm_timeout').perform(context)
-    container_sigkill_timeout_str = LaunchConfiguration(
-        'container_sigkill_timeout').perform(context)
-    nav2_use_isolated_container_str = LaunchConfiguration(
-        'nav2_use_isolated_container').perform(context)
-    fleet_tf_map_wait_timeout_str = LaunchConfiguration(
-        'fleet_tf_map_wait_timeout_sec').perform(context)
     scan_costmap_max_hz_str = LaunchConfiguration(
         'scan_costmap_max_hz').perform(context)
     enable_startup_map_seeding_str = LaunchConfiguration(
@@ -599,25 +550,10 @@ def _launch_setup(context):
     stereo_close_obstacle_m_str = LaunchConfiguration(
         'stereo_close_obstacle_m').perform(context)
 
-    # Normalize the fleet-mode flags once so the rest of the launch can branch
-    # on "standalone robot" vs "robot participating in a central-managed fleet".
-    fleet_mode_norm = fleet_mode_str.lower()
-    fleet_auto_mode = fleet_mode_norm == 'auto'
-    fleet_active = fleet_mode_norm in ('1', 'true', 'yes') or fleet_auto_mode
-    if use_central_tf_map_str.lower() in ('1', 'true', 'yes'):
-        fleet_active = True
-
-    try:
-        fleet_map_relay_hz = float(fleet_map_relay_hz_str)
-    except ValueError:
-        fleet_map_relay_hz = 0.0
-    fleet_use_local_nav_map = (
-        fleet_active and bool(ns) and
-        nav2_use_local_slam_map_str.lower() in ('1', 'true', 'yes'))
-    # Throttled merged-map relay is incompatible with Nav2 on local /<robot>/map.
-    fleet_map_relay = (
-        fleet_active and bool(ns) and fleet_map_relay_hz > 0.0
-        and not fleet_use_local_nav_map)
+    # fleet: the central PC drives this robot (map_wire_z for Zenoh).
+    # standalone: no central PC (static map -> <robot>/map for RViz goals).
+    # `auto` is accepted as an old spelling of true.
+    fleet_active = fleet_mode_str.lower() in ('1', 'true', 'yes', 'auto')
 
     try:
         scan_costmap_max_hz = float(scan_costmap_max_hz_str)
@@ -625,8 +561,6 @@ def _launch_setup(context):
         scan_costmap_max_hz = 0.0
     costmap_scan_relay = bool(ns) and scan_costmap_max_hz > 0.0
 
-    nav2_bringup_launch_dir = os.path.join(
-        get_package_share_directory('nav2_bringup'), 'launch')
     turtlebot3_nav2_launch_dir = os.path.join(
         get_package_share_directory('turtlebot3_navigation2'), 'launch')
 
@@ -776,6 +710,10 @@ def _launch_setup(context):
         )
     if ns:
         normalizer_params['frame_id_prefix'] = ns
+    if costmap_scan_relay:
+        # Costmaps get a slower copy of the scan; SLAM keeps the full rate.
+        normalizer_params['costmap_output_topic'] = 'scan_costmap'
+        normalizer_params['costmap_max_hz'] = scan_costmap_max_hz
 
     actions.append(Node(
         package='turtlebot3_navigation2',
@@ -871,37 +809,6 @@ def _launch_setup(context):
         output='screen',
     ))
 
-    if costmap_scan_relay:
-        relay_exec = os.path.join(
-            get_package_prefix('turtlebot3_navigation2'),
-            'lib',
-            'turtlebot3_navigation2',
-            'scan_costmap_relay.py',
-        )
-        if os.path.exists(relay_exec):
-            actions.append(Node(
-                package='turtlebot3_navigation2',
-                executable='scan_costmap_relay.py',
-                name='scan_costmap_relay',
-                namespace=ns,
-                parameters=[{
-                    'input_topic': 'scan_normalized',
-                    'output_topic': 'scan_costmap',
-                    'max_hz': scan_costmap_max_hz,
-                }],
-                output='screen',
-            ))
-        else:
-            costmap_scan_relay = False
-            actions.append(LogInfo(
-                msg=(
-                    f'scan_costmap_max_hz={scan_costmap_max_hz:.2f} requested, but '
-                    'scan_costmap_relay.py is not installed in turtlebot3_navigation2. '
-                    'Continuing with scan_normalized for Nav2 costmaps. '
-                    'Rebuild/install turtlebot3_navigation2 to enable scan throttling.'
-                )
-            ))
-
     if enable_startup_map_seeding_str.lower() in ('1', 'true', 'yes'):
         actions.append(Node(
             package='turtlebot3_navigation2',
@@ -917,24 +824,9 @@ def _launch_setup(context):
             output='screen',
         ))
 
-    # Fleet Nav2 listens on global /tf; robot bringup and slam_toolbox still
-    # publish on /{ns}/tf, so a relay is needed whenever central-style TF is
-    # expected but the robot is launched on its own.
-    if ns and fleet_active:
-        actions.append(Node(
-            package='turtlebot3_navigation2',
-            executable='namespace_tf_to_global_tf_relay.py',
-            name='namespace_tf_to_global_tf_relay',
-            parameters=[{'robot_namespace': ns}],
-            output='screen',
-        ))
-
-    # Standalone namespaced robot: SLAM uses {ns}/map but goals / BT often use
-    # world frame "map". Publish map -> {ns}/map on /{ns}/tf_static (Python
-    # broadcaster + periodic refresh; tf2_ros CLI under launch was unreliable).
-    # With fleet_mode:=true, Nav2 uses global /tf; this launch republishes
-    # /{ns}/tf -> /tf so the robot works without central. Central can still add
-    # world frames on /tf when the bridge is up.
+    # Standalone namespaced robot: SLAM uses {ns}/map but RViz goals use
+    # world frame "map". Publish map -> {ns}/map on /{ns}/tf_static. In fleet
+    # mode the central PC owns "map" (map_merge), so this stays off.
     if ns and not fleet_active:
         # tf2_ros.StaticTransformBroadcaster uses absolute "/tf_static". Same
         # remapping as Nav2/slam so the bridge publishes on /<ns>/tf_static.
@@ -962,23 +854,6 @@ def _launch_setup(context):
                 # Fleet bridge contract: low-rate, compressed map side channel.
                 'max_publish_hz': 1.0,
                 'compression_level': 3,
-            }],
-            output='screen',
-        ))
-
-    # Throttle merged /map (and updates) for Nav2 when Wi-Fi is constrained.
-    # This is only used when Nav2 is intentionally consuming the network /map.
-    if fleet_map_relay:
-        actions.append(Node(
-            package='turtlebot3_navigation2',
-            executable='map_throttle_relay.py',
-            name='map_throttle_relay',
-            parameters=[{
-                'input_map_topic': '/map',
-                'output_map_topic': '/map_relay',
-                'input_updates_topic': '/map_updates',
-                'output_updates_topic': '/map_updates_relay',
-                'max_map_hz': fleet_map_relay_hz,
             }],
             output='screen',
         ))
@@ -1038,18 +913,6 @@ def _launch_setup(context):
         wait_tf_env['TF_WAIT_NAMESPACE'] = ns
         wait_tf_env['TF_WAIT_MAP_FRAME'] = f'{ns}/map'
 
-    fleet_require_global_tf_before_nav2 = (
-        LaunchConfiguration('fleet_require_global_tf_before_nav2').perform(context).lower()
-        in ('1', 'true', 'yes')
-    )
-
-    if fleet_active and ns and not fleet_auto_mode and fleet_require_global_tf_before_nav2:
-        wait_tf_env['TF_WAIT_FLEET_WORLD_MAP_FRAME'] = f'{ns}/map'
-        wait_tf_env['TF_WAIT_FLEET_MAP_TIMEOUT_SEC'] = fleet_tf_map_wait_timeout_str
-        # Hold briefly while map->base stays valid so Nav2 lifecycle does not race a
-        # vanishing root `map` frame (see stabilize_fleet plan: activation race).
-        wait_tf_env['TF_WAIT_FLEET_POST_SETTLE_SEC'] = '2.0'
-
     # Gated Nav2 start: must reference the same ExecuteProcess below for OnProcessExit.
     wait_tf_proc = None
     if wait_for_tf_str.lower() == 'true':
@@ -1070,9 +933,7 @@ def _launch_setup(context):
         return float(s)
 
     nav2_params_file = _generate_nav2_params(
-        params_file, ns, fleet_active,
-        fleet_use_local_slam_map=fleet_use_local_nav_map,
-        fleet_map_relay=fleet_map_relay,
+        params_file, ns,
         costmap_scan_relay=costmap_scan_relay,
         nav2_enable_range_layer=(
             nav2_enable_range_layer_str.lower() in ('1', 'true', 'yes')),
@@ -1103,52 +964,16 @@ def _launch_setup(context):
         nav2_enable_stereo_blob_layer=stereo_blob_enabled,
     )
 
-    if fleet_map_relay:
-        nav_map_topic_str = '/map_relay'
-        nav_map_updates_str = '/map_updates_relay'
-    elif fleet_use_local_nav_map:
-        nav_map_topic_str = f'/{ns}/map'
-        nav_map_updates_str = f'/{ns}/map_updates'
-    else:
-        nav_map_topic_str = '/map'
-        nav_map_updates_str = '/map_updates'
+    map_frame_for_nav = f'{ns}/map' if ns else 'map'
 
-    if ns:
-        if fleet_use_local_nav_map:
-            map_frame_for_nav = f'{ns}/map'
-        elif fleet_active:
-            map_frame_for_nav = 'map'
-        else:
-            map_frame_for_nav = f'{ns}/map'
-    else:
-        map_frame_for_nav = 'map'
-
-    use_multirobot_nav_launch = fleet_active
-    if use_multirobot_nav_launch:
-        nav2_launch_source = PythonLaunchDescriptionSource(
-            os.path.join(
-                turtlebot3_nav2_launch_dir, 'navigation_launch_multirobot.py'))
-    else:
-        nav2_launch_source = PythonLaunchDescriptionSource(
-            [nav2_bringup_launch_dir, '/navigation_launch.py'])
-
+    nav2_launch_source = PythonLaunchDescriptionSource(
+        os.path.join(turtlebot3_nav2_launch_dir, 'navigation_launch_multirobot.py'))
     nav2_launch_args = {
         'namespace': ns,
         'use_sim_time': use_sim_time_str,
         'params_file': nav2_params_file,
         'autostart': 'True',
     }
-    # navigation_launch_multirobot spawns rclcpp component_container_isolated; stock
-    # navigation_launch.py does not — only enable composition for fleet (multirobot).
-    if fleet_active:
-        nav2_launch_args['use_composition'] = nav2_use_composition_str
-        nav2_launch_args['container_name'] = nav2_container_name_str
-    if use_multirobot_nav_launch:
-        nav2_launch_args['nav_map_topic'] = nav_map_topic_str
-        nav2_launch_args['nav_map_updates_topic'] = nav_map_updates_str
-        nav2_launch_args['container_sigterm_timeout'] = container_sigterm_timeout_str
-        nav2_launch_args['container_sigkill_timeout'] = container_sigkill_timeout_str
-        nav2_launch_args['use_isolated_container'] = nav2_use_isolated_container_str
 
     nav2_include = IncludeLaunchDescription(
         nav2_launch_source,
@@ -1163,35 +988,7 @@ def _launch_setup(context):
     else:
         nav2_group = nav2_include
 
-    if fleet_auto_mode and ns:
-        # In auto mode, keep startup order flexible: robots can start before
-        # the central stack. Delay Nav2 bringup until global TF chain exists.
-        auto_wait_env = dict(os.environ)
-        auto_wait_env['TF_WAIT_ODOM_ONLY'] = 'false'
-        auto_wait_env['TF_WAIT_TIMEOUT_SEC'] = auto_fleet_wait_timeout_str
-        auto_wait_env['TF_WAIT_MAX_AGE_SEC'] = auto_fleet_tf_max_age_str
-        auto_wait_env['TF_WAIT_STABLE_SAMPLES'] = '3'
-        auto_wait_env['TF_WAIT_MAP_FRAME'] = 'map'
-        auto_wait_env['TF_WAIT_ODOM_FRAME'] = f'{ns}/odom'
-        auto_wait_env['TF_WAIT_BASE_FRAMES'] = (
-            f'{ns}/base_footprint,{ns}/base_link'
-        )
-        # Empty namespace means the waiter listens to global /tf only.
-        auto_wait_env['TF_WAIT_NAMESPACE'] = ''
-        auto_wait_proc = ExecuteProcess(
-            cmd=['python3', wait_tf_script],
-            output='screen',
-            env=auto_wait_env,
-        )
-        actions.append(auto_wait_proc)
-        auto_delay = 3.0 if wait_for_tf_str.lower() == 'true' else 0.0
-        actions.append(RegisterEventHandler(
-            OnProcessExit(
-                target_action=auto_wait_proc,
-                on_exit=_make_wait_tf_exit_handler(nav2_group, auto_delay),
-            )
-        ))
-    elif wait_for_tf_str.lower() == 'true' and wait_tf_proc is not None:
+    if wait_tf_proc is not None:
         # Nav2 must not start on a fixed delay from launch: TimerAction(3s) raced ahead
         # of wait_for_tf and let the Nav2 stack load/activate before TF was ready
         # (local_costmap: odom/base_footprint in different trees).
@@ -1220,9 +1017,7 @@ def _launch_setup(context):
                 if ns else 'base_footprint,base_link'
             ),
         }],
-        # tf2_ros.TransformListener hard-subscribes to /tf and /tf_static. Remapping those
-        # to namespaced topics breaks fleet stacks that publish the world TF on global /tf
-        # (same rationale as navigation_launch_multirobot.py).
+        remappings=tf_remappings,
         output='screen',
         condition=IfCondition(enable_debug_logging_str),
     ))
@@ -1245,6 +1040,7 @@ def _launch_setup(context):
             'lethal_cost_threshold': 100,
             'publish_hz': 4.0,
         }],
+        remappings=tf_remappings,
         output='screen',
         condition=IfCondition(enable_lethal_watch_str),
     ))
@@ -1284,6 +1080,7 @@ def _launch_setup(context):
                 ),
             },
         ],
+        remappings=tf_remappings,
         output='screen',
         condition=IfCondition(enable_retrace_escape_str),
     ))
@@ -1359,28 +1156,30 @@ def _launch_setup(context):
             output='screen',
         ))
 
-    # --- ORCA shadow/advisory module ---
-    # This stays decoupled from core Nav2 control so teams can run it in
-    # "shadow" or "advisory" mode without changing the main planner stack.
-    actions.append(Node(
-        package='turtlebot3_navigation2',
-        executable='orca_shadow_advisor.py',
-        name='orca_shadow_advisor',
-        namespace=ns if ns else None,
-        parameters=[{
-            'mode': orca_mode_str.strip().lower(),
-            'max_linear_scale': float(orca_max_linear_scale_str),
-            'stop_time_max_sec': float(orca_stop_time_max_sec_str),
-            'min_predicted_separation_m': float(orca_min_predicted_separation_m_str),
-            'input_cmd_topic': 'cmd_vel_nav',
-            'output_cmd_topic': 'cmd_vel_orca_advised',
-            'scan_topic': 'scan_normalized',
-            'triangulation_debug_topic': 'ultrasonic_triangulation_debug',
-            'nav_path_topic': 'plan',
-            'log_topic': 'orca_shadow_debug',
-        }],
-        output='screen',
-    ))
+    # --- ORCA shadow/advisory module (experimental, off by default) ---
+    # It only publishes cmd_vel_orca_advised / orca_shadow_debug; nothing in
+    # the drive path reads them, so it runs only when asked for.
+    orca_mode = orca_mode_str.strip().lower()
+    if orca_mode in ('shadow', 'advisory'):
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='orca_shadow_advisor.py',
+            name='orca_shadow_advisor',
+            namespace=ns if ns else None,
+            parameters=[{
+                'mode': orca_mode,
+                'max_linear_scale': float(orca_max_linear_scale_str),
+                'stop_time_max_sec': float(orca_stop_time_max_sec_str),
+                'min_predicted_separation_m': float(orca_min_predicted_separation_m_str),
+                'input_cmd_topic': 'cmd_vel_nav',
+                'output_cmd_topic': 'cmd_vel_orca_advised',
+                'scan_topic': 'scan_normalized',
+                'triangulation_debug_topic': 'ultrasonic_triangulation_debug',
+                'nav_path_topic': 'plan',
+                'log_topic': 'orca_shadow_debug',
+            }],
+            output='screen',
+        ))
 
     # --- RViz (optional) ---
     if use_rviz_str.lower() == 'true':
@@ -1389,7 +1188,7 @@ def _launch_setup(context):
         # topics so the displayed map matches the robot's published map.
         rviz_remappings = []
         if ns:
-            rviz_remappings = [
+            rviz_remappings = tf_remappings + [
                 ('/map', f'/{ns}/map'),
                 ('/map_updates', f'/{ns}/map_updates'),
             ]
@@ -1495,81 +1294,17 @@ def generate_launch_description():
                 'Lower values reduce stutter in tight spaces.')),
         DeclareLaunchArgument(
             'fleet_mode', default_value='true',
-            description=('Fleet topology mode: true=merged /map + inject map TF from '
-                         'central (default for multi-robot + central PC), '
-                         'false=standalone namespaced map/TF, '
-                         'auto=wait for central global TF/map before starting Nav2.')),
-        DeclareLaunchArgument(
-            'fleet_require_global_tf_before_nav2', default_value='false',
-            description=(
-                'When fleet_mode=true, block Nav2 startup until global map->robot/map TF exists. '
-                'Default false keeps robot control loops local-first and resilient to central jitter.')),
-        DeclareLaunchArgument(
-            'auto_fleet_wait_timeout_sec', default_value='300.0',
-            description=('When fleet_mode=auto, max seconds to wait for central '
-                         'global TF/map before proceeding.')),
-        DeclareLaunchArgument(
-            'auto_fleet_tf_max_age_sec', default_value='0.6',
-            description=('When fleet_mode=auto, require fresh global TF '
-                         '(map->odom and odom->base) age <= this value. '
-                         'Set <= 0 to disable freshness gating.')),
-        DeclareLaunchArgument(
-            'use_central_tf_map', default_value='false',
-            description='Deprecated alias for fleet_mode; if true, enables global /tf and /map.'),
-        DeclareLaunchArgument(
-            'fleet_map_relay_hz', default_value='1.5',
-            description=(
-                'Fleet only: if > 0, throttle merged /map to /map_relay at this max rate (Hz). '
-                'Reduces DDS load on Wi‑Fi; requires merged /map from central. Disabled automatically '
-                'when nav2_use_local_slam_map:=true (local /<robot>/map). Set 0 to disable relay '
-                'when using merged /map without throttling.')),
-        DeclareLaunchArgument(
-            'fleet_tf_map_wait_timeout_sec', default_value='120.0',
-            description=(
-                'Fleet only (fleet_mode true, not auto): after odom->base TF, max seconds to wait '
-                'for map_merge transform map->/<robot>/map on global /tf before starting Nav2.')),
-        DeclareLaunchArgument(
-            'nav2_use_local_slam_map', default_value='true',
-            description=(
-                'Fleet only: if true, Nav2 costmaps use local /<robot>/map from SLAM instead of '
-                'merged /map (merged-map throttle relay is turned off automatically). '
-                'Helps when map->robot/map alignment is wrong; explorer goals still use world map.')),
-        DeclareLaunchArgument(
-            'nav2_use_composition', default_value='false',
-            description=(
-                'When fleet_mode is true: if true, load Nav2 in one rclcpp component container '
-                '(higher segfault risk on Pi under load). Default false uses separate processes.'
-            )),
-        DeclareLaunchArgument(
-            'nav2_container_name', default_value='nav2_container',
-            description='Component container name for Nav2 composition.'),
-        DeclareLaunchArgument(
-            'container_sigterm_timeout',
-            default_value='5',
-            description=(
-                'Fleet Nav2 only: seconds after SIGINT before launch escalates the '
-                'component container to SIGTERM (Nav2 lifecycle teardown is slow).')),
-        DeclareLaunchArgument(
-            'container_sigkill_timeout',
-            default_value='5',
-            description=(
-                'Fleet Nav2 only: seconds after SIGTERM before launch SIGKILLs the '
-                'component container.')),
-        DeclareLaunchArgument(
-            'nav2_use_isolated_container',
-            default_value='false',
-            description=(
-                'Fleet Nav2 only: if true, use component_container_isolated (can hang '
-                'on shutdown; see ros2/rclcpp#2083). Default false uses component_container.')),
+            description=('true: driven by the central PC (publishes map_wire_z for Zenoh). '
+                         'false: bench test without the central PC (static map -> <robot>/map).')),
         DeclareLaunchArgument(
             'slam_toolbox_mode', default_value='async',
             description='slam_toolbox node: async (default) or sync (mapper_params_online_sync).'),
         DeclareLaunchArgument(
             'scan_costmap_max_hz', default_value='6.0',
             description=(
-                'Namespaced robots only: if > 0, relay scan_normalized -> scan_costmap at this '
-                'max rate (Hz) for Nav2 costmaps; SLAM stays on full-rate scan_normalized. '
-                '0 disables relay. Default 6.0 for Pi fleet load; try 5–7.5 if tuning.')),
+                'Namespaced robots only: if > 0, the normalizer also publishes scan_costmap at '
+                'this max rate (Hz) for Nav2 costmaps; SLAM stays on full-rate scan_normalized. '
+                '0 feeds costmaps scan_normalized. Default 6.0 for Pi load.')),
         DeclareLaunchArgument(
             'ultrasonic_profile', default_value='safe',
             description=(
@@ -1755,8 +1490,9 @@ def generate_launch_description():
                 'If true, keep publishing memory replay during decay phase; if false, '
                 'replay only in hard phase (less phantom cost after escape turns).')),
         DeclareLaunchArgument(
-            'orca_mode', default_value='advisory',
-            description='ORCA mode: off, shadow (log only), advisory (publish limited cmd_vel).'),
+            'orca_mode', default_value='off',
+            description=('ORCA experiment: off (default, node not started), shadow (log only), '
+                         'advisory (publish cmd_vel_orca_advised; nothing drives from it).')),
         DeclareLaunchArgument(
             'orca_max_linear_scale', default_value='0.55',
             description='Max linear scaling in advisory mode (0..1).'),

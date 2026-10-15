@@ -1,9 +1,7 @@
 /**:
   ekf_filter_node:
     ros__parameters:
-      # These frames are fallback defaults from the bringup package. In normal
-      # fleet use, launch-time namespace handling provides the effective robot
-      # frame names seen on the ROS graph.
+      # robot.launch.py overrides these frames with the robot's namespace.
       frequency: 4.0
       sensor_timeout: 0.2
       two_d_mode: true
@@ -62,6 +60,7 @@
 
       # Keep world_frame aligned with the EKF odom frame so GPS corrections feed
       # the same local navigation frame instead of introducing a second world.
+      # robot.launch.py overrides it with the robot's namespace.
       world_frame: blinky/odom
       publish_filtered_gps: true
       wait_for_datum: false
