@@ -89,6 +89,9 @@ def _setup(context):
         '1', 'true', 'yes',
     )
     close_obstacle_m = float(LaunchConfiguration('close_obstacle_m').perform(context))
+    visual_odometry = LaunchConfiguration('visual_odometry').perform(context).strip().lower() in (
+        '1', 'true', 'yes',
+    )
 
     common = _load_stereo_common()
     cameras = common.list_stereo_cameras()
@@ -163,11 +166,30 @@ def _setup(context):
             output='screen',
         ),
     ]
+    # Visual odometry for the bringup EKF. Without a usable calibration it
+    # would only log an error, so it is not started at all.
+    vo_enabled = visual_odometry and common.calibration_is_usable(calib_path)
+    if vo_enabled:
+        nodes.append(Node(
+            package='turtlebot3_navigation2',
+            executable='stereo_visual_odometry.py',
+            name='stereo_visual_odometry',
+            namespace=ns if ns else None,
+            parameters=[{
+                'left_image_topic': 'stereo_left/image_raw',
+                'right_image_topic': 'stereo_right/image_raw',
+                'calibration_file': calib_path,
+                'odom_frame': f'{prefix}odom',
+                'base_frame': f'{prefix}base_footprint',
+            }],
+            output='screen',
+        ))
     focus = _focus_command([(left_dev, left_focus), (right_dev, right_focus)])
     info = LogInfo(msg=(
         f'stereo: left={left_dev} ({left_cam["card"]}) '
         f'right={right_dev} ({right_cam["card"]}) '
         f'size={width}x{height} calibration={calib_path} '
+        f'visual_odometry={vo_enabled} '
         f'focus={left_focus if left_focus is not None else "auto"}/'
         f'{right_focus if right_focus is not None else "auto"}'
     ))
@@ -206,5 +228,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'close_obstacle_m', default_value='0.45',
             description='Range (m) at which consecutive stereo obstacles count as a close stop.'),
+        DeclareLaunchArgument(
+            'visual_odometry', default_value='true',
+            description='Start stereo_visual_odometry (odom/visual) when the calibration is usable.'),
         OpaqueFunction(function=_setup),
     ])

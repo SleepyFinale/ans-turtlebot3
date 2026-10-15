@@ -1,0 +1,25 @@
+# Loaded on top of ekf.yaml only with outdoor:=true. One /** key: YAML keeps
+# only the last of two identical top-level keys.
+/**:
+  ekf_filter_node:
+    ros__parameters:
+      # GPS-derived odometry from navsat_transform corrects x/y drift.
+      odom2: odometry/gps
+      odom2_config: [true,  true,  false,
+                     false, false, false,
+                     false, false, false,
+                     false, false, false,
+                     false, false, false]
+      odom2_differential: false
+      odom2_relative: false
+
+  navsat_transform:
+    ros__parameters:
+      # Keep world_frame aligned with the EKF odom frame so GPS corrections feed
+      # the same local navigation frame instead of introducing a second world.
+      # robot.launch.py overrides it with the robot's namespace.
+      world_frame: blinky/odom
+      publish_filtered_gps: true
+      wait_for_datum: false
+      frequency: 4.0
+      zero_altitude: true

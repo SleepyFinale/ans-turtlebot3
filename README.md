@@ -11,6 +11,7 @@ This is the robot half of the fleet. Each Raspberry Pi runs bringup, SLAM Toolbo
 | Nav2 servers (namespaced TF) | `src/turtlebot3/turtlebot3_navigation2/launch/navigation_launch_multirobot.py` |
 | Nav2 / SLAM parameters | `src/turtlebot3/turtlebot3_navigation2/param/humble/burger.yaml`, `mapper_params_online_async_fast.yaml` |
 | Zenoh link to the central PC | `scripts/comms/start_zenoh_robot.sh`, `config/zenoh/robot_client.json5.tmpl` |
+| Odometry fusion (EKF) | `src/turtlebot3/turtlebot3_bringup/param/humble/ekf.yaml`, `turtlebot3_navigation2/scripts/stereo_visual_odometry.py` ([Sensor fusion](#sensor-fusion-odometry-ekf)) |
 | Shell environment | `scripts/env/ros_robot_env.bash` (sources ROS, overlay, Cyclone loopback config, domain) |
 
 ## Quick start
@@ -583,12 +584,33 @@ ros2 launch turtlebot3_bringup robot.launch.py \
   gps_baud_1:=9600 gps_baud_2:=9600
 ```
 
-If serial data becomes clean but EKF logs still show `Failed to meet update rate`, temporarily lower rates from launch args:
+If serial data becomes clean but EKF logs still show `Failed to meet update rate`, lower the rates from launch args. The EKF also publishes `odom -> base_footprint`, so keep `ekf_frequency` at 10 Hz or more for Nav2:
 
 ```bash
 ros2 launch turtlebot3_bringup robot.launch.py \
-  ekf_frequency:=4.0 navsat_frequency:=4.0
+  ekf_frequency:=10.0 navsat_frequency:=4.0
 ```
+
+### Sensor fusion (odometry EKF)
+
+`robot.launch.py` runs a `robot_localization` EKF (`ekf_filter_node`) on every robot. It publishes the fused estimate on `/<robot>/odom` and owns the `odom -> base_footprint` transform, so SLAM, Nav2 and the helper nodes use it with no changes. Every robot has the standard sensors; cameras and GPS are fused only where they exist:
+
+| Sensor | Topic | Fused | Present on |
+| --- | --- | --- | --- |
+| Wheel encoders | `odom/wheel` | forward speed | all robots |
+| 9-axis IMU (OpenCR) | `imu` | heading, yaw rate | all robots (the magnetometer reads zero, so heading is gyro + accel) |
+| Stereo visual odometry | `odom/visual` | forward speed, yaw rate | robots with two cameras and a usable `config/stereo/<robot>.yaml` (Inky) |
+| GPS via `navsat_transform` | `odometry/gps` | x, y | `outdoor:=true` only |
+| 360° LiDAR | — | through `slam_toolbox` scan matching (`map -> odom`) | all robots |
+
+Wheel yaw rate is deliberately not fused: wheels over-count turns when they slip on carpet. In a 90° spin on Inky (LiDAR scan-match reference 84.5°), wheels read 88.3°, IMU 83.7°, VO 81.2°, and the EKF 83.8°. Ultrasonics stay obstacle sensors (`laser_scan_normalizer`) and are not odometry inputs.
+
+`stereo_visual_odometry.py` starts with the stereo pair from `navigation2_slam.launch.py`. It tracks corners in the left camera at 6 Hz. Floor points get their depth from the floor plane in the stereo calibration (carpet texture repeats too much to match left/right reliably), points above the floor from a row-strip stereo match, and PnP + RANSAC gives the motion. Frames with fewer than 20 inliers, sideways motion, or impossible speeds are dropped, and the EKF rejects readings far from its estimate. Its status is on `/<robot>/stereo/vo_debug`.
+
+- `use_ekf:=false` (bringup) returns to the stock driver: IMU heading inside wheel odometry, driver-owned TF.
+- `stereo_visual_odometry:=false` (`navigation2_slam.launch.py`) leaves the EKF on wheels + IMU.
+- Parameters: `turtlebot3_bringup/param/humble/ekf.yaml`, plus `ekf_gps.yaml` outdoors.
+- Check inputs and rates: `./scripts/diagnostics/diagnose_ekf_inputs.sh <robot>`.
 
 ### ROS domain and DDS on the robot
 
@@ -623,6 +645,7 @@ If you add a topic, add it to both this template and `config/zenoh/central_route
 | `map_wire_compressed_republisher` | `map_wire_z` for Zenoh (`fleet_mode:=true`) |
 | `standalone_world_map_tf` | static `map -> <robot>/map` for RViz goals (`fleet_mode:=false` only) |
 | stereo cameras + `stereo_depth_node` + `stereo_cmd_vel_enforcer` | only when two cameras exist; costmap layer and stop gate only with a usable `config/stereo/<robot>.yaml` |
+| `stereo_visual_odometry` | `odom/visual` for the bringup EKF; only with two cameras and a usable stereo calibration (`stereo_visual_odometry:=false` to turn off) |
 
 Off by default (turn on with the matching launch argument): `enable_debug_logging`, `enable_lethal_watch`, `enable_retrace_escape`, `enable_controller_collision_watch`, `enable_ultrasonic_cmd_vel_enforcer`, `orca_mode:=shadow|advisory` (ORCA output is not wired into the drive path).
 

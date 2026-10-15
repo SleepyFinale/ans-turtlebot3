@@ -549,6 +549,8 @@ def _launch_setup(context):
         'stereo_calibration_file').perform(context)
     stereo_close_obstacle_m_str = LaunchConfiguration(
         'stereo_close_obstacle_m').perform(context)
+    stereo_visual_odometry_str = LaunchConfiguration(
+        'stereo_visual_odometry').perform(context)
 
     # fleet: the central PC drives this robot (map_wire_z for Zenoh).
     # standalone: no central PC (static map -> <robot>/map for RViz goals).
@@ -620,6 +622,7 @@ def _launch_setup(context):
             'namespace': ns,
             'calibration_file': stereo_calib_path,
             'close_obstacle_m': stereo_close_obstacle_m_str,
+            'visual_odometry': stereo_visual_odometry_str,
         }.items(),
     ))
     actions.append(LogInfo(msg=(
@@ -1518,6 +1521,11 @@ def generate_launch_description():
             description=(
                 'Override for ~/turtlebot3/config/stereo/<namespace>.yaml. '
                 'Empty uses that default path.')),
+        DeclareLaunchArgument(
+            'stereo_visual_odometry', default_value='true',
+            description=(
+                'Publish stereo visual odometry on odom/visual for the bringup EKF '
+                '(needs a usable stereo calibration).')),
         DeclareLaunchArgument(
             'stereo_close_obstacle_m', default_value='0.45',
             description='Forward range (m) at which a stereo obstacle triggers the stop gate.'),
