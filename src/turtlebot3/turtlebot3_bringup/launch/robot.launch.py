@@ -365,15 +365,21 @@ def generate_launch_description():
             # do not need to know whether one or two receivers are active.
             parameters=[{'namespace': namespace}],
         ),
+        # The EKF only fuses GPS. Indoors nothing reads odometry/filtered
+        # (publish_tf is false), so it runs with the GPS nodes only.
         Node(
             package='robot_localization',
             executable='ekf_node',
             name='ekf_filter_node',
+            condition=IfCondition(outdoor),
             output='screen',
             remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
             parameters=[ekf_param_dir, {
-                'namespace': namespace,
                 'frequency': LaunchConfiguration('ekf_frequency'),
+                'map_frame': [effective_namespace, '/map'],
+                'odom_frame': [effective_namespace, '/odom'],
+                'base_link_frame': [effective_namespace, '/base_footprint'],
+                'world_frame': [effective_namespace, '/odom'],
             }],
         ),
         Node(
@@ -386,8 +392,8 @@ def generate_launch_description():
             # keeps GPS integration optional for indoor/default runs.
             remappings=[('gps/fix','fix'), ('/tf', 'tf'), ('/tf_static', 'tf_static')],
             parameters=[ekf_param_dir, {
-                'namespace': namespace,
                 'frequency': LaunchConfiguration('navsat_frequency'),
+                'world_frame': [effective_namespace, '/odom'],
             }],
         ),
     ])

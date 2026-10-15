@@ -53,8 +53,7 @@ ros2 launch turtlebot3_bringup robot.launch.py
 cd ~/turtlebot3
 source scripts/env/ros_robot_env.bash
 
-ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
-  use_sim_time:=false use_rviz:=false fleet_mode:=true nav2_use_local_slam_map:=true
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py
 ```
 
 4. Robot Terminal 3 — Zenoh client (auto-detects robot from USER / `ROBOT_NAME`):
@@ -66,27 +65,26 @@ export PATH="$HOME/.local/bin:$PATH"
 # override: ROBOT_NAME=pinky ./scripts/comms/start_zenoh_robot.sh
 ```
 
-5. Central: `./scripts/core/start_central.sh --comms-mode bridged_domains`  
-   (optional filter: `-c` / `-b` / `-p` / `-i`)
+5. Central: `./scripts/core/start_central.sh`  
+   (optional filter: `-c` / `-b` / `-p` / `-i`). Or skip steps 2–5 and run
+   `./scripts/core/start_fleet.sh -<letters>` on the central PC.
 
 ## 3. Sanity checks
 
-On central (pick the robot’s domain from the table above):
+On central, while the robot's SLAM and Zenoh client are running:
 
 ```bash
-source /opt/ros/humble/setup.bash
-# Example for Clyde (domain 80); use 5/22/19 for blinky/pinky/inky
-ROS_DOMAIN_ID=80 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_LOCALHOST_ONLY=1 \
-  ros2 topic list | grep clyde
+cd ~/central-computer
+source scripts/env/central_env.bash          # central domain 50, Cyclone, localhost
+ros2 topic echo --once /clyde/map_wire_z --field layout   # data is arriving
+ros2 topic list | grep clyde
 ```
 
-(`ROS_LOCALHOST_ONLY=1` is OK on **central** for checking Zenoh-injected topics; do not use it on the robot’s Nav2 stack.)
-
-You should see `/<robot>/map` and/or `/<robot>/map_wire_z` and TF topics while SLAM is running.
+You should see `/<robot>/map`, `/<robot>/map_wire_z`, `/<robot>/tf_zenoh` and the `navigate_to_pose` action. All robots land in the one central domain; the robot domains in the table only matter on each Pi.
 
 ## Notes
 
 - Leave Tailscale `--accept-routes` off.
 - Do **not** expect raw DDS across TAMU without Zenoh.
-- Azure hotspot debug: skip Zenoh; use normal same-LAN DDS.
+- Zenoh is needed on every network, Azure included: robot DDS is loopback-only.
 - Sensor topics (map/tf) are outbound-only on the robot allowlist — do not add them under Zenoh `subscribers` on the robot (causes TF reinjection).

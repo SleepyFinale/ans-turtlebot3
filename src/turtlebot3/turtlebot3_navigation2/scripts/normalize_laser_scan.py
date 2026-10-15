@@ -8,11 +8,15 @@ This node serves two roles in the robot stack:
    way so low obstacles can still influence planning
 """
 
+import array
+
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from sensor_msgs.msg import Range
+from tf2_msgs.msg import TFMessage
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 import tf2_ros
 import math
 from collections import deque
@@ -39,6 +43,10 @@ class LaserScanNormalizer(Node):
         self.declare_parameter('publish_every_n_scans', 1)
         # For multi-robot: prefix for frame_id (e.g. "blinky" -> "blinky/base_scan"). Empty = use original.
         self.declare_parameter('frame_id_prefix', '')
+        # Optional second, rate-limited copy of the output for Nav2 costmaps.
+        # SLAM keeps the full-rate topic. Empty topic or max_hz <= 0 disables it.
+        self.declare_parameter('costmap_output_topic', '')
+        self.declare_parameter('costmap_max_hz', 0.0)
         
         # Ultrasonic fusion parameters. These stay separate from the lidar
         # normalization path so the robot can disable or tune them independently.
@@ -125,9 +133,21 @@ class LaserScanNormalizer(Node):
         self._range_previous_filtered = []
         self._range_last_change_time = []
         self._range_frame_mismatch_counts = {}
+        # Ultrasonic and lidar frames are fixed to the chassis, so only
+        # /tf_static is needed. Skipping /tf avoids deserializing ~50 Hz of
+        # odometry and SLAM transforms in Python.
         self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-        
+        self.create_subscription(
+            TFMessage,
+            '/tf_static',
+            self._on_tf_static,
+            QoSProfile(
+                depth=10,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            ),
+        )
+
         # Subscribe to the original scan with sensor QoS (best effort, volatile)
         # to match the typical lidar driver profile and avoid back-pressure.
         from rclpy.qos import qos_profile_sensor_data
@@ -161,6 +181,15 @@ class LaserScanNormalizer(Node):
             output_topic,
             qos_profile_sensor_data
         )
+        costmap_topic = str(self.get_parameter('costmap_output_topic').value).strip()
+        costmap_max_hz = float(self.get_parameter('costmap_max_hz').value)
+        self._costmap_publisher = None
+        self._costmap_period_ns = 0
+        self._costmap_next_ns = 0
+        if costmap_topic and costmap_max_hz > 0.0:
+            self._costmap_publisher = self.create_publisher(
+                LaserScan, costmap_topic, qos_profile_sensor_data)
+            self._costmap_period_ns = int(1e9 / costmap_max_hz)
         
         self._fixed_target_readings = target_readings
         self.target_readings = target_readings
@@ -475,7 +504,8 @@ class LaserScanNormalizer(Node):
         
         if actual_readings == self.target_readings:
             # Already correct size, just copy
-            normalized_msg.ranges = list(msg.ranges)
+            # array copy: skips rclpy's per-element check that a list gets.
+            normalized_msg.ranges = array.array('f', msg.ranges)
             normalized_msg.intensities = list(msg.intensities) if msg.intensities else []
         elif actual_readings > self.target_readings:
             # Too many readings - downsample by selecting evenly spaced indices
@@ -617,6 +647,15 @@ class LaserScanNormalizer(Node):
         
         # Publish the normalized scan
         self.publisher.publish(normalized_msg)
+        if self._costmap_publisher is not None:
+            now_ns = self.get_clock().now().nanoseconds
+            if now_ns >= self._costmap_next_ns:
+                self._costmap_next_ns = now_ns + self._costmap_period_ns
+                self._costmap_publisher.publish(normalized_msg)
+
+    def _on_tf_static(self, msg):
+        for transform in msg.transforms:
+            self.tf_buffer.set_transform_static(transform, 'tf_static')
 
 
 def main(args=None):

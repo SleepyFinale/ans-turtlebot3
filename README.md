@@ -1,67 +1,52 @@
-# TurtleBot3 fleet workspace (robot source)
+# TurtleBot3 fleet workspace (robot side)
 
-This tree is the **canonical** copy of namespaced SLAM + Nav2 launch and parameters for the ANS TurtleBot3 fleet. Deploy and **`colcon build`** on each Raspberry Pi when you change packages; sshfs from a dev machine is fine for editing but local builds on the Pi are the reliable path.
+This is the robot half of the fleet. Each Raspberry Pi runs bringup, SLAM Toolbox and Nav2 under its own namespace (`/blinky`, `/pinky`, `/inky`, `/clyde`) and talks to the central PC only through Zenoh over Tailscale. The central PC (`~/central-computer`) picks frontiers and sends `NavigateToPose` goals; everything that keeps the robot safe and moving runs here, so a dropped link stops new goals but never drives the robot blind.
 
 ## Key entry points
 
-- **SLAM + Nav2:** `src/turtlebot3/turtlebot3_navigation2/launch/navigation2_slam.launch.py`
-- **SLAM tuning:** `src/turtlebot3/turtlebot3_navigation2/param/humble/mapper_params_online_async_fast.yaml` (and siblings)
-- **Optional Pi load relief:** launch arg `scan_costmap_max_hz` (e.g. `6.0`) — costmaps subscribe to throttled `scan_costmap` while SLAM stays on full-rate `scan_normalized`.
-- **Startup map seeding automation:** launch arg `enable_startup_map_seeding:=true` in `navigation2_slam.launch.py` (run before central start)
+| What | Where |
+| --- | --- |
+| Bringup (base, lidar, URDF/TF) | `src/turtlebot3/turtlebot3_bringup/launch/robot.launch.py` |
+| SLAM + Nav2 + helpers | `src/turtlebot3/turtlebot3_navigation2/launch/navigation2_slam.launch.py` |
+| Nav2 servers (namespaced TF) | `src/turtlebot3/turtlebot3_navigation2/launch/navigation_launch_multirobot.py` |
+| Nav2 / SLAM parameters | `src/turtlebot3/turtlebot3_navigation2/param/humble/burger.yaml`, `mapper_params_online_async_fast.yaml` |
+| Zenoh link to the central PC | `scripts/comms/start_zenoh_robot.sh`, `config/zenoh/robot_client.json5.tmpl` |
+| Shell environment | `scripts/env/ros_robot_env.bash` (sources ROS, overlay, Cyclone loopback config, domain) |
 
-## Quick start for new collaborators
+## Quick start
 
-Use this for a minimal end-to-end fleet bring-up:
+Normally you do not log in to the robot at all. From the central PC:
 
-1. **[ROBOT-SBC]** On each robot (`~/turtlebot3` from the `ans-turtlebot3` checkout):
-   - `ros2 launch turtlebot3_bringup robot.launch.py`
-   - `ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py`
-2. **[CENTRAL-PC]** On central (`~/central-computer` from the `ans-central-computer` checkout):
-   - `./scripts/core/start_central.sh`
-   - `./scripts/core/start_rviz_central.sh`
-3. Verify from central:
-   - `ros2 topic echo /map --once`
-   - `ros2 action list | rg navigate_to_pose`
+```bash
+cd ~/central-computer
+./scripts/core/start_fleet.sh -i        # inky; letters b/p/i/c pick robots
+```
 
-### SSHFS editing reliability note
+That SSHes in and runs the three robot commands below, then starts the central stack. To run them by hand, use three SSH terminals on the robot:
 
-Editing robot files over SSHFS is supported, but for reliable deployment:
+```bash
+# 1. bringup
+ros2 launch turtlebot3_bringup robot.launch.py
+# 2. SLAM + Nav2 (waits for odom TF, then starts Nav2; a short forward move seeds the map)
+ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py
+# 3. Zenoh link to the central PC (Tailscale name of the central PC)
+./scripts/comms/start_zenoh_robot.sh reverie
+```
 
-- run build and launch commands directly on the Pi shell (not through a flaky mount),
-- avoid changing netplan/systemd files during unstable Wi‑Fi sessions,
-- keep a fallback access path (HDMI/keyboard or direct SSH on known-good Wi‑Fi).
-
-## Goal of this document
-
-Document the steps to prepare a TurtleBot3 Raspberry Pi SBC **up through**:
-
-- Robotis SBC setup (Ubuntu Server, Wi‑Fi/SSH, stability tweaks)
-- ROS 2 Humble install and **Install and Build ROS Packages** (SBC setup Step 3.2.5, Step 2)
-
-**Workspace = cloned repo:** Clone [ans-turtlebot3](https://github.com/SleepyFinale/ans-turtlebot3) into `~/turtlebot3` on the Pi; that repo contains the TurtleBot3/LDS/Coin D4 packages and other files needed for the workspace. After building, any changes you make in `src/` can be committed and pushed. Build/install/log are in `.gitignore`.
-
----
+`~/.bashrc` (see [Install and Build ROS Packages](#install-and-build-ros-packages)) sources `scripts/env/ros_robot_env.bash` and sets `TURTLEBOT3_MODEL=burger`, `LDS_MODEL=LDS-02`.
 
 ## Robot fleet reference
 
-Use this table when configuring a given robot. SSH using the hostname or IP for that robot. For fleet runs, follow the `bridged_domains` policy in [ROS_DOMAIN_ID](#ros_domain_id): robots use per-robot domain assignments and central uses the configured central domain (default `50`).
+| Robot  | Tailscale (preferred) | Azure hotspot         | Robot ROS domain |
+| ------ | --------------------- | --------------------- | ---------------- |
+| Blinky | `blinky@blinky`       | `blinky@172.20.10.13` | 5  |
+| Pinky  | `pinky@pinky`         | `pinky@172.20.10.14`  | 22 |
+| Inky   | `inky@inky`           | `inky@172.20.10.15`   | 19 |
+| Clyde  | `clyde@clyde`         | `clyde@172.20.10.16`  | 80 |
 
-| Robot  | Azure (hotspot)           | TAMU_WiFi (DHCP) |
-| ------ | ------------------------- | ---------------- |
-| Blinky | blinky@172.20.10.13       | `blinky@<dhcp-ip>` / hostname |
-| Pinky  | pinky@172.20.10.14        | `pinky@<dhcp-ip>` / hostname |
-| Inky   | inky@172.20.10.15         | `inky@<dhcp-ip>` / hostname |
-| Clyde  | clyde@172.20.10.16        | `clyde@<dhcp-ip>` / hostname |
+On boot the Pi tries **TAMU_WiFi** (WPA Enterprise, DHCP) first, then the **Azure** hotspot. Tailscale gives the same name on either network. Hardware: TurtleBot3 Burger, Raspberry Pi 4, Ubuntu Server 22.04, ROS 2 Humble.
 
-On boot the Pi tries **TAMU_WiFi** (WPA Enterprise, DHCP) first, then falls back to **Azure** (phone hotspot, static IPs above). For TAMU, use hostname when mDNS/DNS works, or `./scripts/network/switch_wifi.sh status` / `ip -4 addr show wlan0` on the Pi for the current address.
-
-- **Platform**: TurtleBot3 Burger  
-- **SBC**: Raspberry Pi (Ubuntu Server)  
-- **ROS distro**: Humble Hawksbill (Ubuntu 22.04 / Jammy)
-
-When following this README, substitute your robot’s hostname/IP where indicated.
-
-For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), the central PC and all robots are distinguished by per-robot namespaces (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`). See [Multi-robot and central computer](#multi-robot-and-central-computer) and the [central repo](https://github.com/SleepyFinale/ans-central-computer/tree/multi-robot-slam) for the full workflow.
+The namespace is the hostname unless it is a stock name such as `ubuntu`; then it is the login user. Pass `robot_name:=<name>` to both launch files to override it.
 
 ---
 
@@ -605,118 +590,52 @@ ros2 launch turtlebot3_bringup robot.launch.py \
   ekf_frequency:=4.0 navsat_frequency:=4.0
 ```
 
-### ROS_DOMAIN_ID
+### ROS domain and DDS on the robot
 
-This stack supports two comms modes, but **fleet runs must use bridges**.
-
-1) `bridged_domains` (**use this**)
-   - Central uses `fleet_domain_map.central_domain_id` (default `50` in-repo; override in YAML if needed).
-   - Each robot uses a deterministic per-robot domain from `scripts/env/ros_domain_profile.bash` (robot-side helper).
-   - Central starts per-robot domain bridges and keeps explorer/action behavior unchanged.
-   - With the default Fast DDS port layout, keep **every** `ROS_DOMAIN_ID` you use (central and each robot) **<= 232** so multicast ports stay valid.
-2) `shared_domain` (legacy compatibility only)
-   - All robots and central share one domain (lab default `50`).
-   - **Not acceptable** for this project's multi-robot SLAM workload (timing, discovery, and load artifacts); do not A/B fleet debugging against shared domain.
-
-For bridged mode, load a robot domain profile before launching bringup/Nav2 on each robot:
-
-```bash
-cd ~/turtlebot3
-source scripts/env/ros_domain_profile.bash
-echo $ROS_DOMAIN_ID
-```
-
-You can also pass a robot name explicitly if hostnames differ:
-
-```bash
-source scripts/env/ros_domain_profile.bash pinky
-```
-
-Domain assignments are defined in `~/central-computer/config/fleet_domain_map.yaml` (`ans-central-computer`) and must stay in sync with robot hostnames.
+Robot DDS never leaves the Pi. `scripts/env/ros_robot_env.bash` selects Cyclone DDS with `config/cyclonedds/robot_localhost.xml` (loopback only, raised participant cap) and sets the robot's domain from `scripts/env/ros_domain_profile.bash` (table above). Do not set `ROS_LOCALHOST_ONLY=1` on the robot; it brings back Cyclone's small participant cap. Because each robot is isolated, the domain number only has to match between the processes on that one Pi.
 
 ### Multi-robot and central computer
 
-This repository is the **robot side** of a multi-robot SLAM system. Each TurtleBot3 robot runs **bringup + SLAM + Nav2 on the robot SBC**, and the central PC handles coordination (`./scripts/core/start_central.sh`) and visualization (`./scripts/core/start_rviz_central.sh`) from the **`ans-central-computer`** repository.
+Each robot keeps a complete local stack: `/<robot>/tf`, `/<robot>/map` from SLAM, and Nav2 planning in frame `<robot>/map`. The central PC never sends TF or maps back. It merges maps, picks frontiers, transforms each goal into `<robot>/map`, and calls `/<robot>/navigate_to_pose` (plus `compute_path_to_pose` as a reachability check).
 
-For **multi-robot SLAM** (full fleet: Blinky, Pinky, Inky, Clyde), robots remain namespaced (`/blinky`, `/pinky`, `/inky`, `/clyde`). In `bridged_domains` mode, central bridges only the explicit fleet contract topics/actions; this reduces DDS noise and keeps Nav2 local on each robot.
+What crosses the network (`config/zenoh/robot_client.json5.tmpl`):
 
-**Canonical startup sequence (multi-robot default):**
+| Topic | Rate cap | Why |
+| --- | --- | --- |
+| `/<robot>/map_wire_z` | 1 Hz | zlib-compressed `/<robot>/map`; central rebuilds the map from it |
+| `/<robot>/tf_zenoh`, `/<robot>/tf_static_zenoh` | 10 Hz / 1 Hz | best-effort copy of `/<robot>/tf` made by `scripts/comms/tf_zenoh_publish.py`, so the bridge never holds a reliable reader on SLAM's TF |
+| `/<robot>/navigate_to_pose`, `/<robot>/compute_path_to_pose` | — | Nav2 actions, both directions |
+| `/<robot>/nav2_collision_ahead`, `nav2_retrace_active` | — | optional helper signals for the explorer |
+| `/<robot>/plan`, `scan_normalized`, `local_costmap/costmap` | 2/2/1 Hz | RViz on the central PC; sent only while something there subscribes |
 
-1. **[ROBOT-SBC]** On each robot: run bringup (`robot.launch.py`) in terminal 1.
-2. **[ROBOT-SBC]** On each robot: run SLAM + Nav2 (`navigation2_slam.launch.py`) in terminal 2.
-3. **[CENTRAL-PC]** In `~/central-computer`, run `./scripts/core/start_central.sh`.
-4. **[CENTRAL-PC]** In `~/central-computer`, run `./scripts/core/start_rviz_central.sh`.
-5. In this default flow, central runs `map_merge` and RViz opens in **GLOBAL** mode with `/map`.
+If you add a topic, add it to both this template and `config/zenoh/central_router.json5.tmpl` in the central repo.
 
-If you use `fleet_mode:=auto`, robots may delay Nav2 activation until the central stack publishes required global TF/map links. That delay is expected in auto mode.
+#### `navigation2_slam.launch.py`
 
-To check TF and connectivity from the central PC, run (from `~/central-computer`):  
-`ROS_DOMAIN_ID=<central_domain_id> python3 scripts/diagnostics/diagnose_multirobot_tf.py`  
-After pulling TF-frame changes, rebuild `turtlebot3_navigation2` on each Pi and re-run the diagnostic on the central PC with all robots up.
+| Node | Role |
+| --- | --- |
+| `laser_scan_normalizer` | fixed-width `scan_normalized` for SLAM (+ ultrasonic fusion); also publishes a 6 Hz `scan_costmap` copy for the costmaps (`scan_costmap_max_hz`) |
+| `ultrasonic_triangulation_blob` | low-obstacle blob scans for the local costmap |
+| `slam_toolbox` | `/<robot>/map`, `map -> odom` at 20 Hz |
+| `wait_for_tf.py` | holds Nav2 until `odom -> base_footprint` exists |
+| Nav2 (`navigation_launch_multirobot.py`) | one process per server, namespaced TF, lifecycle bonds off |
+| `startup_map_seeder` | one 3 s forward move once the controller is active, then exits |
+| `map_wire_compressed_republisher` | `map_wire_z` for Zenoh (`fleet_mode:=true`) |
+| `standalone_world_map_tf` | static `map -> <robot>/map` for RViz goals (`fleet_mode:=false` only) |
+| stereo cameras + `stereo_depth_node` + `stereo_cmd_vel_enforcer` | only when two cameras exist; costmap layer and stop gate only with a usable `config/stereo/<robot>.yaml` |
 
-#### High-level changes
+Off by default (turn on with the matching launch argument): `enable_debug_logging`, `enable_lethal_watch`, `enable_retrace_escape`, `enable_controller_collision_watch`, `enable_ultrasonic_cmd_vel_enforcer`, `orca_mode:=shadow|advisory` (ORCA output is not wired into the drive path).
 
-#### 1. Per-robot bringup with namespaces
+Main arguments:
 
-Use the standard bringup launch file in `turtlebot3_bringup`, which now **automatically determines the robot name and applies a matching namespace** (e.g. `/blinky`, `/pinky`, `/inky`, `/clyde`):
+- `fleet_mode` (default `true`): driven by the central PC. `false` is a bench test without it.
+- `robot_name` / `namespace`: override the namespace.
+- `scan_costmap_max_hz` (default `6.0`): costmap scan rate; `0` feeds costmaps the full-rate scan.
+- `slam_toolbox_mode` (`async` default, or `sync`).
+- `enable_startup_map_seeding` (default `true`).
+- the `ultrasonic_*`, `retrace_*` and `stereo_*` tuning arguments listed in the launch file.
 
-```bash
-source /opt/ros/humble/setup.bash
-source ~/turtlebot3/install/setup.bash
-export TURTLEBOT3_MODEL=burger
-export LDS_MODEL=LDS-02
-
-# Bring up the robot (runs under /<robot_name>, e.g. /blinky)
-ros2 launch turtlebot3_bringup robot.launch.py
-```
-
-#### 2. Namespaced SLAM + Nav2 on each robot
-
-Use the standard SLAM + Nav2 launch file in `turtlebot3_navigation2`. It now **runs SLAM Toolbox, the scan normalizer, and Nav2 under the per-robot namespace**, automatically using the robot’s name.
-
-**With the central PC** (`~/central-computer/scripts/core/start_central.sh`): you **must** enable fleet mode so Nav2 uses global `/tf`, `/tf_static`, and `/map` (merged map from `map_merge`, or a relay of `/<robot>/map` when only one robot runs). Use exactly this pattern:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/turtlebot3/install/setup.bash
-export TURTLEBOT3_MODEL=burger
-
-ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py \
-  use_sim_time:=false \
-  use_rviz:=false \
-  fleet_mode:=true \
-  nav2_use_local_slam_map:=true
-```
-
-**Path 2 (recommended with the current `ans-central-computer` stack):** `nav2_use_local_slam_map:=true` keeps Nav2’s global costmap on each robot’s **`/<robot>/map`** (SLAM) while still using **global** `/tf` from the central relay / `map_merge`. The central **`multi_robot_explorer`** transforms `NavigateToPose` / `compute_path_to_pose` goals into **`<robot>/map`**; omit `nav2_use_local_slam_map` only if you intentionally want Nav2 to consume the merged **`/map`** on the fleet graph instead.
-
-By default, `robot.launch.py` and `navigation2_slam.launch.py` use `HOSTNAME` as the robot namespace (for example host `pinky` -> namespace `pinky`), so `robot_name:=...` is optional unless you want to override it manually. This uses `navigation_launch_multirobot.py`, remapping `tf` → `/tf`, `tf_static` → `/tf_static`, and `map` → `/map` so the robot shares the same TF graph and merged (or relayed) `/map` as the central stack. The deprecated alias `use_central_tf_map:=true` still enables the same behavior as `fleet_mode:=true`.
-
-**Robot only** (bench test, no central stack): omit `fleet_mode` or set `fleet_mode:=false` (default). Nav2 then uses `/<robot>/tf` and the global costmap subscribes to `/<robot>/map` (see `burger.yaml`). `navigation2_slam.launch.py` starts `standalone_world_map_tf.py` so frame `map` matches `/<robot>/map` for goals.
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/turtlebot3/install/setup.bash
-export TURTLEBOT3_MODEL=burger
-
-ros2 launch turtlebot3_navigation2 navigation2_slam.launch.py use_sim_time:=false use_rviz:=false
-```
-
-**Map topics:** Each robot still publishes its own SLAM map (e.g. `/pinky/map`) for `map_merge` and tools. With `fleet_mode:=true`, Nav2’s costmaps use **`/map` on the network**: multi-robot **merged** map from the central PC, or **single-robot** relay from `/<robot>/map` started by `~/central-computer/scripts/core/start_central.sh`. With `fleet_mode:=false`, the global costmap static layer uses `/<robot>/map` only. On the robot, `navigation2_slam.launch.py` starts a namespaced static TF `map` → `<robot>/map` (identity) in standalone mode so Nav2 and default goals that use frame `map` match SLAM’s `<robot>/map` frame.
-
-**Optional fleet tuning (Wi‑Fi, CPU):** Keep host clocks in sync on every Pi and the central PC (Chrony or systemd-timesyncd) and verify with `timedatectl`/`chronyc`. With **`fleet_mode:=true`**, `navigation2_slam.launch.py` supports **`nav2_use_composition:=false`** by default (set `true` to run Nav2 in one component container on capable hardware), **`fleet_map_relay_hz:=1.5`** (example) to throttle merged `/map` to `/map_relay` for Nav2, **`nav2_use_local_slam_map:=true`** so Nav2 costmaps use local `/<robot>/map` from SLAM instead of network `/map`, and **`slam_toolbox_mode:=sync`** to try the synchronous SLAM Toolbox node. If both `fleet_map_relay_hz` and `nav2_use_local_slam_map` are set, `nav2_use_local_slam_map` takes precedence and disables the merged-map relay path for Nav2.
-
-> **Note:** The old helper path `scripts/start_slam_with_normalizer.sh` is retired in this workspace. Use `navigation2_slam.launch.py` for SLAM + Nav2; `robot.launch.py` keeps `start_slam_with_normalizer` only as a deprecated no-op compatibility flag.
-
-#### 3. Central computer behavior with namespaces
-
-With namespaced robots and `bridged_domains` as the fleet policy:
-
-- The central computer uses the configured central domain (default `50` in `config/fleet_domain_map.yaml` in the central repo).
-- Multi-robot tools (RViz, explorers, custom coordination nodes) can subscribe to bridged fleet topics such as:
-  - `/blinky/scan_normalized`, `/blinky/map`, `/blinky/tf`, `/blinky/cmd_vel`
-  - `/pinky/…`, `/inky/…`, `/clyde/…`
-- Fleet behavior remains defined by central bridge contract/domain map configuration rather than a shared single-domain policy.
+Arguments removed in the October 2026 cleanup, because the central PC never sends TF or `/map` to the robot: `nav2_use_local_slam_map` (always on now), `fleet_map_relay_hz`, `fleet_require_global_tf_before_nav2`, `fleet_tf_map_wait_timeout_sec`, `auto_fleet_*`, `use_central_tf_map`, `nav2_use_composition`, `nav2_container_name`, `nav2_use_isolated_container`, `container_sig*_timeout`. `fleet_mode:=auto` is still accepted and means `true`.
 
 ### LDS configuration
 
@@ -752,19 +671,16 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 
 ### Troubleshooting (Nav2 + SLAM on robot)
 
-- **Planner: `source_frame` / frame `map` does not exist / "Could not transform the start or goal pose in the costmap frame":**
-  - **Robot only** (no central PC): launch with **`fleet_mode:=false`** (default) and rebuild/install so `standalone_world_map_tf.py` runs. Check logs for `standalone_world_map_tf: Publishing static TF map -> <robot>/map`.
-  - **If you use `fleet_mode:=true`:** Nav2 listens on **global** `/tf` and **`/map` must be available on the DDS graph** — start **`start_central.sh`** on the PC (multi-robot: `map_merge`; single-robot: `single_robot_map_relay.py` republishes `/<robot>/map` → `/map`). Running `fleet_mode:=true` on the robot **without** the central stack (no relay, no merge) will fail with missing `map` / costmap data.
-- **Robot drives toward the goal through walls / ignores the global plan in RViz** while using the central explorer: Ensure SLAM + Nav2 was started with **`fleet_mode:=true`** (or `use_central_tf_map:=true`) when `start_central.sh` is running. On the central PC you can verify the chain with `ROS_DOMAIN_ID=<central_domain_id> python3 scripts/diagnostics/diagnose_multirobot_tf.py` (from `~/central-computer`).
-- **"No valid path found" (GridBased planner):** Goals may be in unknown space or outside the current map while SLAM is still building. The planner is configured with `allow_unknown: true` (in `burger.yaml`) so it can plan through unknown cells; if planning still fails, wait for the map to grow (move the robot slightly) or send goals closer to the current map.
-- **"Sensor origin is out of map bounds":** The costmap may not yet include the robot. Wait for SLAM to publish a map that covers the robot, or move the robot slightly so the map extends; the warning often clears once the map has grown.
-- **`Starting point in lethal space` / robot gets stuck near inflated obstacles:** The robot Nav2 behavior tree now runs an explicit lethal-escape sequence on planner failure (short backup -> local/global costmap clear -> replan) before falling back to wider recoveries. This does not change costmap area definitions; it changes recovery priority so the robot actively exits lethal cells and retries planning.
-  - Verify this path by watching for `GridBased: failed to create plan, invalid use: Starting point in lethal space!` followed by visible reverse motion and a new path publication on `/<robot>/plan`.
-  - Keep `fleet_mode:=true` when using `start_central.sh` so recovery and replanning use the same global `/tf` and `/map` graph as the central explorer.
+- **Nav2 never starts after `wait_for_tf`:** the launch exits if `odom -> base_footprint` never appears on `/<robot>/tf`. Check bringup is running in the same namespace and domain (`echo $ROS_DOMAIN_ID`, `ros2 topic echo /<robot>/odom --once`).
+- **"No valid path found" (GridBased planner):** the goal is behind unknown or blocked space. The central explorer blacklists such frontiers after its precheck fails; repeated failures on one spot are normal while the map grows.
+- **"Sensor origin is out of map bounds":** the map does not cover the robot yet; it clears once SLAM grows the map.
+- **`Starting point in lethal space` / stuck near walls:** inflation reaches the robot center. Recoveries (backup, spin, wait) usually move it out; if it happens often, reduce `inflation_radius` in `burger.yaml` slightly.
+- **"Control loop missed its desired rate":** the Pi is short on CPU. Check with `top`; the stereo depth node is the largest consumer (about one core at `publish_hz` 4). Lower its rate or disable stereo on robots that do not need it.
+- **"Stereo cameras are out of alignment":** the stereo node's row check exceeded `max_row_error_px` (2.0). It depends on the scene and appears now and then; recalibrate if it is constant.
 
 #### Stability tuning profile (Mar 2026)
 
-These values are tuned to reduce false `Failed to make progress` aborts when using the central explorer:
+These values reduce false `Failed to make progress` aborts with the central explorer:
 
 - `controller_server.progress_checker.required_movement_radius: 0.10`
 - `controller_server.progress_checker.movement_time_allowance: 45.0`
@@ -773,8 +689,6 @@ These values are tuned to reduce false `Failed to make progress` aborts when usi
 - `global_costmap.global_costmap.transform_timeout: 0.5`
 - `local_costmap.local_costmap.width/height: 4.0`
 - `local_costmap.local_costmap.inflation_layer.inflation_radius: 0.25`
-
-Use this with `fleet_mode:=true` when `start_central.sh` is running.
 
 #### A/B/C validation sequence
 

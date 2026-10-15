@@ -9,14 +9,15 @@ import json
 import os
 import sys
 import time
+from collections import deque
 
 import numpy as np
 import rclpy
 import yaml
 from cv_bridge import CvBridge
-from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import Image, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header, String
@@ -106,7 +107,6 @@ class StereoDepthNode(Node):
         self._misaligned = False
 
         self._bridge = CvBridge()
-        self._last_process_s = 0.0
         self._last_status_s = 0.0
         self._obstacle_streak = 0
         self._drop_streak = 0
@@ -134,12 +134,20 @@ class StereoDepthNode(Node):
         left_topic = str(self.get_parameter('left_image_topic').value)
         right_topic = str(self.get_parameter('right_image_topic').value)
         slop = max(0.005, float(self.get_parameter('sync_slop_sec').value))
-        self._left_sub = Subscriber(self, Image, left_topic, qos_profile=qos_profile_sensor_data)
-        self._right_sub = Subscriber(self, Image, right_topic, qos_profile=qos_profile_sensor_data)
-        self._sync = ApproximateTimeSynchronizer(
-            [self._left_sub, self._right_sub], queue_size=5, slop=slop,
-        )
-        self._sync.registerCallback(self._on_pair)
+        self._slop_ns = int(slop * 1e9)
+        # The cameras send 30 fps each but only publish_hz pairs are matched.
+        # Frames are kept serialized (raw=True) and decoded only when a pair
+        # is picked; decoding all 60 frames/s in Python cost more CPU than
+        # the stereo match.
+        self._raw_left = deque(maxlen=3)
+        self._raw_right = deque(maxlen=3)
+        self.create_subscription(
+            Image, left_topic, lambda raw: self._raw_left.append(raw),
+            qos_profile_sensor_data, raw=True)
+        self.create_subscription(
+            Image, right_topic, lambda raw: self._raw_right.append(raw),
+            qos_profile_sensor_data, raw=True)
+        self.create_timer(self._publish_period, self._on_tick)
         self.create_timer(0.5, self._publish_idle_debug)
 
         self.get_logger().info(
@@ -272,13 +280,29 @@ class StereoDepthNode(Node):
         msg.data = json.dumps(payload)
         self._debug_pub.publish(msg)
 
-    def _on_pair(self, left_msg: Image, right_msg: Image) -> None:
+    @staticmethod
+    def _stamp_ns(msg: Image) -> int:
+        return msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+
+    def _on_tick(self) -> None:
+        """Process the closest-in-time left/right pair, if one is within slop."""
         if not self._calibrated or self._maps is None:
             return
-        now = time.monotonic()
-        if (now - self._last_process_s) < self._publish_period:
+        lefts = [deserialize_message(raw, Image) for raw in self._raw_left]
+        rights = [deserialize_message(raw, Image) for raw in self._raw_right]
+        best = None
+        for left in lefts:
+            for right in rights:
+                gap = abs(self._stamp_ns(left) - self._stamp_ns(right))
+                if gap <= self._slop_ns and (best is None or gap < best[0]):
+                    best = (gap, left, right)
+        if best is None:
             return
-        self._last_process_s = now
+        self._raw_left.clear()
+        self._raw_right.clear()
+        self._on_pair(best[1], best[2])
+
+    def _on_pair(self, left_msg: Image, right_msg: Image) -> None:
         try:
             self._process_pair(left_msg, right_msg)
         except Exception as exc:
