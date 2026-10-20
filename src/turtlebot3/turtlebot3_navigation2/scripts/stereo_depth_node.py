@@ -6,6 +6,7 @@ nothing else, so Nav2 and the stop gate stay inactive until calibration exists.
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -53,6 +54,13 @@ class StereoDepthNode(Node):
         self.declare_parameter('sync_slop_sec', 0.03)
         self.declare_parameter('min_range_m', 0.12)
         self.declare_parameter('max_range_m', 1.5)
+        # Obstacles and clearing only within this bearing of straight ahead.
+        # Near the edge of the ~120 deg lenses the calibration's lens model
+        # misses by a few pixels of disparity: on inky a printer 1.7 m away at
+        # 50 deg to the side was placed at 1.2 m as a low obstacle. The LiDAR
+        # covers the sides; checked against it with stereo_fit_offset.py,
+        # disparity is within 0.5 px out to about 41 deg.
+        self.declare_parameter('max_bearing_deg', 45.0)
         self.declare_parameter('min_obstacle_height_m', 0.025)
         # base_scan is 0.172 m above base_link, and base_link is 0.010 m above
         # base_footprint, so the lidar plane is 0.182 m above the ground.
@@ -107,6 +115,8 @@ class StereoDepthNode(Node):
         self._publish_period = 1.0 / max(0.5, float(self.get_parameter('publish_hz').value))
         self._min_range = float(self.get_parameter('min_range_m').value)
         self._max_range = float(self.get_parameter('max_range_m').value)
+        self._max_bearing = math.radians(
+            min(90.0, max(5.0, float(self.get_parameter('max_bearing_deg').value))))
         self._min_height = float(self.get_parameter('min_obstacle_height_m').value)
         self._lidar_height = float(self.get_parameter('lidar_height_m').value)
         self._ground_x_min = float(self.get_parameter('ground_x_min_m').value)
@@ -461,6 +471,8 @@ class StereoDepthNode(Node):
         remembered = self._shadow_obstacle_m if now_s <= self._shadow_until_s else None
         blob = stereo_common.build_blob_scan(
             base,
+            angle_min=-self._max_bearing,
+            angle_max=self._max_bearing,
             min_range=self._min_range,
             max_range=self._max_range,
             min_height=self._min_height,
@@ -516,6 +528,7 @@ class StereoDepthNode(Node):
             'floor_z_m': blob['floor_z_m'],
             'drop': blob['drop'],
             'drop_range_m': blob['drop_range_m'],
+            'tall_beams_skipped': blob.get('tall_beams_skipped', 0),
             'obstacle_streak': self._obstacle_streak,
             'drop_streak': self._drop_streak,
         })
@@ -528,7 +541,8 @@ class StereoDepthNode(Node):
             row_text = '?' if self._row_error_px is None else f'{self._row_error_px:.1f} px'
             self.get_logger().info(
                 f'stereo floor_z={blob["floor_z_m"]:.3f} m obstacle={obstacle_text} '
-                f'drop={drop_text} row_error={row_text}'
+                f'drop={drop_text} row_error={row_text} '
+                f'lidar_height_beams={blob.get("tall_beams_skipped", 0)}'
             )
 
     def _check_alignment(self, left: np.ndarray, right: np.ndarray) -> None:
@@ -597,8 +611,8 @@ class StereoDepthNode(Node):
         msg.range_max = float(self._max_range)
         if blob is None:
             self._prev_obstacles = None
-            msg.angle_min = -1.5707963
-            msg.angle_max = 1.5707963
+            msg.angle_min = -self._max_bearing
+            msg.angle_max = self._max_bearing
             msg.angle_increment = 0.0174533
             count = int(round((msg.angle_max - msg.angle_min) / msg.angle_increment)) + 1
             msg.ranges = [float('inf')] * count
