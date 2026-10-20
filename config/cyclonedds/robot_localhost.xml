@@ -8,6 +8,13 @@
 
   MaxAutoParticipantIndex is raised because a loopback-only domain discovers
   with participant indices. The default cap is too small for Nav2 plus SLAM.
+
+  SocketReceiveBufferSize asks for up to 8 MB per socket. The kernel grants
+  at most net.core.rmem_max (Ubuntu default 208 KB), so raise that too; see
+  the README. With the camera streams on loopback and the CPU busy, 208 KB
+  buffers overflowed (netstat -su "receive buffer errors"), and the Zenoh
+  bridge lost discovery of tf_zenoh_publish: the central explorer never got
+  the robot's pose and sent no goals.
 -->
 <CycloneDDS xmlns="https://cdds.io/config">
   <Domain id="any">
@@ -21,5 +28,8 @@
       <ParticipantIndex>auto</ParticipantIndex>
       <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
     </Discovery>
+    <Internal>
+      <SocketReceiveBufferSize max="8MB"/>
+    </Internal>
   </Domain>
 </CycloneDDS>

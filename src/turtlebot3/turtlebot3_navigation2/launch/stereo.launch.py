@@ -19,6 +19,12 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+# numpy's OpenBLAS starts a busy-waiting thread per core in every process.
+# On a loaded Pi those threads fight SLAM and Nav2 and made a 4x4 inverse
+# take 14 ms; the stereo nodes only do small matrix work.
+_SINGLE_THREAD_BLAS = {'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'}
+
+
 def _load_stereo_common():
     path = os.path.join(
         get_package_prefix('turtlebot3_navigation2'),
@@ -143,8 +149,9 @@ def _setup(context):
         )
 
     depth_params = {
-        'left_image_topic': 'stereo_left/image_raw',
-        'right_image_topic': 'stereo_right/image_raw',
+        # Matched pairs from stereo_pair_throttle, not the raw 30 fps streams.
+        'left_image_topic': 'stereo_left/image_pair',
+        'right_image_topic': 'stereo_right/image_pair',
         'calibration_file': calib_path,
         'left_frame': left_frame,
         'right_frame': right_frame,
@@ -152,44 +159,42 @@ def _setup(context):
         'image_width': width,
         'image_height': height,
         'close_obstacle_m': close_obstacle_m,
+        # Visual odometry runs inside the depth node on the pairs it already
+        # decodes (odom/visual for the bringup EKF); a separate subscriber to
+        # both cameras cost more than a core on the Pi.
+        'visual_odometry': visual_odometry,
+        'odom_frame': f'{prefix}odom',
     }
 
     nodes = [
         _camera(left_dev, left_ns, left_frame, 'v4l2_camera', left_focus),
         _camera(right_dev, right_ns, right_frame, 'v4l2_camera', right_focus),
+        # The cameras only offer 30 fps. Pairing and throttling them in C++
+        # keeps the Python depth node from waking 60 times a second.
+        Node(
+            package='turtlebot3_navigation2',
+            executable='stereo_pair_throttle',
+            name='stereo_pair_throttle',
+            namespace=ns if ns else None,
+            parameters=[{'rate_hz': 5.0, 'slop_sec': 0.03}],
+            output='screen',
+        ),
         Node(
             package='turtlebot3_navigation2',
             executable='stereo_depth_node.py',
+            additional_env=_SINGLE_THREAD_BLAS,
             name='stereo_depth_node',
             namespace=ns if ns else None,
             parameters=[depth_params],
             output='screen',
         ),
     ]
-    # Visual odometry for the bringup EKF. Without a usable calibration it
-    # would only log an error, so it is not started at all.
-    vo_enabled = visual_odometry and common.calibration_is_usable(calib_path)
-    if vo_enabled:
-        nodes.append(Node(
-            package='turtlebot3_navigation2',
-            executable='stereo_visual_odometry.py',
-            name='stereo_visual_odometry',
-            namespace=ns if ns else None,
-            parameters=[{
-                'left_image_topic': 'stereo_left/image_raw',
-                'right_image_topic': 'stereo_right/image_raw',
-                'calibration_file': calib_path,
-                'odom_frame': f'{prefix}odom',
-                'base_frame': f'{prefix}base_footprint',
-            }],
-            output='screen',
-        ))
     focus = _focus_command([(left_dev, left_focus), (right_dev, right_focus)])
     info = LogInfo(msg=(
         f'stereo: left={left_dev} ({left_cam["card"]}) '
         f'right={right_dev} ({right_cam["card"]}) '
         f'size={width}x{height} calibration={calib_path} '
-        f'visual_odometry={vo_enabled} '
+        f'visual_odometry={visual_odometry} '
         f'focus={left_focus if left_focus is not None else "auto"}/'
         f'{right_focus if right_focus is not None else "auto"}'
     ))
@@ -230,6 +235,6 @@ def generate_launch_description() -> LaunchDescription:
             description='Range (m) at which consecutive stereo obstacles count as a close stop.'),
         DeclareLaunchArgument(
             'visual_odometry', default_value='true',
-            description='Start stereo_visual_odometry (odom/visual) when the calibration is usable.'),
+            description='Publish stereo visual odometry (odom/visual) from the depth node.'),
         OpaqueFunction(function=_setup),
     ])

@@ -96,6 +96,17 @@ def _default_robot_name():
 DEFAULT_ROBOT_NAME = _default_robot_name()
 
 
+def _robot_sensors(workspace_dir: str, namespace: str) -> dict:
+    """Optional-hardware flags from config/sensors/<namespace>.yaml ({} if absent)."""
+    path = os.path.join(workspace_dir, 'config', 'sensors', f'{(namespace or "robot").strip("/")}.yaml')
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _stereo_calibration_usable(path: str) -> bool:
     """True when the stereo yaml passes the shared physical sanity checks."""
     try:
@@ -182,6 +193,7 @@ def _generate_nav2_params(
     nav2_enable_stereo_blob_layer: bool = False,
     stereo_obstacle_max_range: float = 1.0,
     stereo_clear_min_range: float = 0.40,
+    low_obstacle_memory: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -378,6 +390,59 @@ def _generate_nav2_params(
             costmap_node['plugins'] = plugins
             costmap_node['stereo_layer'] = copy.deepcopy(stereo_layer)
 
+    if low_obstacle_memory:
+        # low_obstacle_memory.py keeps its own record of low obstacles and
+        # bumps and republishes it every second as low_obstacle_points, so it
+        # is back in the costmap right after Nav2's recoveries clear the
+        # layers. As an ordinary obstacle layer before inflation it gets the
+        # stock costs: lethal on the cells, inscribed (253) within the robot
+        # radius, which spin and backup still accept. (A keepout filter mask
+        # can only say lethal or <= 251, and its lethal ring trapped the robot
+        # next to an obstacle.) stereo_clear_scan clears it like stereo_layer.
+        prefix = f'/{namespace}/' if namespace else '/'
+        memory_layer = {
+            'plugin': 'nav2_costmap_2d::ObstacleLayer',
+            'enabled': True,
+            'observation_sources': 'memory_mark memory_clear',
+            'footprint_clearing_enabled': True,
+            'memory_mark': {
+                'topic': f'{prefix}low_obstacle_points',
+                'data_type': 'PointCloud2',
+                'marking': True,
+                'clearing': False,
+                'min_obstacle_height': 0.0,
+                'max_obstacle_height': 2.0,
+                # Points are in the map frame, so "range" is from the map
+                # origin; the node already limits them to 6 m of the robot.
+                'obstacle_min_range': 0.0,
+                'obstacle_max_range': 1000.0,
+                'observation_persistence': 0.0,
+                'expected_update_rate': 0.0,
+            },
+            'memory_clear': {
+                'topic': f'{prefix}stereo_clear_scan',
+                'data_type': 'LaserScan',
+                'marking': False,
+                'clearing': True,
+                'max_obstacle_height': 2.0,
+                'raytrace_min_range': stereo_clear_min_range,
+                'raytrace_max_range': stereo_obstacle_max_range,
+                'observation_persistence': 0.0,
+                'expected_update_rate': 0.0,
+                'inf_is_valid': False,
+            },
+        }
+        for section in ('local_costmap', 'global_costmap'):
+            costmap_node = params.get(section, {}).get(section, {}).get('ros__parameters', {})
+            if not isinstance(costmap_node, dict):
+                continue
+            plugins = list(costmap_node.get('plugins', []))
+            if 'memory_layer' not in plugins:
+                at = plugins.index('inflation_layer') if 'inflation_layer' in plugins else len(plugins)
+                plugins.insert(at, 'memory_layer')
+            costmap_node['plugins'] = plugins
+            costmap_node['memory_layer'] = copy.deepcopy(memory_layer)
+
     if use_custom_bt_recovery_tree:
         # Optional custom BT; baseline mode keeps stock Nav2 behavior tree.
         bt_tree_path = os.path.join(
@@ -551,6 +616,10 @@ def _launch_setup(context):
         'stereo_close_obstacle_m').perform(context)
     stereo_visual_odometry_str = LaunchConfiguration(
         'stereo_visual_odometry').perform(context)
+    low_obstacle_memory_enabled = LaunchConfiguration(
+        'low_obstacle_memory').perform(context).lower() in ('1', 'true', 'yes')
+    stuck_detector_enabled = LaunchConfiguration(
+        'enable_stuck_detector').perform(context).lower() in ('1', 'true', 'yes')
 
     # fleet: the central PC drives this robot (map_wire_z for Zenoh).
     # standalone: no central PC (static map -> <robot>/map for RViz goals).
@@ -637,6 +706,16 @@ def _launch_setup(context):
     ultrasonic_profile = ultrasonic_profile_str.strip().lower()
     if ultrasonic_profile not in ('safe', 'aggressive', 'off'):
         ultrasonic_profile = 'safe'
+    # Optional hardware is listed per robot in config/sensors/<robot>.yaml.
+    # The OpenCR publishes ultrasonic ranges (a constant 3.0 m) even with no
+    # sensors fitted, so a robot without them says so there; the fusion,
+    # triangulation node and costmap layer are then left out. The
+    # triangulation node alone used about a third of a core on Inky.
+    has_ultrasonic = _robot_sensors(workspace_dir, ns).get('ultrasonic', True)
+    if not has_ultrasonic:
+        ultrasonic_profile = 'off'
+    ultrasonic_blob_layer = (
+        has_ultrasonic and nav2_enable_ultrasonic_blob_layer_str.lower() in ('1', 'true', 'yes'))
     ultrasonic_cooperative_mode = ultrasonic_cooperative_mode_str.lower() in (
         '1', 'true', 'yes')
 
@@ -703,7 +782,7 @@ def _launch_setup(context):
         normalizer_params['ultrasonic_overlap_side_pair_front_scale'] = min(
             float(ultrasonic_overlap_side_pair_front_scale_str), 0.60
         )
-    if ultrasonic_cooperative_mode:
+    if ultrasonic_cooperative_mode and has_ultrasonic:
         normalizer_params['ultrasonic_fusion_enabled'] = True
         normalizer_params['ultrasonic_max_hold_sec'] = min(
             float(normalizer_params['ultrasonic_max_hold_sec']), 0.40
@@ -802,15 +881,19 @@ def _launch_setup(context):
             float(tri_params['front_emergency_hold_sec']), 0.35
         )
 
-    actions.append(Node(
-        package='turtlebot3_navigation2',
-        executable='ultrasonic_triangulation_blob.py',
-        name='ultrasonic_triangulation_blob',
-        namespace=ns if ns else None,
-        parameters=[tri_params],
-        remappings=tf_remappings,
-        output='screen',
-    ))
+    if has_ultrasonic:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='ultrasonic_triangulation_blob.py',
+            name='ultrasonic_triangulation_blob',
+            namespace=ns if ns else None,
+            parameters=[tri_params],
+            remappings=tf_remappings,
+            output='screen',
+        ))
+    actions.append(LogInfo(msg=(
+        f'sensors: ultrasonic={has_ultrasonic} '
+        f'({os.path.join(workspace_dir, "config", "sensors", (ns or "robot") + ".yaml")})')))
 
     if enable_startup_map_seeding_str.lower() in ('1', 'true', 'yes'):
         actions.append(Node(
@@ -940,8 +1023,7 @@ def _launch_setup(context):
         costmap_scan_relay=costmap_scan_relay,
         nav2_enable_range_layer=(
             nav2_enable_range_layer_str.lower() in ('1', 'true', 'yes')),
-        nav2_enable_ultrasonic_blob_layer=(
-            nav2_enable_ultrasonic_blob_layer_str.lower() in ('1', 'true', 'yes')),
+        nav2_enable_ultrasonic_blob_layer=ultrasonic_blob_layer,
         nav2_ultrasonic_blob_on_global=(
             nav2_ultrasonic_blob_on_global_str.lower() in ('1', 'true', 'yes')),
         ultrasonic_emergency_observation_persistence=float(
@@ -965,6 +1047,7 @@ def _launch_setup(context):
         use_custom_bt_recovery_tree=(
             use_custom_bt_recovery_tree_str.lower() in ('1', 'true', 'yes')),
         nav2_enable_stereo_blob_layer=stereo_blob_enabled,
+        low_obstacle_memory=low_obstacle_memory_enabled,
     )
 
     map_frame_for_nav = f'{ns}/map' if ns else 'map'
@@ -1156,6 +1239,31 @@ def _launch_setup(context):
                 'close_obstacle_m': float(stereo_close_obstacle_m_str),
                 'required_streak': 2,
             }],
+            output='screen',
+        ))
+
+    # Stuck detection: cmd_vel vs wheels, wheels vs LiDAR / stereo VO, turn
+    # vs gyro. A stall or slip publishes bump_points for the memory below.
+    if stuck_detector_enabled:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='stuck_detector.py',
+            name='stuck_detector',
+            additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+            namespace=ns if ns else None,
+            output='screen',
+        ))
+
+    # Low-obstacle memory: stereo marks (extended behind the visible face)
+    # and bumps, fed to both costmaps as a keepout mask.
+    if low_obstacle_memory_enabled:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='low_obstacle_memory.py',
+            name='low_obstacle_memory',
+            additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+            namespace=ns if ns else None,
+            remappings=tf_remappings,
             output='screen',
         ))
 
@@ -1521,6 +1629,16 @@ def generate_launch_description():
             description=(
                 'Override for ~/turtlebot3/config/stereo/<namespace>.yaml. '
                 'Empty uses that default path.')),
+        DeclareLaunchArgument(
+            'enable_stuck_detector', default_value='true',
+            description=(
+                'Detect driving without moving (stall, wheel slip, blocked turn); '
+                'publishes stuck, stuck/event and bump_points.')),
+        DeclareLaunchArgument(
+            'low_obstacle_memory', default_value='true',
+            description=(
+                'Remember stereo low obstacles and bumps in a costmap layer on both costmaps '
+                'that is re-marked after Nav2 costmap clears.')),
         DeclareLaunchArgument(
             'stereo_visual_odometry', default_value='true',
             description=(

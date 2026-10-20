@@ -56,8 +56,8 @@
       imu0_queue_size: 10
       imu0_remove_gravitational_acceleration: true
 
-      # Stereo visual odometry (stereo_visual_odometry.py, started with the
-      # stereo pair in navigation2_slam.launch.py). Forward speed and yaw rate
+      # Stereo visual odometry (stereo_visual_odometry.py, run by
+      # stereo_depth_node from navigation2_slam.launch.py). Forward speed and yaw rate
       # from the cameras, an independent check on the wheels and the gyro.
       # Absent on robots without a calibrated pair; the EKF then runs on
       # wheels + IMU. Readings far from the current estimate are rejected.

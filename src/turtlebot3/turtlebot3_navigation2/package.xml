@@ -15,6 +15,8 @@
   <author email="pyo@robotis.com">Pyo</author>
   <author email="willson@robotis.com">Will Son</author>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
   <exec_depend>rclpy</exec_depend>
@@ -27,7 +29,6 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>rcl_interfaces</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>v4l2_camera</exec_depend>
   <exec_depend>message_filters</exec_depend>
   <export>

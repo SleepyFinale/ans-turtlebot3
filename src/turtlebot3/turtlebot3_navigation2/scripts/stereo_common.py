@@ -844,7 +844,6 @@ def build_blob_scan(
     """
     n = max(2, int(round((angle_max - angle_min) / angle_increment)) + 1)
     ranges = np.full(n, np.inf, dtype=float)
-    obstacle_ranges_by_bin: list[list[float]] = [[] for _ in range(n)]
     floor_counts = np.zeros(n, dtype=int)
     floor_far = np.zeros(n, dtype=float)
     # Nearest above-floor return per beam, textured or not, weak or not.
@@ -886,46 +885,50 @@ def build_blob_scan(
             counts, _ = np.histogram(zz, bins=edges)
             floor_z = float(np.clip(edges[int(np.argmax(counts))] + 0.01, -0.10, 0.10))
 
-    def _bin_of(angle: float) -> Optional[int]:
-        if angle < angle_min or angle > angle_max:
-            return None
-        idx = int(round((angle - angle_min) / angle_increment))
-        if idx < 0 or idx >= n:
-            return None
-        return idx
+    # Bin every point into a beam at once. A per-point Python loop here took
+    # about 0.9 s of each pair on the Pi (some 27k points) and held the
+    # depth node near 1 Hz instead of publish_hz.
+    px, py, pz = pts[:, 0], pts[:, 1], pts[:, 2]
+    rng_all = np.hypot(px, py)
+    ang_all = np.arctan2(py, px)
+    with np.errstate(invalid='ignore'):
+        # np.rint rounds half to even, like the built-in round().
+        idx_all = np.rint((ang_all - angle_min) / angle_increment)
+    keep = (
+        (rng_all >= min_range) & (rng_all <= max_range) & (px > 0.0)
+        & (ang_all >= angle_min) & (ang_all <= angle_max)
+        & (idx_all >= 0) & (idx_all < n)
+        & (px >= obstacle_x_min) & (px <= obstacle_x_max)
+    )
+    bins = idx_all[keep].astype(int)
+    rngs = rng_all[keep]
+    is_tex = textured[keep]
+    if obstacle_plane is not None:
+        z_ref = (
+            float(obstacle_plane[0]) * px[keep]
+            + float(obstacle_plane[1]) * py[keep]
+            + float(obstacle_plane[2])
+        )
+    else:
+        z_ref = floor_z
+    z_rel = pz[keep] - z_ref
+    above = (z_rel > min_height) & (z_rel < max_height)
+    np.add.at(above_counts, bins[above], 1)
+    np.minimum.at(above_near, bins[above], rngs[above])
+    on_floor = is_tex & ~above & (np.abs(z_rel) <= float(ground_z_abs))
+    np.add.at(floor_counts, bins[on_floor], 1)
+    np.maximum.at(floor_far, bins[on_floor], rngs[on_floor])
+    obstacle = is_tex & above
+    ob_bins = bins[obstacle]
+    ob_rngs = rngs[obstacle]
+    order = np.lexsort((ob_rngs, ob_bins))
+    ob_bins = ob_bins[order]
+    ob_rngs = ob_rngs[order]
+    starts = np.searchsorted(ob_bins, np.arange(n), side='left')
+    ends = np.searchsorted(ob_bins, np.arange(n), side='right')
 
-    for (x, y, z), is_textured in zip(pts, textured):
-        rng = math.hypot(float(x), float(y))
-        if rng < min_range or rng > max_range or float(x) <= 0.0:
-            continue
-        ang = math.atan2(float(y), float(x))
-        idx = _bin_of(ang)
-        if idx is None or float(x) < obstacle_x_min or float(x) > obstacle_x_max:
-            continue
-        if obstacle_plane is not None:
-            z_ref = (
-                float(obstacle_plane[0]) * float(x)
-                + float(obstacle_plane[1]) * float(y)
-                + float(obstacle_plane[2])
-            )
-        else:
-            z_ref = floor_z
-        z_rel = float(z) - z_ref
-        if min_height < z_rel < max_height:
-            above_counts[idx] += 1
-            above_near[idx] = min(above_near[idx], rng)
-        if not is_textured:
-            continue
-        if min_height < z_rel < max_height:
-            obstacle_ranges_by_bin[idx].append(rng)
-        elif abs(z_rel) <= float(ground_z_abs):
-            floor_counts[idx] += 1
-            floor_far[idx] = max(floor_far[idx], rng)
-
-    for idx in range(n):
-        samples = obstacle_ranges_by_bin[idx]
-        if len(samples) < drop_min_points:
-            continue
+    for idx in np.flatnonzero(ends - starts >= drop_min_points):
+        samples = ob_rngs[starts[idx]:ends[idx]]
         med = float(np.median(samples))
         # Inside 0.50 m a thin tail above the floor is the near-field smear.
         # A real object fills its beam, so it has to outnumber the floor there.

@@ -12,10 +12,22 @@ endif()
 # Find ament packages and libraries for ament and system dependencies
 ################################################################################
 find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
+################################################################################
+# Build
+################################################################################
+add_executable(stereo_pair_throttle src/stereo_pair_throttle.cpp)
+ament_target_dependencies(stereo_pair_throttle rclcpp sensor_msgs)
 
 ################################################################################
 # Install
 ################################################################################
+install(
+  TARGETS stereo_pair_throttle
+  DESTINATION lib/${PROJECT_NAME}
+)
 install(
   DIRECTORY behavior_trees launch map param rviz
   DESTINATION share/${PROJECT_NAME}
@@ -37,9 +49,12 @@ install(
     scripts/stereo_common.py
     scripts/stereo_calibrate.py
     scripts/stereo_refine_extrinsics.py
+    scripts/stereo_fit_floor.py
     scripts/stereo_depth_node.py
     scripts/stereo_cmd_vel_enforcer.py
     scripts/stereo_visual_odometry.py
+    scripts/stuck_detector.py
+    scripts/low_obstacle_memory.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
