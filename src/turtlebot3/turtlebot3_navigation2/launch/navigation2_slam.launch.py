@@ -1253,6 +1253,17 @@ def _launch_setup(context):
             namespace=ns if ns else None,
             output='screen',
         ))
+        # When "collision ahead" persists, log which layer (LiDAR, stereo,
+        # memory) owns the lethal cells in front and save a snapshot.
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='stuck_snapshot.py',
+            name='stuck_snapshot',
+            additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+            namespace=ns if ns else None,
+            remappings=tf_remappings,
+            output='screen',
+        ))
 
     # Low-obstacle memory: stereo marks (extended behind the visible face)
     # and bumps, fed to both costmaps as a keepout mask.

@@ -34,7 +34,7 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs.msg import Imu, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Header, String
 
@@ -121,6 +121,33 @@ class StuckDetector(Node):
         self.declare_parameter('turn_stall_events', 2)
         self.declare_parameter('turn_stall_window_sec', 8.0)
         self.declare_parameter('turn_reflex_distance_m', 0.12)
+        # Clearance escape. Nav2's planner (Smac 2D) refuses to start while
+        # the robot's own cell is inscribed, i.e. anything is within the
+        # global costmap's robot_radius (0.16 m) of the axle. The controller
+        # lets the robot stop closer than that (0.13 m), and the Burger's
+        # front edge is only 0.04 m ahead of the axle, so a stop facing a
+        # box or a wall left Nav2 unable to plan from where it stood; nothing
+        # moved it, and the explorer blacklisted goal after goal. With no
+        # motion command for clearance_idle_sec and a LiDAR return within
+        # clearance_radius_m, the robot moves straight forward or back the
+        # shortest distance (at most clearance_max_m) that clears it, through
+        # a strip the LiDAR shows empty.
+        self.declare_parameter('clearance_escape_enabled', True)
+        self.declare_parameter('clearance_radius_m', 0.19)
+        self.declare_parameter('clearance_idle_sec', 3.0)
+        self.declare_parameter('clearance_max_m', 0.15)
+        # Tilt escape. A Burger that drives onto a chair leg or a cable ends
+        # up with one end raised; on Inky, a chair leg under the rear caster
+        # left it 11 deg nose-down, and three back-off reflexes each moved
+        # 2-5 cm because backing drove further onto the leg. When the
+        # accelerometer shows more than tilt_threshold_deg for tilt_hold_sec,
+        # the robot drives toward its lower end (forward when nose-down, back
+        # when nose-up) by tilt_escape_m and leaves a bump at the raised end
+        # so the planner keeps away from the object afterwards.
+        self.declare_parameter('imu_topic', 'imu')
+        self.declare_parameter('tilt_threshold_deg', 5.0)
+        self.declare_parameter('tilt_hold_sec', 1.0)
+        self.declare_parameter('tilt_escape_m', 0.15)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         ns = self.get_namespace().strip('/')
@@ -150,6 +177,19 @@ class StuckDetector(Node):
         self._turn_stall_window = float(p('turn_stall_window_sec'))
         self._turn_reflex_dist = float(p('turn_reflex_distance_m'))
         self._turn_stalls = deque()
+        self._clearance_enabled = bool(p('clearance_escape_enabled'))
+        self._clearance_radius = float(p('clearance_radius_m'))
+        self._clearance_idle = float(p('clearance_idle_sec'))
+        self._clearance_max = float(p('clearance_max_m'))
+        self._last_motion_cmd = self.get_clock().now().nanoseconds * 1e-9
+        self._tilt_threshold = math.radians(float(p('tilt_threshold_deg')))
+        self._tilt_hold = float(p('tilt_hold_sec'))
+        self._tilt_escape = float(p('tilt_escape_m'))
+        self._accel = deque(maxlen=200)   # (t, ax, ay, az)
+        self._tilted_since = None
+        # Direction and distance covered by the last reflex; a reflex that
+        # barely moved means that way is held, so the next one tries the other.
+        self._last_reflex_result = None
         self._reflex = None  # {'dir', 'start', 't0'} while backing away
         self._last_reflex = -1e9
 
@@ -173,6 +213,7 @@ class StuckDetector(Node):
         self.create_subscription(Odometry, 'odom', self._on_odom, 20)
         self.create_subscription(Odometry, str(p('visual_odom_topic')), self._on_vo, 10)
         self.create_subscription(LaserScan, str(p('scan_topic')), self._on_scan, qos_profile_sensor_data)
+        self.create_subscription(Imu, str(p('imu_topic')), self._on_imu, qos_profile_sensor_data)
         self._stuck_pub = self.create_publisher(Bool, 'stuck', 10)
         self._event_pub = self.create_publisher(String, 'stuck/event', 10)
         self._debug_pub = self.create_publisher(String, 'stuck/debug', 10)
@@ -181,6 +222,8 @@ class StuckDetector(Node):
         self._reflex_pub = self.create_publisher(Bool, 'stuck/reflex_active', 10)
         self.create_timer(1.0 / max(5.0, float(p('reflex_rate_hz'))), self._reflex_tick)
         self.create_timer(1.0, self._publish_state)
+        self.create_timer(1.0, self._clearance_tick)
+        self.create_timer(0.5, self._tilt_tick)
         self.get_logger().info('stuck detector: cmd_vel vs wheels, wheels vs LiDAR/VO, turn vs gyro')
 
     # --- inputs ---------------------------------------------------------
@@ -188,7 +231,27 @@ class StuckDetector(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _on_cmd(self, msg: Twist) -> None:
-        self._cmd.append((self._now(), float(msg.linear.x), float(msg.angular.z)))
+        now = self._now()
+        self._cmd.append((now, float(msg.linear.x), float(msg.angular.z)))
+        if abs(msg.linear.x) > 1e-3 or abs(msg.angular.z) > 1e-3:
+            self._last_motion_cmd = now
+
+    def _on_imu(self, msg: Imu) -> None:
+        a = msg.linear_acceleration
+        self._accel.append((self._now(), float(a.x), float(a.y), float(a.z)))
+
+    def _tilt(self):
+        """(tilt rad, forward component of gravity) averaged over the last second, or None.
+
+        The accelerometer measures the reaction to gravity, so at rest it
+        points up in the body frame. Its x part is negative when the nose is
+        lower than the tail."""
+        now = self._now()
+        recent = [(ax, ay, az) for (t, ax, ay, az) in self._accel if now - t <= 1.0]
+        if len(recent) < 5:
+            return None
+        ax, ay, az = (float(np.mean(v)) for v in zip(*recent))
+        return math.atan2(math.hypot(ax, ay), az), ax
 
     def _on_odom(self, msg: Odometry) -> None:
         self._imu.append((_stamp(msg), _yaw(msg.pose.pose.orientation)))
@@ -389,6 +452,72 @@ class StuckDetector(Node):
             in_x = (pts[:, 0] >= near) & (pts[:, 0] <= far)
         return not bool(np.any(in_x & (np.abs(pts[:, 1]) <= self._body_half)))
 
+    def _clearance_tick(self) -> None:
+        if not self._clearance_enabled or self._reflex is not None or not self._scans:
+            return
+        now = self._now()
+        if now - self._last_motion_cmd < self._clearance_idle:
+            return
+        if now - self._last_reflex < self._reflex_cooldown:
+            return
+        pts = self._scans[-1][1]
+        if pts.size == 0:
+            return
+        near = float(np.min(np.hypot(pts[:, 0], pts[:, 1])))
+        if near >= self._clearance_radius:
+            return
+        # Shortest straight move, either way, after which every return is
+        # clearance_radius_m away, through a strip the LiDAR shows empty.
+        best = None
+        for step in np.arange(0.02, self._clearance_max + 1e-6, 0.01):
+            for direction in (-1.0, 1.0):
+                moved = np.hypot(pts[:, 0] - direction * step, pts[:, 1])
+                if float(np.min(moved)) >= self._clearance_radius and self._strip_clear(direction, step):
+                    best = (direction, float(step))
+                    break
+            if best is not None:
+                break
+        if best is None:
+            return
+        self.get_logger().warning(
+            f'too close to stand and plan: LiDAR return {near:.2f} m from the axle '
+            f'(Nav2 needs {self._clearance_radius:.2f}); moving clear')
+        self._start_reflex(best[0], now, best[1])
+
+    def _tilt_tick(self) -> None:
+        tilt = self._tilt()
+        now = self._now()
+        if tilt is None or tilt[0] < self._tilt_threshold:
+            self._tilted_since = None
+            return
+        if self._tilted_since is None:
+            self._tilted_since = now
+            return
+        if self._reflex is not None or now - self._tilted_since < self._tilt_hold:
+            return
+        if now - self._last_reflex < self._reflex_cooldown:
+            return
+        angle, forward_g = tilt
+        downhill = 1.0 if forward_g < 0.0 else -1.0
+        direction = self._pick_direction(downhill)
+        end = 'nose-down' if forward_g < 0.0 else 'nose-up'
+        self.get_logger().warning(
+            f'tilted {math.degrees(angle):.0f} deg {end}: up on something; '
+            f'driving {"forward" if direction > 0 else "back"} {self._tilt_escape:.2f} m')
+        if now - self._last_bump >= self._bump_cooldown:
+            # The raised end is on the object.
+            self._publish_bump(-downhill)
+            self._last_bump = now
+        self._start_reflex(direction, now, self._tilt_escape)
+
+    def _pick_direction(self, preferred: float) -> float:
+        """preferred, unless the last reflex that way barely moved."""
+        last = self._last_reflex_result
+        if last is not None and last[0] == preferred and last[1] < 0.03 \
+                and self._now() - last[2] < 60.0:
+            return -preferred
+        return preferred
+
     def _turn_stalled(self, now: float) -> None:
         self._turn_stalls.append(now)
         while self._turn_stalls and now - self._turn_stalls[0] > self._turn_stall_window:
@@ -397,7 +526,12 @@ class StuckDetector(Node):
             return
         self._turn_stalls.clear()
         dist = self._turn_reflex_dist
-        direction = -1.0 if self._strip_clear(-1.0, dist) else 1.0
+        tilt = self._tilt()
+        if tilt is not None and tilt[0] >= self._tilt_threshold:
+            preferred = 1.0 if tilt[1] < 0.0 else -1.0   # toward the lower end
+        else:
+            preferred = -1.0 if self._strip_clear(-1.0, dist) else 1.0
+        direction = self._pick_direction(preferred)
         self.get_logger().warning('turn keeps stalling: freeing the wheels')
         self._start_reflex(direction, now, dist)
 
@@ -436,6 +570,7 @@ class StuckDetector(Node):
             for _ in range(3):
                 self._cmd_pub.publish(Twist())
             self._reflex = None
+            self._last_reflex_result = (r['dir'], done, now)
             self._reflex_pub.publish(Bool(data=False))
             self.get_logger().info(f'bumper reflex: {reason}')
             return
