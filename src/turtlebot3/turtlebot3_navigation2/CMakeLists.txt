@@ -55,6 +55,7 @@ install(
     scripts/stereo_cmd_vel_enforcer.py
     scripts/stereo_visual_odometry.py
     scripts/stuck_detector.py
+    scripts/stuck_snapshot.py
     scripts/low_obstacle_memory.py
   DESTINATION lib/${PROJECT_NAME}
 )
