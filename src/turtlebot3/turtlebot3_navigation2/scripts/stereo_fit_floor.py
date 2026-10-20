@@ -222,10 +222,12 @@ def main(args=None) -> None:
             rclpy.spin_once(node, timeout_sec=0.1)
         if not node.done:
             node.get_logger().error('Timed out waiting for stereo pairs; is stereo.launch.py running?')
+    except KeyboardInterrupt:
+        pass
     finally:
         ok = node.ok
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
     sys.exit(0 if ok else 1)
 
 

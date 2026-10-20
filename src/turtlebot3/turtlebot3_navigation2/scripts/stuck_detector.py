@@ -112,6 +112,15 @@ class StuckDetector(Node):
         self.declare_parameter('body_rear_m', 0.12)
         self.declare_parameter('body_half_width_m', 0.11)
         self.declare_parameter('reflex_margin_m', 0.10)
+        # A turn in place that keeps stalling: a wheel against a chair leg or
+        # a box corner beside the robot, outside every sensor's view. No bump
+        # is placed (the contact could be on either side), but after
+        # turn_stall_events stalls within turn_stall_window_sec the robot
+        # moves straight back (or forward, if the back is blocked) by
+        # turn_reflex_distance_m, which frees the wheel so the turn can work.
+        self.declare_parameter('turn_stall_events', 2)
+        self.declare_parameter('turn_stall_window_sec', 8.0)
+        self.declare_parameter('turn_reflex_distance_m', 0.12)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         ns = self.get_namespace().strip('/')
@@ -137,6 +146,10 @@ class StuckDetector(Node):
         self._body_rear = float(p('body_rear_m'))
         self._body_half = float(p('body_half_width_m'))
         self._reflex_margin = float(p('reflex_margin_m'))
+        self._turn_stall_events = max(1, int(p('turn_stall_events')))
+        self._turn_stall_window = float(p('turn_stall_window_sec'))
+        self._turn_reflex_dist = float(p('turn_reflex_distance_m'))
+        self._turn_stalls = deque()
         self._reflex = None  # {'dir', 'start', 't0'} while backing away
         self._last_reflex = -1e9
 
@@ -352,6 +365,9 @@ class StuckDetector(Node):
             self._publish_bump(cmd_dir)
             self._last_bump = now
             self._start_reflex(-cmd_dir, now)
+        elif 'not_turning' in reasons or (
+                not info.get('cmd_steady') and info.get('cmd_turn', 0.0) >= self._min_turn):
+            self._turn_stalled(now)
         self.get_logger().warning(f'stuck: {"+".join(reasons)} bump={bump} {info}')
         evt = String()
         evt.data = json.dumps(dict(info, reasons=reasons, bump=bump, t=round(now, 3)))
@@ -373,20 +389,34 @@ class StuckDetector(Node):
             in_x = (pts[:, 0] >= near) & (pts[:, 0] <= far)
         return not bool(np.any(in_x & (np.abs(pts[:, 1]) <= self._body_half)))
 
-    def _start_reflex(self, direction: float, now: float) -> None:
+    def _turn_stalled(self, now: float) -> None:
+        self._turn_stalls.append(now)
+        while self._turn_stalls and now - self._turn_stalls[0] > self._turn_stall_window:
+            self._turn_stalls.popleft()
+        if len(self._turn_stalls) < self._turn_stall_events:
+            return
+        self._turn_stalls.clear()
+        dist = self._turn_reflex_dist
+        direction = -1.0 if self._strip_clear(-1.0, dist) else 1.0
+        self.get_logger().warning('turn keeps stalling: freeing the wheels')
+        self._start_reflex(direction, now, dist)
+
+    def _start_reflex(self, direction: float, now: float, distance: float = None) -> bool:
         if not self._reflex_enabled or self._reflex is not None or not self._wheel:
-            return
+            return False
         if now - self._last_reflex < self._reflex_cooldown:
-            return
+            return False
+        dist = self._reflex_dist if distance is None else float(distance)
         side = 'back' if direction < 0 else 'forward'
-        if not self._strip_clear(direction, self._reflex_dist):
+        if not self._strip_clear(direction, dist):
             self.get_logger().warning(f'bumper reflex: LiDAR shows something {side}; not moving')
-            return
+            return False
         x, y, _ = self._wheel[-1][1]
-        self._reflex = {'dir': direction, 'start': (x, y), 't0': now}
+        self._reflex = {'dir': direction, 'start': (x, y), 't0': now, 'dist': dist}
         self._last_reflex = now
         self._reflex_pub.publish(Bool(data=True))
-        self.get_logger().warning(f'bumper reflex: driving {side} {self._reflex_dist:.2f} m')
+        self.get_logger().warning(f'bumper reflex: driving {side} {dist:.2f} m')
+        return True
 
     def _reflex_tick(self) -> None:
         r = self._reflex
@@ -396,11 +426,11 @@ class StuckDetector(Node):
         x, y, _ = self._wheel[-1][1]
         done = math.hypot(x - r['start'][0], y - r['start'][1])
         reason = None
-        if done >= self._reflex_dist:
+        if done >= r['dist']:
             reason = f'done ({done:.2f} m)'
         elif now - r['t0'] > self._reflex_timeout:
             reason = f'timed out after {done:.2f} m'
-        elif not self._strip_clear(r['dir'], max(0.0, self._reflex_dist - done)):
+        elif not self._strip_clear(r['dir'], max(0.0, r['dist'] - done)):
             reason = f'LiDAR blocked after {done:.2f} m'
         if reason is not None:
             for _ in range(3):

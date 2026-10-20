@@ -835,6 +835,9 @@ def build_blob_scan(
     shadow_obstacle_m: Optional[float] = None,
     drop_result: Optional[Tuple[bool, Optional[float]]] = None,
     free_min_points: int = 8,
+    tall_band_m: float = 0.15,
+    tall_match_m: float = 0.12,
+    tall_min_points: int = 6,
 ) -> dict:
     """Project blind-band obstacles and floor drops into one forward LaserScan.
 
@@ -927,12 +930,28 @@ def build_blob_scan(
     starts = np.searchsorted(ob_bins, np.arange(n), side='left')
     ends = np.searchsorted(ob_bins, np.arange(n), side='right')
 
+    # Returns just above the LiDAR plane. An object that also stands there at
+    # the same range (a door edge, a wall, a table leg) is in the LiDAR scan
+    # already. Stereo places it a little off, by its calibration error, and
+    # that copy is remembered for minutes: a doorway the robot had passed
+    # through narrowed to impassable on the way back. Stereo leaves those
+    # to the LiDAR and keeps only objects lower than the LiDAR plane. The band
+    # is limited so a table top high above a low box does not hide the box.
+    tall = is_tex & (z_rel >= max_height) & (z_rel < max_height + float(tall_band_m))
+    tall_bins = bins[tall]
+    tall_rngs = rngs[tall]
+    tall_skipped = 0
+
     for idx in np.flatnonzero(ends - starts >= drop_min_points):
         samples = ob_rngs[starts[idx]:ends[idx]]
         med = float(np.median(samples))
         # Inside 0.50 m a thin tail above the floor is the near-field smear.
         # A real object fills its beam, so it has to outnumber the floor there.
         if med < 0.50 and len(samples) <= int(floor_counts[idx]):
+            continue
+        near_beam = np.abs(tall_bins - idx) <= 1
+        if int(np.count_nonzero(near_beam & (np.abs(tall_rngs - med) <= float(tall_match_m)))) >= int(tall_min_points):
+            tall_skipped += 1
             continue
         ranges[idx] = med
     obstacle_ranges = ranges.copy()
@@ -992,6 +1011,7 @@ def build_blob_scan(
         ),
         'drop': bool(drop_marked),
         'drop_range_m': drop_range,
+        'tall_beams_skipped': tall_skipped,
     }
 
 
