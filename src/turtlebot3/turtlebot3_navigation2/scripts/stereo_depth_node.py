@@ -15,6 +15,8 @@ import numpy as np
 import rclpy
 import yaml
 from cv_bridge import CvBridge
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
@@ -23,9 +25,11 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header, String
 from tf2_ros import StaticTransformBroadcaster
 from geometry_msgs.msg import TransformStamped
+from nav_msgs.msg import Odometry
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stereo_common  # noqa: E402
+import stereo_visual_odometry  # noqa: E402
 
 
 def _namespace_of(node: Node) -> str:
@@ -72,6 +76,20 @@ class StereoDepthNode(Node):
         # against real matches and goes quiet instead of reporting garbage.
         self.declare_parameter('alignment_check_sec', 5.0)
         self.declare_parameter('max_row_error_px', 2.0)
+        # Drops are measured against the floor the mount fields predict. When
+        # the fitted floor sits this far from z = 0 for floor_check_frames in
+        # a row, camera_height_m / camera_pitch_rad no longer match the
+        # calibration (a new chessboard calibration changes the rectification)
+        # and the floor itself reads as a drop. Drops are then left out.
+        self.declare_parameter('max_floor_offset_m', 0.03)
+        self.declare_parameter('floor_check_frames', 5)
+        # Stereo visual odometry on the same pairs, published on odom/visual
+        # for the bringup EKF. It has its own row-error tolerance, so it keeps
+        # running while misalignment turns obstacle marking off.
+        self.declare_parameter('visual_odometry', False)
+        self.declare_parameter('visual_odom_topic', 'odom/visual')
+        self.declare_parameter('visual_odometry_hz', 5.0)
+        self.declare_parameter('odom_frame', '')
 
         ns = _namespace_of(self)
         calib_param = str(self.get_parameter('calibration_file').value).strip()
@@ -105,11 +123,18 @@ class StereoDepthNode(Node):
         self._row_error_px = None
         self._misaligned_checks = 0
         self._misaligned = False
+        # Obstacles stay off until one alignment check passes. Starting out
+        # trusted let a bumped pair publish garbage marks for the 5-10 s
+        # before two failed checks turned it off, and low_obstacle_memory
+        # kept those marks around the robot's start pose.
+        self._alignment_verified = self._alignment_period <= 0.0
 
         self._bridge = CvBridge()
         self._last_status_s = 0.0
         self._obstacle_streak = 0
         self._drop_streak = 0
+        self._floor_off_streak = 0
+        self._last_floor_warn_s = 0.0
         self._shadow_obstacle_m = None
         self._shadow_until_s = 0.0
         self._warned_uncalibrated = False
@@ -131,6 +156,23 @@ class StereoDepthNode(Node):
 
         self._load_calibration()
 
+        self._vo = None
+        if self._calibrated and bool(self.get_parameter('visual_odometry').value):
+            self._vo = stereo_visual_odometry.StereoVO(self._calib_path)
+            self._odom_frame = str(self.get_parameter('odom_frame').value).strip() or f'{prefix}odom'
+            self._vo_pub = self.create_publisher(
+                Odometry, str(self.get_parameter('visual_odom_topic').value), 10)
+            self._vo_debug_pub = self.create_publisher(String, 'stereo/vo_debug', 10)
+            self.create_timer(1.0, self._publish_vo_debug)
+            # VO keeps its own frame queue and timer in its own callback group,
+            # so it runs at its rate while a slow depth pair is in progress
+            # (OpenCV releases the GIL; main() uses a multi-threaded executor).
+            self._vo_left = deque(maxlen=3)
+            self._vo_right = deque(maxlen=3)
+            self.create_timer(
+                1.0 / max(1.0, float(self.get_parameter('visual_odometry_hz').value)),
+                self._on_vo_tick, callback_group=MutuallyExclusiveCallbackGroup())
+
         left_topic = str(self.get_parameter('left_image_topic').value)
         right_topic = str(self.get_parameter('right_image_topic').value)
         slop = max(0.005, float(self.get_parameter('sync_slop_sec').value))
@@ -142,12 +184,13 @@ class StereoDepthNode(Node):
         self._raw_left = deque(maxlen=3)
         self._raw_right = deque(maxlen=3)
         self.create_subscription(
-            Image, left_topic, lambda raw: self._raw_left.append(raw),
+            Image, left_topic, lambda raw: self._on_raw(raw, self._raw_left, 'left'),
             qos_profile_sensor_data, raw=True)
         self.create_subscription(
-            Image, right_topic, lambda raw: self._raw_right.append(raw),
+            Image, right_topic, lambda raw: self._on_raw(raw, self._raw_right, 'right'),
             qos_profile_sensor_data, raw=True)
-        self.create_timer(self._publish_period, self._on_tick)
+        self.create_timer(
+            self._publish_period, self._on_tick, callback_group=MutuallyExclusiveCallbackGroup())
         self.create_timer(0.5, self._publish_idle_debug)
 
         self.get_logger().info(
@@ -275,10 +318,51 @@ class StereoDepthNode(Node):
             'drop_streak': 0,
         })
 
+    def _publish_vo_debug(self) -> None:
+        msg = String()
+        msg.data = json.dumps(dict(self._vo.stats, calibrated=True))
+        self._vo_debug_pub.publish(msg)
+
     def _publish_debug(self, payload: dict) -> None:
         msg = String()
         msg.data = json.dumps(payload)
         self._debug_pub.publish(msg)
+
+    def _on_raw(self, raw, queue, side: str) -> None:
+        queue.append(raw)
+        if self._vo is not None:
+            (self._vo_left if side == 'left' else self._vo_right).append(raw)
+
+    def _best_pair(self, raw_lefts, raw_rights):
+        lefts = [deserialize_message(raw, Image) for raw in raw_lefts]
+        rights = [deserialize_message(raw, Image) for raw in raw_rights]
+        best = None
+        for left in lefts:
+            for right in rights:
+                gap = abs(self._stamp_ns(left) - self._stamp_ns(right))
+                if gap <= self._slop_ns and (best is None or gap < best[0]):
+                    best = (gap, left, right)
+        return best
+
+    def _mono(self, msg: Image):
+        import cv2
+        width, height = self._vo.size
+        img = self._bridge.imgmsg_to_cv2(msg, desired_encoding='mono8')
+        if img.shape[1] != width or img.shape[0] != height:
+            img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
+        return img
+
+    def _on_vo_tick(self) -> None:
+        best = self._best_pair(list(self._vo_left), list(self._vo_right))
+        if best is None:
+            return
+        self._vo_left.clear()
+        self._vo_right.clear()
+        _gap, left_msg, right_msg = best
+        result = self._vo.process(self._mono(left_msg), self._mono(right_msg), self._stamp_ns(left_msg))
+        if result is not None:
+            self._vo_pub.publish(stereo_visual_odometry.odometry_msg(
+                left_msg.header.stamp, self._odom_frame, self._parent_frame, result))
 
     @staticmethod
     def _stamp_ns(msg: Image) -> int:
@@ -288,14 +372,8 @@ class StereoDepthNode(Node):
         """Process the closest-in-time left/right pair, if one is within slop."""
         if not self._calibrated or self._maps is None:
             return
-        lefts = [deserialize_message(raw, Image) for raw in self._raw_left]
-        rights = [deserialize_message(raw, Image) for raw in self._raw_right]
-        best = None
-        for left in lefts:
-            for right in rights:
-                gap = abs(self._stamp_ns(left) - self._stamp_ns(right))
-                if gap <= self._slop_ns and (best is None or gap < best[0]):
-                    best = (gap, left, right)
+        # Snapshots: the camera callbacks append from another executor thread.
+        best = self._best_pair(list(self._raw_left), list(self._raw_right))
         if best is None:
             return
         self._raw_left.clear()
@@ -329,12 +407,12 @@ class StereoDepthNode(Node):
             right = cv2.resize(right, (width, height), interpolation=cv2.INTER_AREA)
         stamp = left_msg.header.stamp
         self._check_alignment(left, right)
-        if self._misaligned:
+        if self._misaligned or not self._alignment_verified:
             self._obstacle_streak = 0
             self._drop_streak = 0
             self._publish_scan(stamp, None)
             self._publish_debug({
-                'status': 'misaligned',
+                'status': 'misaligned' if self._misaligned else 'verifying_alignment',
                 'calibrated': True,
                 'row_error_px': self._row_error_px,
                 'obstacle_range_m': None,
@@ -400,6 +478,24 @@ class StereoDepthNode(Node):
                 min_column=self._num_disp,
             ),
         )
+        floor_z = blob['floor_z_m']
+        if floor_z is not None and abs(floor_z) > float(self.get_parameter('max_floor_offset_m').value):
+            self._floor_off_streak += 1
+        else:
+            self._floor_off_streak = 0
+        if self._floor_off_streak >= int(self.get_parameter('floor_check_frames').value):
+            # Obstacles are measured against a locally fitted plane and stay.
+            blob['drop'] = False
+            blob['drop_range_m'] = None
+            blob['ranges'] = list(blob['obstacle_ranges'])
+            if time.monotonic() - self._last_floor_warn_s > 10.0:
+                self._last_floor_warn_s = time.monotonic()
+                self.get_logger().warning(
+                    f'Stereo floor is {floor_z:+.3f} m from where the mount fields put it; '
+                    'drops are OFF until it is back. A large object filling the view does '
+                    'this and needs nothing. If it happens on open flat floor, refit with: '
+                    'ros2 run turtlebot3_navigation2 stereo_fit_floor.py '
+                    f'--ros-args -r __ns:={self.get_namespace()}')
         if blob['obstacle_range_m'] is not None:
             self._shadow_obstacle_m = blob['obstacle_range_m']
             self._shadow_until_s = now_s + 1.0
@@ -458,6 +554,9 @@ class StereoDepthNode(Node):
             self._misaligned_checks += 1
         else:
             self._misaligned_checks = 0
+            if not self._alignment_verified:
+                self.get_logger().info(f'Stereo alignment verified ({error:.1f} px); obstacles on')
+            self._alignment_verified = True
         was = self._misaligned
         self._misaligned = self._misaligned_checks >= 2
         if self._misaligned:
@@ -537,8 +636,10 @@ class StereoDepthNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = StereoDepthNode()
+    executor = MultiThreadedExecutor(num_threads=3)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, SystemExit, RuntimeError):
         pass
     finally:

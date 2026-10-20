@@ -12,6 +12,7 @@ This is the robot half of the fleet. Each Raspberry Pi runs bringup, SLAM Toolbo
 | Nav2 / SLAM parameters | `src/turtlebot3/turtlebot3_navigation2/param/humble/burger.yaml`, `mapper_params_online_async_fast.yaml` |
 | Zenoh link to the central PC | `scripts/comms/start_zenoh_robot.sh`, `config/zenoh/robot_client.json5.tmpl` |
 | Odometry fusion (EKF) | `src/turtlebot3/turtlebot3_bringup/param/humble/ekf.yaml`, `turtlebot3_navigation2/scripts/stereo_visual_odometry.py` ([Sensor fusion](#sensor-fusion-odometry-ekf)) |
+| Stuck detection, low-obstacle memory | `turtlebot3_navigation2/scripts/stuck_detector.py`, `low_obstacle_memory.py` ([Stuck detection and low-obstacle memory](#stuck-detection-and-low-obstacle-memory)) |
 | Shell environment | `scripts/env/ros_robot_env.bash` (sources ROS, overlay, Cyclone loopback config, domain) |
 
 ## Quick start
@@ -605,7 +606,9 @@ ros2 launch turtlebot3_bringup robot.launch.py \
 
 Wheel yaw rate is deliberately not fused: wheels over-count turns when they slip on carpet. In a 90° spin on Inky (LiDAR scan-match reference 84.5°), wheels read 88.3°, IMU 83.7°, VO 81.2°, and the EKF 83.8°. Ultrasonics stay obstacle sensors (`laser_scan_normalizer`) and are not odometry inputs.
 
-`stereo_visual_odometry.py` starts with the stereo pair from `navigation2_slam.launch.py`. It tracks corners in the left camera at 6 Hz. Floor points get their depth from the floor plane in the stereo calibration (carpet texture repeats too much to match left/right reliably), points above the floor from a row-strip stereo match, and PnP + RANSAC gives the motion. Frames with fewer than 20 inliers, sideways motion, or impossible speeds are dropped, and the EKF rejects readings far from its estimate. Its status is on `/<robot>/stereo/vo_debug`.
+The magnetometer cannot be added. The `/<robot>/magnetic_field` topic is all zeros because Inky's OpenCR has the 6-axis ICM-20648 (later OpenCR boards replaced the 9-axis MPU9250), and the OpenCR firmware's magnetometer read for that chip is an empty stub. Even on MPU9250 boards the firmware's orientation filter ignores the magnetometer. Indoors a magnetometer near the motors and building steel would also hurt heading more than help; heading drift is corrected by SLAM's scan matching instead. For an absolute heading outdoors, add a separate IMU with a calibrated magnetometer and fuse it as `imu1`.
+
+Visual odometry (`stereo_visual_odometry.py`) runs inside `stereo_depth_node` on its own thread at 5 Hz, on the same matched pairs. It tracks corners in the left camera. Floor points get their depth from the floor plane in the stereo calibration (carpet texture repeats too much to match left/right reliably), points above the floor from a row-strip stereo match, and PnP + RANSAC gives the motion. Frames with fewer than 20 inliers, sideways motion, or impossible speeds are dropped, and the EKF rejects readings far from its estimate. Its status is on `/<robot>/stereo/vo_debug`.
 
 - `use_ekf:=false` (bringup) returns to the stock driver: IMU heading inside wheel odometry, driver-owned TF.
 - `stereo_visual_odometry:=false` (`navigation2_slam.launch.py`) leaves the EKF on wheels + IMU.
@@ -615,6 +618,14 @@ Wheel yaw rate is deliberately not fused: wheels over-count turns when they slip
 ### ROS domain and DDS on the robot
 
 Robot DDS never leaves the Pi. `scripts/env/ros_robot_env.bash` selects Cyclone DDS with `config/cyclonedds/robot_localhost.xml` (loopback only, raised participant cap) and sets the robot's domain from `scripts/env/ros_domain_profile.bash` (table above). Do not set `ROS_LOCALHOST_ONLY=1` on the robot; it brings back Cyclone's small participant cap. Because each robot is isolated, the domain number only has to match between the processes on that one Pi.
+
+
+**UDP receive buffers (do once per robot).** `robot_localhost.xml` asks Cyclone for 8 MB socket receive buffers, but the kernel caps them at `net.core.rmem_max`, which is 208 KB on Ubuntu. With the stereo streams on loopback and the CPU busy, that is too small. Packets are dropped (`netstat -su | grep "receive buffer errors"` keeps climbing), and the Zenoh bridge can miss discovering `tf_zenoh_publish`. The central explorer then shows `pos=na` and never sends goals. Raise the cap on each robot:
+
+```bash
+echo 'net.core.rmem_max=8388608' | sudo tee /etc/sysctl.d/60-cyclonedds.conf
+sudo sysctl --system
+```
 
 ### Multi-robot and central computer
 
@@ -645,7 +656,12 @@ If you add a topic, add it to both this template and `config/zenoh/central_route
 | `map_wire_compressed_republisher` | `map_wire_z` for Zenoh (`fleet_mode:=true`) |
 | `standalone_world_map_tf` | static `map -> <robot>/map` for RViz goals (`fleet_mode:=false` only) |
 | stereo cameras + `stereo_depth_node` + `stereo_cmd_vel_enforcer` | only when two cameras exist; costmap layer and stop gate only with a usable `config/stereo/<robot>.yaml` |
-| `stereo_visual_odometry` | `odom/visual` for the bringup EKF; only with two cameras and a usable stereo calibration (`stereo_visual_odometry:=false` to turn off) |
+| `stereo_pair_throttle` (C++) | takes both 30 fps camera streams and republishes time-matched pairs at 5 Hz on `stereo_left/image_pair`, `stereo_right/image_pair` for `stereo_depth_node` |
+| visual odometry (inside `stereo_depth_node`) | `odom/visual` for the bringup EKF; only with two cameras and a usable stereo calibration (`stereo_visual_odometry:=false` to turn off) |
+| `stuck_detector` | `stuck`, `stuck/event`, `bump_points` (`enable_stuck_detector:=false` to turn off) |
+| `low_obstacle_memory` | `low_obstacle_points` for the `memory_layer` obstacle layer in both costmaps (`low_obstacle_memory:=false` to turn off) |
+
+Optional hardware is listed per robot in `config/sensors/<robot>.yaml`. A robot without the file keeps the defaults. `ultrasonic: false` (Inky) leaves out ultrasonic fusion, `ultrasonic_triangulation_blob` and its costmap layer. The OpenCR publishes a constant 3.0 m on the ultrasonic topics even with no sensors fitted, and the triangulation node alone used about a third of a core. The launch log prints `sensors: ultrasonic=...`.
 
 Off by default (turn on with the matching launch argument): `enable_debug_logging`, `enable_lethal_watch`, `enable_retrace_escape`, `enable_controller_collision_watch`, `enable_ultrasonic_cmd_vel_enforcer`, `orca_mode:=shadow|advisory` (ORCA output is not wired into the drive path).
 
@@ -659,6 +675,47 @@ Main arguments:
 - the `ultrasonic_*`, `retrace_*` and `stereo_*` tuning arguments listed in the launch file.
 
 Arguments removed in the October 2026 cleanup, because the central PC never sends TF or `/map` to the robot: `nav2_use_local_slam_map` (always on now), `fleet_map_relay_hz`, `fleet_require_global_tf_before_nav2`, `fleet_tf_map_wait_timeout_sec`, `auto_fleet_*`, `use_central_tf_map`, `nav2_use_composition`, `nav2_container_name`, `nav2_use_isolated_container`, `container_sig*_timeout`. `fleet_mode:=auto` is still accepted and means `true`.
+
+### Stuck detection and low-obstacle memory
+
+**Stuck detection** (`stuck_detector.py`) compares what the robot is told to do with what it actually does, over a 2 s window:
+
+| Check | Fires when |
+| --- | --- |
+| stalled | `cmd_vel` steadily asks for at least 7 cm of travel and the wheel encoders turn less than 30% of it. Windows where the stereo or ultrasonic stop gate also publishes zero `cmd_vel` do not count: the base is being held on purpose. |
+| slipping | the wheels report at least 7 cm while the heading changed less than 0.3 rad, but the robot did not translate. The LiDAR scan is tested against "moved as far as the wheels say" and "did not move", and stereo VO is used where it exists. If the scan cannot tell the two apart (for example a long featureless corridor), it abstains. |
+| not turning | `cmd_vel` steadily asks for a turn in place and the heading barely changes (mixed turn/stop commands do not count) |
+
+A check must fire on two scans in a row. The result is published on `stuck` (Bool), with one JSON line per detection on `stuck/event` and live numbers on `stuck/debug`. On a stall or slip during a steady push forward or back, the contact side goes out on `bump_points`. Stop-and-go commands, as in a "collision ahead" loop, are still reported but place no bump: in one fleet run, four of five bumps came from such windows and walled Inky in where it had stopped.
+
+**Bumper reflex.** After a contact that places a bump, `stuck_detector` backs the robot straight away 0.20 m at 0.06 m/s. It publishes `cmd_vel` directly at 40 Hz, faster than the velocity smoother, and reports on `stuck/reflex_active`. It moves only when the LiDAR shows the strip it will drive through is empty (body width, 0.20 m plus a 0.10 m margin), and stops early if that changes or after 6 s. At most one reflex runs every 10 s. Nav2's own backup cannot do this: it refuses to start while any lethal cell touches the footprint outline, and the object just touched is exactly that. A low object behind the robot is invisible to the LiDAR; the robot came from that side moments before, which is why it backs straight up.
+
+Tested on Inky against a low black box that is below the LiDAR plane and too close for stereo (nothing closer than 0.40 m): pushing into it at 0.05 m/s was detected as slipping with a steady command. A bump was remembered at the box edge, and the reflex backed off 0.21 m. The memory then held the edge 0.31–0.36 m ahead, and Nav2's spin succeeded. `reflex_enabled:=false` on the node turns it off.
+
+Tests on Inky:
+- Fake wheel data claiming 8 cm of motion while the robot stood still: slipping detected about 1.3 s after the wheels "started".
+- `cmd_vel` with no wheel motion: stall detected.
+- Real driving (15 cm forward, a 90° spin): no detection. During the forward move the LiDAR supported the full wheel distance and VO measured 7–10 cm.
+
+**Low-obstacle memory** (`low_obstacle_memory.py`) keeps its own record, in the SLAM map frame, of:
+- stereo marks (`stereo_blob_scan`) seen in at least two separate scans within 10 s, so a one-frame flicker is not remembered. Each mark is extended 15 cm along the beam, because stereo only sees the near face of a low object. When the robot turns around a box, its unseen back half is still treated as occupied. A scan is placed only with the robot pose at the scan's own timestamp; stereo frames are often a second old, and the current pose would smear marks sideways during a turn.
+- bumps from `stuck_detector`: a 0.18 m wide line at the body edge that touched (0.13 m ahead or 0.14 m behind). An earlier 0.25 m line landed on floor beyond a thin object, where stereo correctly cleared it, and the object was forgotten. The line starts inside Nav2's footprint, which stops Nav2 pushing, and the bumper reflex then moves the robot clear of it. This works on robots with no cameras.
+
+Cells are forgotten when stereo matches floor through them (`stereo_clear_scan`), or after 2 min (marks) or 3 min (bumps). The memory covers what the robot just passed, not the whole map. That keeps a false mark from walling the robot in; it happened once in an early fleet run with 5/10 min lifetimes, single-frame marks and a false stall.
+
+The node republishes its cells every second as `low_obstacle_points` (map frame, cells within 6 m, none within 0.12 m of the robot, so a costmap clear re-marks even an object right in front, which stereo and LiDAR may both miss). A `memory_layer` obstacle layer in both costmaps marks them and clears from `stereo_clear_scan`. Nav2's stock recovery tree calls `ClearEntireCostmap`, which wipes every layer. The memory is back within a second of a clear: tested on Inky, local lethal cells went 334, then 0 right after the clear, then 219 within 2.8 s. Because it is an ordinary layer before inflation, the remembered cells are lethal and the ring within the robot radius is inscribed (253), as for any obstacle.
+
+An earlier version used a keepout filter mask instead. A filter can only say lethal or at most 251, so the ring around each cell was lethal. When Inky stopped about 0.3 m from a low object, its own footprint touched lethal cells, and Nav2 refused to spin or back up until the memory expired. With the layer, the same approach-then-escape test on Inky (creep toward the object, then spin 0.5 rad and back up 0.10 m) succeeds.
+
+Stereo marks are only trusted from a verified pair. `stereo_depth_node` publishes no obstacles until its first alignment check passes (`Stereo alignment verified` in the log). The memory drops every stereo mark, keeping bumps, as soon as the depth node reports the pair out of alignment. Without that, a pair bumped out of alignment, for example during a battery swap, published garbage obstacles for the 5–10 s before it was caught. The memory kept them around the start pose, where nothing could clear them, and Nav2 could not move, spin or back up.
+
+**CPU on a Pi 4** (full SLAM + Nav2 + stereo stack, robot idle):
+- `stuck_detector` and `low_obstacle_memory` use about 0.2 core each, mostly rclpy overhead per message.
+- Visual odometry adds about 0.3 core.
+- `build_blob_scan` was vectorized and gives the same output on live frames: 700 ms per pair down to 255 ms.
+- The camera streams are paired in C++ (`stereo_pair_throttle`).
+
+With all of this, stereo obstacle scans run at about 1.5 Hz, against 1.35 Hz before these changes without VO. The Pi is still close to saturated; `metricbeat`/`packetbeat` take a noticeable share of what remains.
 
 ### LDS configuration
 
@@ -699,7 +756,9 @@ If the upload fails, use recovery mode: hold PUSH SW2, press Reset, then release
 - **"Sensor origin is out of map bounds":** the map does not cover the robot yet; it clears once SLAM grows the map.
 - **`Starting point in lethal space` / stuck near walls:** inflation reaches the robot center. Recoveries (backup, spin, wait) usually move it out; if it happens often, reduce `inflation_radius` in `burger.yaml` slightly.
 - **"Control loop missed its desired rate":** the Pi is short on CPU. Check with `top`; the stereo depth node is the largest consumer (about one core at `publish_hz` 4). Lower its rate or disable stereo on robots that do not need it.
-- **"Stereo cameras are out of alignment":** the stereo node's row check exceeded `max_row_error_px` (2.0). It depends on the scene and appears now and then; recalibrate if it is constant.
+- **"Stereo cameras are out of alignment":** the stereo node's row check exceeded `max_row_error_px` (2.0), so stereo obstacles, drops and the stop gate are off (the robot still drives on LiDAR, ultrasonics where present, and bump memory). It can appear now and then depending on the scene. If it is constant, recalibrate with the robot still: `ros2 run turtlebot3_navigation2 stereo_refine_extrinsics.py --ros-args -r __ns:=/<robot>`. On Inky the error has moved between 0.8 and 6.5 px across battery swaps, which points to a loose camera mount.
+- **"Stereo floor is ... from where the mount fields put it":** normal when a large object fills the cameras' view (drops are off until the floor is visible again). In open space it means `camera_height_m` and `camera_pitch_rad` in `config/stereo/<robot>.yaml` no longer match the calibration, so the floor reads a few centimetres low and looks like a drop across the corridor. The robot then stops, and Nav2 logs "collision ahead" with nothing there. The depth node turns drops off after 5 frames more than 3 cm off. To fix, put the robot on open flat floor with nothing in the lower half of the view, run the cameras (`ros2 launch turtlebot3_navigation2 stereo.launch.py namespace:=<robot>`), and run `ros2 run turtlebot3_navigation2 stereo_fit_floor.py --ros-args -r __ns:=/<robot>` (`-p dry_run:=true` to preview). It keeps the old file as `.bak`. On Inky, after the Oct 2026 chessboard calibration, the fit moved the pitch from 0.269 to 0.162 rad and the height from 0.139 to 0.131 m; the floor went from −0.049 m to 0.000 m.
+- **Stereo recalibration order:** `stereo_calibrate.py` (chessboard: lens and pair), then `stereo_refine_extrinsics.py` if the rows drift later, then `stereo_fit_floor.py` (mount height and pitch). The chessboard step keeps the old height and pitch, which no longer fit the new rectification.
 
 #### Stability tuning profile (Mar 2026)
 

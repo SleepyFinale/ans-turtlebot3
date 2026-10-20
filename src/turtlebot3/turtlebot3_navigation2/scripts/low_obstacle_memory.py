@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""Remember low obstacles near the robot after they leave the cameras' view.
+
+Sources, all recorded as cells in the SLAM map frame:
+
+- stereo_blob_scan: confirmed stereo marks. Stereo only sees the near face of
+  a low object, so each mark is extended extrude_m along the beam; turning
+  around a box then treats its unseen back half as occupied.
+- bump_points: contact points from stuck_detector (a stall or slip while
+  driving). Works on robots without cameras.
+
+stereo_clear_scan removes remembered cells along beams where the cameras
+matched floor, so a moved object or a false bump is forgotten once the robot
+looks at the spot again. Cells also expire (mark_ttl_sec / bump_ttl_sec).
+
+The memory goes to Nav2 as a point cloud (map frame, one point per cell,
+low_obstacle_points) that a dedicated obstacle layer in each costmap marks
+and stereo_clear_scan clears. Nav2's recoveries clear costmap layers
+entirely; the cloud is republished every second, so the memory is back in
+the costmap right after a clear. Being an ordinary layer, it is inflated
+like every other obstacle: lethal only on the remembered cells, inscribed
+(253) within the robot radius. An earlier version used a keepout filter
+mask, which can only express lethal or <= 251; its lethal ring around each
+cell put the robot's own footprint in lethal space once it stopped near an
+obstacle, and Nav2's spin and backup recoveries then refused to move.
+"""
+
+import json
+import math
+
+import numpy as np
+import rclpy
+from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException
+from rclpy.node import Node
+from rclpy.time import Time
+from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Header, String
+from tf2_ros import Buffer, TransformException, TransformListener
+
+
+def _yaw(q) -> float:
+    return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+
+class LowObstacleMemory(Node):
+    def __init__(self) -> None:
+        # rclpy's executor costs a few ms per wake-up on the Pi for every
+        # entity it waits on; the parameter services are not needed here.
+        super().__init__('low_obstacle_memory', start_parameter_services=False)
+        self.declare_parameter('map_frame', '')
+        self.declare_parameter('base_frame', '')
+        self.declare_parameter('mark_scan_topic', 'stereo_blob_scan')
+        self.declare_parameter('clear_scan_topic', 'stereo_clear_scan')
+        self.declare_parameter('bump_topic', 'bump_points')
+        self.declare_parameter('points_topic', 'low_obstacle_points')
+        self.declare_parameter('resolution', 0.05)
+        # Only cells within this distance of the robot are sent.
+        self.declare_parameter('publish_radius_m', 6.0)
+        self.declare_parameter('publish_hz', 1.0)
+        self.declare_parameter('extrude_m', 0.15)
+        self.declare_parameter('clear_min_range_m', 0.40)
+        # Memory is for what the robot passed recently, not a map: a false
+        # stereo mark that outlives the moment can wall the robot in, because
+        # Nav2's costmap clears no longer remove it.
+        self.declare_parameter('mark_ttl_sec', 120.0)
+        self.declare_parameter('bump_ttl_sec', 180.0)
+        # A stereo cell is remembered only after this many separate scans
+        # mark it within confirm_window_sec. Single flickers are dropped.
+        self.declare_parameter('confirm_scans', 2)
+        self.declare_parameter('confirm_window_sec', 10.0)
+        self.declare_parameter('max_cells', 4000)
+        # Only cells right under the robot are left out of the cloud. Low
+        # objects closer than ~0.40 m are invisible to stereo and below the
+        # LiDAR, so this memory is the only thing that still knows they are
+        # there; leaving a wider ring out let a costmap clear erase the near
+        # edge of a black box the robot then drove into. A remembered cell
+        # touching the footprint outline does block Nav2's spin and backup;
+        # stuck_detector's bumper reflex backs the robot off in that case.
+        self.declare_parameter('keep_clear_radius_m', 0.12)
+
+        p = lambda n: self.get_parameter(n).value  # noqa: E731
+        ns = self.get_namespace().strip('/')
+        prefix = f'{ns}/' if ns else ''
+        self._map_frame = str(p('map_frame')).strip() or f'{prefix}map'
+        self._base_frame = str(p('base_frame')).strip() or f'{prefix}base_footprint'
+        self._res = float(p('resolution'))
+        self._publish_radius = float(p('publish_radius_m'))
+        self._extrude = float(p('extrude_m'))
+        self._clear_min = float(p('clear_min_range_m'))
+        self._ttl = {'mark': float(p('mark_ttl_sec')), 'bump': float(p('bump_ttl_sec'))}
+        self._max_cells = int(p('max_cells'))
+        self._keep_clear = float(p('keep_clear_radius_m'))
+        self._confirm_scans = max(1, int(p('confirm_scans')))
+        self._confirm_window = float(p('confirm_window_sec'))
+        # (i, j) -> (sightings, first sighting time) for cells not yet confirmed
+        self._pending = {}
+
+        # (i, j) map cell -> (expiry time, source)
+        self._cells = {}
+
+        self._tf = Buffer(cache_time=Duration(seconds=10.0))
+        self._tf_listener = TransformListener(self._tf, self)
+
+        self._points_pub = self.create_publisher(PointCloud2, str(p('points_topic')), 5)
+
+        self.create_subscription(LaserScan, str(p('mark_scan_topic')), self._on_marks, 10)
+        self.create_subscription(LaserScan, str(p('clear_scan_topic')), self._on_clear, 10)
+        self.create_subscription(PointCloud2, str(p('bump_topic')), self._on_bump, 10)
+        # stereo_depth_node status: when it finds the pair out of alignment,
+        # the marks it produced are not trustworthy and nothing will clear
+        # them, so they are dropped. Bumps do not depend on the cameras.
+        self.create_subscription(String, 'stereo/debug', self._on_stereo_status, 10)
+        self.create_timer(1.0 / max(0.2, float(p('publish_hz'))), self._publish_points)
+        self.get_logger().info(
+            f'low obstacle memory: {self._map_frame} -> {self.resolve_topic_name(str(p("points_topic")))}')
+
+    # --- geometry -------------------------------------------------------
+    def _pose(self, frame: str, stamp, latest_ok: bool = False):
+        """(x, y, yaw) of frame in the map frame at stamp, or None.
+
+        Scans are only placed with the pose at their own stamp. Stereo frames
+        are often a second old by the time they are processed, and the newest
+        pose instead would smear a mark sideways while the robot turns.
+        """
+        try:
+            tf = self._tf.lookup_transform(
+                self._map_frame, frame, Time.from_msg(stamp), timeout=Duration(seconds=0.05))
+        except TransformException:
+            if not latest_ok:
+                return None
+            try:
+                tf = self._tf.lookup_transform(self._map_frame, frame, Time())
+            except TransformException:
+                return None
+        t = tf.transform
+        return t.translation.x, t.translation.y, _yaw(t.rotation)
+
+    def _cell(self, x: float, y: float):
+        return int(math.floor(x / self._res)), int(math.floor(y / self._res))
+
+    def _beams(self, msg: LaserScan):
+        r = np.asarray(msg.ranges, dtype=float)
+        a = msg.angle_min + np.arange(r.size) * msg.angle_increment
+        ok = np.isfinite(r) & (r > 0.0)
+        return r[ok], a[ok]
+
+    def _add(self, x: float, y: float, source: str, now: float) -> None:
+        key = self._cell(x, y)
+        expiry = now + self._ttl[source]
+        old = self._cells.get(key)
+        if old is None or old[0] < expiry:
+            self._cells[key] = (expiry, source)
+
+    # --- inputs ---------------------------------------------------------
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _on_marks(self, msg: LaserScan) -> None:
+        r, a = self._beams(msg)
+        if r.size == 0:
+            return
+        pose = self._pose(msg.header.frame_id, msg.header.stamp)
+        if pose is None:
+            return
+        px, py, yaw = pose
+        now = self._now()
+        steps = np.arange(0.0, self._extrude + 1e-6, self._res)
+        seen = set()
+        for rng, ang in zip(r, a):
+            c, s = math.cos(yaw + ang), math.sin(yaw + ang)
+            for d in steps:
+                seen.add(self._cell(px + (rng + d) * c, py + (rng + d) * s))
+        for key in seen:
+            if key in self._cells:
+                self._cells[key] = (max(self._cells[key][0], now + self._ttl['mark']), self._cells[key][1])
+                continue
+            count, first = self._pending.get(key, (0, now))
+            if now - first > self._confirm_window:
+                count, first = 0, now
+            count += 1
+            if count >= self._confirm_scans:
+                self._pending.pop(key, None)
+                self._cells[key] = (now + self._ttl['mark'], 'mark')
+            else:
+                self._pending[key] = (count, first)
+        self._trim()
+
+    def _on_clear(self, msg: LaserScan) -> None:
+        if not self._cells:
+            return
+        r, a = self._beams(msg)
+        if r.size == 0:
+            return
+        pose = self._pose(msg.header.frame_id, msg.header.stamp)
+        if pose is None:
+            return
+        px, py, yaw = pose
+        step = 0.5 * self._res
+        for rng, ang in zip(r, a):
+            # Stop one cell short of the beam end: a beam that ends on an
+            # obstacle must not erase it.
+            end = rng - self._res
+            if end <= self._clear_min:
+                continue
+            c, s = math.cos(yaw + ang), math.sin(yaw + ang)
+            for d in np.arange(self._clear_min, end, step):
+                key = self._cell(px + d * c, py + d * s)
+                self._cells.pop(key, None)
+                self._pending.pop(key, None)
+
+    def _on_bump(self, msg: PointCloud2) -> None:
+        pose = self._pose(msg.header.frame_id, msg.header.stamp, latest_ok=True)
+        if pose is None:
+            self.get_logger().warning('bump received but no map transform; not remembered')
+            return
+        px, py, yaw = pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        now = self._now()
+        n = 0
+        for x, y, _z in point_cloud2.read_points(msg, field_names=('x', 'y', 'z'), skip_nans=True):
+            self._add(px + c * x - s * y, py + s * x + c * y, 'bump', now)
+            n += 1
+        self._publish_points()
+        self.get_logger().info(f'remembered bump: {n} points near ({px:.2f}, {py:.2f})')
+
+    def _on_stereo_status(self, msg: String) -> None:
+        try:
+            status = json.loads(msg.data).get('status')
+        except (ValueError, AttributeError):
+            return
+        if status != 'misaligned':
+            return
+        marks = [k for k, v in self._cells.items() if v[1] == 'mark']
+        if marks or self._pending:
+            for key in marks:
+                del self._cells[key]
+            self._pending.clear()
+            self.get_logger().warning(
+                f'stereo out of alignment: forgot {len(marks)} remembered stereo cells')
+
+    def _trim(self) -> None:
+        if len(self._cells) <= self._max_cells:
+            return
+        keep = sorted(self._cells.items(), key=lambda kv: kv[1][0], reverse=True)[:self._max_cells]
+        self._cells = dict(keep)
+
+    # --- output ---------------------------------------------------------
+    def _publish_points(self) -> None:
+        now = self._now()
+        for key in [k for k, v in self._cells.items() if v[0] < now]:
+            del self._cells[key]
+        for key in [k for k, v in self._pending.items() if now - v[1] > self._confirm_window]:
+            del self._pending[key]
+        pose = self._pose(self._base_frame, self.get_clock().now().to_msg(), latest_ok=True)
+        if pose is None:
+            return
+        rx, ry, _ = pose
+        pts = []
+        if self._cells:
+            cells = np.asarray(list(self._cells.keys()), dtype=float)
+            xy = (cells + 0.5) * self._res
+            dist = np.hypot(xy[:, 0] - rx, xy[:, 1] - ry)
+            keep = (dist > self._keep_clear) & (dist < self._publish_radius)
+            pts = [[float(x), float(y), 0.05] for x, y in xy[keep]]
+        header = Header()
+        header.stamp = self.get_clock().now().to_msg()
+        header.frame_id = self._map_frame
+        # Sent every period, empty or not: the layer re-marks after a costmap clear.
+        self._points_pub.publish(point_cloud2.create_cloud_xyz32(header, pts))
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = LowObstacleMemory()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
