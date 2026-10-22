@@ -57,15 +57,15 @@ class StuckSnapshot(Node):
         self._busy = False
         self._latest = {}
 
+        # TF is listened to only during a streak, like the layer inputs:
+        # /tf carries ~60-90 messages a second on the robot.
         self._tf = Buffer(cache_time=Duration(seconds=10.0))
-        self._tf_listener = TransformListener(self._tf, self)
+        self._tf_listener = None
         self.create_subscription(Log, '/rosout', self._on_log, 50)
-        self.create_subscription(LaserScan, 'scan', lambda m: self._latest.__setitem__('scan', m),
-                                 qos_profile_sensor_data)
-        self.create_subscription(LaserScan, 'stereo_blob_scan',
-                                 lambda m: self._latest.__setitem__('stereo', m), 10)
-        self.create_subscription(PointCloud2, 'low_obstacle_points',
-                                 lambda m: self._latest.__setitem__('memory', m), 5)
+        # The layer inputs are only subscribed while a "collision ahead"
+        # streak is running; receiving the scan, stereo and memory topics
+        # all the time cost a fifth of a core on the Pi for a diagnostic.
+        self._input_subs = []
         self._costmap = self.create_client(GetCostmap, 'local_costmap/get_costmap')
         self.create_timer(1.0, self._tick)
 
@@ -76,10 +76,35 @@ class StuckSnapshot(Node):
         if self._first is None or now - self._last > 3.0:
             self._first = now
         self._last = now
+        if self._tf_listener is None:
+            self._tf = Buffer(cache_time=Duration(seconds=10.0))
+            self._tf_listener = TransformListener(self._tf, self)
+        if not self._input_subs:
+            self._latest = {}
+            self._input_subs = [
+                self.create_subscription(LaserScan, 'scan', lambda m: self._latest.__setitem__('scan', m),
+                                         qos_profile_sensor_data),
+                self.create_subscription(LaserScan, 'stereo_blob_scan',
+                                         lambda m: self._latest.__setitem__('stereo', m), 10),
+                self.create_subscription(PointCloud2, 'low_obstacle_points',
+                                         lambda m: self._latest.__setitem__('memory', m), 5),
+            ]
+
+    def _drop_inputs(self) -> None:
+        for sub in self._input_subs:
+            self.destroy_subscription(sub)
+        self._input_subs = []
+        if self._tf_listener is not None:
+            self._tf_listener.unregister()
+            self._tf_listener = None
 
     def _tick(self) -> None:
         now = time.monotonic()
-        if self._busy or self._first is None or now - self._last > 3.0:
+        if self._busy:
+            return
+        if self._first is None or now - self._last > 3.0:
+            if self._input_subs:
+                self._drop_inputs()
             return
         if now - self._first < self._trigger or now - self._last_snapshot < self._cooldown:
             return
@@ -119,6 +144,7 @@ class StuckSnapshot(Node):
             self.get_logger().warning(f'stuck snapshot failed: {exc}')
         finally:
             self._busy = False
+            self._drop_inputs()
 
     def _snapshot(self, result) -> None:
         cm = result.map

@@ -170,13 +170,14 @@ def _setup(context):
         _camera(left_dev, left_ns, left_frame, 'v4l2_camera', left_focus),
         _camera(right_dev, right_ns, right_frame, 'v4l2_camera', right_focus),
         # The cameras only offer 30 fps. Pairing and throttling them in C++
-        # keeps the Python depth node from waking 60 times a second.
+        # keeps the Python depth node from waking 60 times a second. 3 Hz
+        # covers the depth node (2.5 Hz) and visual odometry (3 Hz).
         Node(
             package='turtlebot3_navigation2',
             executable='stereo_pair_throttle',
             name='stereo_pair_throttle',
             namespace=ns if ns else None,
-            parameters=[{'rate_hz': 5.0, 'slop_sec': 0.03}],
+            parameters=[{'rate_hz': 3.0, 'slop_sec': 0.03}],
             output='screen',
         ),
         Node(

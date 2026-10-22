@@ -36,6 +36,9 @@
           "/__ROBOT__/tf_static_zenoh",
           "/__ROBOT__/nav2_collision_ahead",
           "/__ROBOT__/nav2_retrace_active",
+          // stuck_detector: idle where Nav2 cannot plan; the explorer holds
+          // the goal instead of blacklisting.
+          "/__ROBOT__/nav2_lethal_inflation",
           // RViz on the central PC; sent only while someone subscribes there.
           "/__ROBOT__/plan",
           "/__ROBOT__/scan_normalized",

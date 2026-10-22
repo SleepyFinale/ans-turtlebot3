@@ -378,14 +378,85 @@ def rectified_to_base(
     camera_translation: np.ndarray,
 ) -> np.ndarray:
     """Map rectified-left points (Nx3) into base_footprint."""
-    pts = np.asarray(points_rect, dtype=float)
+    pts = pts_shape(np.asarray(points_rect, dtype=float))
     if pts.size == 0:
         return np.zeros((0, 3), dtype=float)
     r1 = np.asarray(rectify_rotation, dtype=float).reshape(3, 3)
-    # X_rect = R1 * X_left  =>  X_left = R1.T * X_rect
-    left = pts @ r1
     base_rot = np.asarray(optical_rotation, dtype=float).reshape(3, 3)
-    return pts_shape(left @ base_rot.T + np.asarray(camera_translation, dtype=float).reshape(3))
+    # X_rect = R1 * X_left  =>  X_left = R1.T * X_rect, then into the base.
+    # One fused 3x3 product: on the Pi two (N, 3) matmuls of a stereo frame
+    # took ~70 ms, mostly BLAS call overhead; einsum does it in ~6 ms.
+    m = r1 @ base_rot.T
+    return np.einsum('ij,jk->ik', pts, m) + np.asarray(camera_translation, dtype=float).reshape(3)
+
+
+def padded_disparity(matcher, left_rect: np.ndarray, right_rect: np.ndarray, pad: int) -> np.ndarray:
+    """SGBM disparity (px, float) over the full width of the left image.
+
+    SGBM leaves the first numDisparities columns of the left image empty: on
+    Inky (80 levels, 320 px) that is everything beyond 20 deg to the left,
+    where the robot met chair casters it never saw. Both images get pad
+    blank columns on the left so SGBM evaluates every real column; a match
+    that lands in the padding (disparity > column) has no partner in the
+    right image and is dropped. Values <= 0 mean no match, as from SGBM.
+    """
+    import cv2
+    pad = int(pad)
+    if pad <= 0:
+        return matcher.compute(left_rect, right_rect).astype(np.float32) / 16.0
+    left_p = cv2.copyMakeBorder(left_rect, 0, 0, pad, 0, cv2.BORDER_CONSTANT, value=0)
+    right_p = cv2.copyMakeBorder(right_rect, 0, 0, pad, 0, cv2.BORDER_CONSTANT, value=0)
+    disp = matcher.compute(left_p, right_p)[:, pad:].astype(np.float32) / 16.0
+    cols = np.arange(disp.shape[1], dtype=np.float32)[None, :]
+    disp[disp > cols] = -1.0
+    return disp
+
+
+def plane_ransac(pts: np.ndarray, iters: int = 300, tol: float = 0.01):
+    """Unit normal n and offset d with n.x = d for the dominant plane, plus inlier ratio."""
+    rng = np.random.default_rng(0)
+    best = None
+    best_count = 0
+    for _ in range(iters):
+        a, b, c = pts[rng.choice(len(pts), 3, replace=False)]
+        n = np.cross(b - a, c - a)
+        norm = np.linalg.norm(n)
+        if norm < 1e-9:
+            continue
+        n = n / norm
+        d = float(n @ a)
+        count = int(np.count_nonzero(np.abs(pts @ n - d) < tol))
+        if count > best_count:
+            best_count, best = count, (n, d)
+    if best is None:
+        return None
+    n, d = best
+    inl = pts[np.abs(pts @ n - d) < tol]
+    centroid = inl.mean(axis=0)
+    _u, _s, vt = np.linalg.svd(inl - centroid, full_matrices=False)
+    n = vt[2]
+    d = float(n @ centroid)
+    if d < 0:
+        n, d = -n, -d
+    return n, d, best_count / float(len(pts))
+
+
+def pitch_for_floor_normal(rectify_rotation: np.ndarray, normal: np.ndarray) -> Tuple[float, float]:
+    """camera_pitch_rad that puts the fitted floor normal straight up, and the tilt left over (rad).
+
+    With n.x = d and d > 0, n points from the camera down to the floor, so
+    "up" in the rectified left frame is -n. The mount model gives
+    up_rect = R1 @ optical_r(pitch).T @ [0, 0, 1].
+    """
+    r1 = np.asarray(rectify_rotation, dtype=float)
+    n = np.asarray(normal, dtype=float)
+    best = None
+    for pitch in np.linspace(-0.2, 1.0, 2401):
+        up = r1 @ left_optical_rotation(pitch).T @ np.array([0.0, 0.0, 1.0])
+        ang = math.acos(max(-1.0, min(1.0, float(up @ -n))))
+        if best is None or ang < best[1]:
+            best = (float(pitch), ang)
+    return best
 
 
 def expected_floor_disparity(
@@ -465,6 +536,11 @@ def ray_drop_check(
         & (x >= float(x_min)) & (x < float(x_max))
     )
     in_band[:, :max(0, int(min_column))] = False
+    # With padded_disparity every column is matched, but a floor pixel whose
+    # floor disparity exceeds its column has no partner in the right image;
+    # any match it gets is wrong and would read as a hole.
+    cols = np.arange(disp.shape[1], dtype=np.float32)[None, :]
+    in_band &= ~(np.nan_to_num(expect, nan=np.inf) > cols - 2.0)
     usable = in_band & (disp > 0.0) & (tex >= float(texture_min))
     if not np.any(usable):
         return False, None
@@ -748,25 +824,30 @@ def _fit_floor_plane(
     count = sample.shape[0]
     if count < 40:
         return None
+    # All 60 RANSAC candidates at once. A Python loop with rng.choice and
+    # lstsq per candidate took ~150 ms per call on the Pi, twice per stereo
+    # frame, and was the largest single cost of the depth node.
     rng = np.random.default_rng(0)
-    best = None
-    best_inliers = 0
-    best_mask = None
     xyz = sample
-    for _ in range(60):
-        picked = xyz[rng.choice(count, 3, replace=False)]
-        design = np.column_stack([picked[:, 0], picked[:, 1], np.ones(3)])
-        coeff, _, _, _ = np.linalg.lstsq(design, picked[:, 2], rcond=None)
-        if abs(float(coeff[0])) > 0.6 or abs(float(coeff[1])) > 0.6:
-            continue
-        residual = xyz[:, 2] - (coeff[0] * xyz[:, 0] + coeff[1] * xyz[:, 1] + coeff[2])
-        mask = np.abs(residual) <= 0.025
-        inliers = int(np.count_nonzero(mask))
-        if inliers > best_inliers:
-            best_inliers = inliers
-            best = coeff
-            best_mask = mask
-    if best is None or best_inliers < max(40, int(0.35 * count)) or best_mask is None:
+    idx = rng.integers(0, count, size=(60, 3))
+    tri = xyz[idx]                                    # (60, 3 points, xyz)
+    design = np.concatenate([tri[:, :, :2], np.ones((60, 3, 1))], axis=2)
+    ok = (idx[:, 0] != idx[:, 1]) & (idx[:, 0] != idx[:, 2]) & (idx[:, 1] != idx[:, 2])
+    ok &= np.abs(np.linalg.det(design)) > 1e-9
+    if not np.any(ok):
+        return None
+    coeffs = np.linalg.solve(design[ok], tri[ok, :, 2:3])[:, :, 0]   # (k, 3): a, b, c
+    coeffs = coeffs[(np.abs(coeffs[:, 0]) <= 0.6) & (np.abs(coeffs[:, 1]) <= 0.6)]
+    if len(coeffs) == 0:
+        return None
+    residual = xyz[None, :, 2] - (coeffs[:, 0:1] * xyz[None, :, 0]
+                                  + coeffs[:, 1:2] * xyz[None, :, 1] + coeffs[:, 2:3])
+    masks = np.abs(residual) <= 0.025
+    counts = np.count_nonzero(masks, axis=1)
+    k = int(np.argmax(counts))
+    best_inliers = int(counts[k])
+    best_mask = masks[k]
+    if best_inliers < max(40, int(0.35 * count)):
         return None
     design = np.column_stack([
         xyz[best_mask, 0], xyz[best_mask, 1], np.ones(best_inliers),
@@ -819,10 +900,16 @@ def build_blob_scan(
     max_range: float = 1.5,
     min_height: float = 0.025,
     max_height: float = 0.182,
-    # Closer than this, the downward view rebuilds the floor as a near wall.
     obstacle_x_min: float = 0.40,
-    # Past this, one disparity pixel is already taller than a low object.
     obstacle_x_max: float = 0.80,
+    # Past min_height_ramp_x the height an object needs grows linearly to
+    # min_height_far at obstacle_x_max: one pixel of disparity is ~0.2 m of
+    # range at 1 m, and a floor point misplaced that far along its ray rises
+    # about 1.5 cm. Chair arms (6-10 cm) and casters (5 cm) still clear it.
+    min_height_ramp_x: float = 0.80,
+    min_height_far: float = 0.04,
+    # Hits on one bearing closer together than this are one surface.
+    cluster_m: float = 0.08,
     ground_x_min: float = 0.22,
     ground_x_max: float = 1.20,
     ground_y_abs: float = 0.40,
@@ -838,6 +925,10 @@ def build_blob_scan(
     tall_band_m: float = 0.15,
     tall_match_m: float = 0.12,
     tall_min_points: int = 6,
+    max_plane_offset_m: float = 0.04,
+    lidar_xy: Optional[np.ndarray] = None,
+    lidar_match_m: float = 0.25,
+    lidar_wide_m: float = 0.10,
 ) -> dict:
     """Project blind-band obstacles and floor drops into one forward LaserScan.
 
@@ -876,6 +967,21 @@ def build_blob_scan(
             floor_z = float(edges[int(np.argmax(counts))] + 0.01)
     plane = _fit_floor_plane(pts) if len(pts) else None
     obstacle_plane = _fit_floor_plane(pts, 0.40, 0.80) if len(pts) else None
+    # The obstacle band's plane is fitted to whatever fills it. A large low
+    # object (a box face, a black case) filling the band becomes the "floor"
+    # and is never reported; on Inky such a fit sat 10-24 cm above the floor
+    # the mount calibration puts at z = 0. A plane that far off is not the
+    # floor, so heights are then taken from the calibrated floor instead.
+    fitted_plane_z = None
+    if obstacle_plane is not None:
+        fitted_plane_z = float(obstacle_plane[2] + 0.55 * obstacle_plane[0])
+        # The plane is fitted over 0.40-0.80 m and extrapolated to the band's
+        # ends; a slope beyond ~3 deg (the depth node drops frames tilted
+        # more than 4 deg) is a fit to an object, not the floor.
+        if abs(fitted_plane_z) > float(max_plane_offset_m) \
+                or max(abs(float(obstacle_plane[0])), abs(float(obstacle_plane[1]))) > 0.06:
+            obstacle_plane = None
+            floor_z = 0.0
     drop_pts = pts
     if plane is not None:
         drop_pts = np.array(pts, dtype=float, copy=True)
@@ -891,7 +997,10 @@ def build_blob_scan(
     # Bin every point into a beam at once. A per-point Python loop here took
     # about 0.9 s of each pair on the Pi (some 27k points) and held the
     # depth node near 1 Hz instead of publish_hz.
-    px, py, pz = pts[:, 0], pts[:, 1], pts[:, 2]
+    # The band is cut by distance ahead first: bearing and range for every
+    # point of the frame cost the Pi more than the rest of this loop.
+    in_x = (pts[:, 0] >= max(0.0, float(obstacle_x_min))) & (pts[:, 0] <= float(obstacle_x_max))
+    px, py, pz = pts[in_x, 0], pts[in_x, 1], pts[in_x, 2]
     rng_all = np.hypot(px, py)
     ang_all = np.arctan2(py, px)
     with np.errstate(invalid='ignore'):
@@ -901,11 +1010,10 @@ def build_blob_scan(
         (rng_all >= min_range) & (rng_all <= max_range) & (px > 0.0)
         & (ang_all >= angle_min) & (ang_all <= angle_max)
         & (idx_all >= 0) & (idx_all < n)
-        & (px >= obstacle_x_min) & (px <= obstacle_x_max)
     )
     bins = idx_all[keep].astype(int)
     rngs = rng_all[keep]
-    is_tex = textured[keep]
+    is_tex = textured[in_x][keep]
     if obstacle_plane is not None:
         z_ref = (
             float(obstacle_plane[0]) * px[keep]
@@ -915,7 +1023,10 @@ def build_blob_scan(
     else:
         z_ref = floor_z
     z_rel = pz[keep] - z_ref
-    above = (z_rel > min_height) & (z_rel < max_height)
+    ramp = max(1e-6, float(obstacle_x_max) - float(min_height_ramp_x))
+    need = float(min_height) + (float(min_height_far) - float(min_height)) * np.clip(
+        (px[keep] - float(min_height_ramp_x)) / ramp, 0.0, 1.0)
+    above = (z_rel > need) & (z_rel < max_height)
     np.add.at(above_counts, bins[above], 1)
     np.minimum.at(above_near, bins[above], rngs[above])
     on_floor = is_tex & ~above & (np.abs(z_rel) <= float(ground_z_abs))
@@ -929,6 +1040,14 @@ def build_blob_scan(
     ob_rngs = ob_rngs[order]
     starts = np.searchsorted(ob_bins, np.arange(n), side='left')
     ends = np.searchsorted(ob_bins, np.arange(n), side='right')
+    fl_bins = bins[on_floor]
+    fl_rngs = rngs[on_floor]
+    fl_order = np.lexsort((fl_rngs, fl_bins))
+    fl_bins = fl_bins[fl_order]
+    fl_rngs = fl_rngs[fl_order]
+    fl_starts = np.searchsorted(fl_bins, np.arange(n), side='left')
+    fl_ends = np.searchsorted(fl_bins, np.arange(n), side='right')
+    k_min = max(1, int(drop_min_points))
 
     # Returns just above the LiDAR plane. An object that also stands there at
     # the same range (a door edge, a wall, a table leg) is in the LiDAR scan
@@ -942,17 +1061,58 @@ def build_blob_scan(
     tall_rngs = rngs[tall]
     tall_skipped = 0
 
-    for idx in np.flatnonzero(ends - starts >= drop_min_points):
+    for idx in np.flatnonzero(ends - starts >= k_min):
         samples = ob_rngs[starts[idx]:ends[idx]]
-        med = float(np.median(samples))
-        # Inside 0.50 m a thin tail above the floor is the near-field smear.
-        # A real object fills its beam, so it has to outnumber the floor there.
-        if med < 0.50 and len(samples) <= int(floor_counts[idx]):
+        # The nearest surface on the bearing: the first run of k_min hits
+        # within cluster_m. The median of all hits put a caster at 0.45 m
+        # with the chair's base behind it at 0.8 m in the free space between.
+        spans = samples[k_min - 1:] - samples[:len(samples) - k_min + 1]
+        first = np.flatnonzero(spans <= float(cluster_m))
+        if first.size == 0:
+            continue
+        i0 = int(first[0])
+        surface = samples[i0:]
+        surface = surface[surface <= surface[0] + float(cluster_m)]
+        med = float(np.median(surface))
+        # A smear of floor points just above the floor is thin next to the
+        # floor around it. A caster 0.9 m away fills about as many pixels of
+        # its beam as the floor within cluster_m of it, so only a floor that
+        # outnumbers the hits two to one rejects them.
+        floor_here = fl_rngs[fl_starts[idx]:fl_ends[idx]]
+        local_floor = int(np.count_nonzero(np.abs(floor_here - med) <= float(cluster_m)))
+        if 2 * len(surface) <= local_floor:
             continue
         near_beam = np.abs(tall_bins - idx) <= 1
         if int(np.count_nonzero(near_beam & (np.abs(tall_rngs - med) <= float(tall_match_m)))) >= int(tall_min_points):
             tall_skipped += 1
             continue
+        # The LiDAR has a return on this bearing just beyond (or at) the hit:
+        # the stereo hit is the foot of something the LiDAR already maps. A
+        # plain white wall gives stereo no match above its textured
+        # baseboard, so the check above cannot see that it is tall. At 1 m
+        # one pixel of disparity is ~0.2 m of range and the band's far edge
+        # keeps only the near tail of the baseboard's spread, so on Inky a
+        # wall the LiDAR put at 0.98 m read as a 3 cm obstacle at 0.75 m.
+        # Hence the window reaches lidar_match_m beyond the hit, 0.10 m short.
+        # Past 0.10 m beyond the hit, only a surface at least lidar_wide_m
+        # across within +-6 deg counts (a wall spans ~0.17 m of that at
+        # 0.8 m). A chair column is ~5 cm wide, and the caster at the tip of
+        # an arm pointing at the robot stands 0.25-0.30 m in front of it:
+        # that caster must stay.
+        if lidar_xy is not None and len(lidar_xy):
+            ang = angle_min + idx * angle_increment
+            lr = np.hypot(lidar_xy[:, 0], lidar_xy[:, 1])
+            la = np.arctan2(lidar_xy[:, 1], lidar_xy[:, 0])
+            off = np.arctan2(np.sin(la - ang), np.cos(la - ang))
+            same_bearing = np.abs(off) <= math.radians(4.0)
+            at_hit = same_bearing & (lr >= med - 0.10) & (lr <= med + 0.10)
+            behind = (np.abs(off) <= math.radians(6.0)) & (lr > med + 0.10) \
+                & (lr <= med + float(lidar_match_m))
+            wide = bool(np.count_nonzero(behind) >= 2 and float(
+                np.ptp(lr[behind] * np.sin(off[behind]))) >= float(lidar_wide_m))
+            if bool(np.any(at_hit)) or wide:
+                tall_skipped += 1
+                continue
         ranges[idx] = med
     obstacle_ranges = ranges.copy()
 
@@ -1005,10 +1165,9 @@ def build_blob_scan(
         'angle_max': float(angle_min + (n - 1) * angle_increment),
         'angle_increment': float(angle_increment),
         'obstacle_range_m': positive_range,
-        'floor_z_m': float(
-            obstacle_plane[2] + 0.55 * obstacle_plane[0]
-            if obstacle_plane is not None else floor_z
-        ),
+        # Where the band's fitted plane sat, even when it was rejected as
+        # not the floor; the depth node's floor guard reads this.
+        'floor_z_m': float(fitted_plane_z if fitted_plane_z is not None else floor_z),
         'drop': bool(drop_marked),
         'drop_range_m': drop_range,
         'tall_beams_skipped': tall_skipped,

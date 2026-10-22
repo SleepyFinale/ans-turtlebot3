@@ -191,8 +191,11 @@ def _generate_nav2_params(
     ultrasonic_side_obstacle_max_range: float = 0.55,
     use_custom_bt_recovery_tree: bool = False,
     nav2_enable_stereo_blob_layer: bool = False,
-    stereo_obstacle_max_range: float = 1.0,
-    stereo_clear_min_range: float = 0.40,
+    # stereo_depth_node marks low obstacles 0.28-1.10 m ahead within the
+    # cameras' +-27-37 deg; clearing starts at 0.35 m, where every bearing is
+    # inside that band, so a beam never erases a cell stereo did not check.
+    stereo_obstacle_max_range: float = 1.4,
+    stereo_clear_min_range: float = 0.35,
     low_obstacle_memory: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
@@ -620,6 +623,8 @@ def _launch_setup(context):
         'low_obstacle_memory').perform(context).lower() in ('1', 'true', 'yes')
     stuck_detector_enabled = LaunchConfiguration(
         'enable_stuck_detector').perform(context).lower() in ('1', 'true', 'yes')
+    stuck_snapshot_enabled = LaunchConfiguration(
+        'enable_stuck_snapshot').perform(context).lower() in ('1', 'true', 'yes')
 
     # fleet: the central PC drives this robot (map_wire_z for Zenoh).
     # standalone: no central PC (static map -> <robot>/map for RViz goals).
@@ -1253,8 +1258,10 @@ def _launch_setup(context):
             namespace=ns if ns else None,
             output='screen',
         ))
+    if stuck_snapshot_enabled:
         # When "collision ahead" persists, log which layer (LiDAR, stereo,
-        # memory) owns the lethal cells in front and save a snapshot.
+        # memory) owns the lethal cells in front and save a snapshot. Off by
+        # default: listening to /rosout costs about a tenth of a core.
         actions.append(Node(
             package='turtlebot3_navigation2',
             executable='stuck_snapshot.py',
@@ -1379,7 +1386,10 @@ def generate_launch_description():
             description='Debug logger sampling rate in Hz'),
         DeclareLaunchArgument(
             'enable_lethal_watch', default_value='false',
-            description='Publish /<robot>/nav2_lethal_inflation from global costmap'),
+            description=(
+                'Publish /<robot>/nav2_lethal_inflation from global costmap. Leave off with the '
+                'stuck detector on: stuck_detector publishes the same topic (idle where Nav2 '
+                'cannot plan) without reading the costmap.')),
         DeclareLaunchArgument(
             'enable_retrace_escape', default_value='false',
             description=(
@@ -1640,6 +1650,11 @@ def generate_launch_description():
             description=(
                 'Override for ~/turtlebot3/config/stereo/<namespace>.yaml. '
                 'Empty uses that default path.')),
+        DeclareLaunchArgument(
+            'enable_stuck_snapshot', default_value='false',
+            description=(
+                'Diagnostic: when "collision ahead" lasts 5 s, log which layer owns the '
+                'blocking cells and save ~/.ros/stuck_snapshots/*.npz.')),
         DeclareLaunchArgument(
             'enable_stuck_detector', default_value='true',
             description=(

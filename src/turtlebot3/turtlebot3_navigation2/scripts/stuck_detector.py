@@ -90,7 +90,12 @@ class StuckDetector(Node):
         # off, leaving the line outside the footprint for spin and backup.
         self.declare_parameter('bump_front_m', 0.13)
         self.declare_parameter('bump_rear_m', 0.14)
-        self.declare_parameter('bump_half_width_m', 0.09)
+        # A contact is marked wider than the robot: the object is usually
+        # wider than the patch the bumper touched, and an 18 cm line let Nav2
+        # plan around its end and hit a large low box again 12 cm further on.
+        # Two rows deep (bump_depth_m) so the planner sees a solid edge.
+        self.declare_parameter('bump_half_width_m', 0.18)
+        self.declare_parameter('bump_depth_m', 0.05)
         self.declare_parameter('bump_cooldown_sec', 3.0)
         # Bumper reflex: after a contact that places a bump, back straight
         # away reflex_distance_m. Nav2's backup cannot do this: it refuses to
@@ -105,7 +110,10 @@ class StuckDetector(Node):
         self.declare_parameter('reflex_speed', 0.06)
         self.declare_parameter('reflex_timeout_sec', 6.0)
         self.declare_parameter('reflex_rate_hz', 40.0)
-        self.declare_parameter('reflex_cooldown_sec', 10.0)
+        # Long enough for Nav2 to replan around a new bump before the next
+        # reflex. At 10 s a robot caught on a chair leg spent most of each
+        # attempt waiting.
+        self.declare_parameter('reflex_cooldown_sec', 4.0)
         # Burger body extent from base_footprint and the extra clearance the
         # LiDAR check asks for beyond the distance driven.
         self.declare_parameter('body_front_m', 0.10)
@@ -118,24 +126,48 @@ class StuckDetector(Node):
         # turn_stall_events stalls within turn_stall_window_sec the robot
         # moves straight back (or forward, if the back is blocked) by
         # turn_reflex_distance_m, which frees the wheel so the turn can work.
-        self.declare_parameter('turn_stall_events', 2)
+        # One confirmed stall is enough: the gyro showing under a third of a
+        # half-radian turn is unambiguous, and waiting for a second one kept a
+        # wheel against a chair caster for 2-5 s per attempt. The stalled turn
+        # also leaves a small bump ahead of the wheel that was driving forward
+        # (a clockwise turn drives the left wheel forward), the side a caster
+        # beside a front wheel stops it from, so Nav2 stops repeating that turn.
+        # The reflex distance takes that bump outside the global costmap's
+        # 0.18 m robot radius, so Nav2 can plan again from where it stops.
+        self.declare_parameter('turn_stall_events', 1)
         self.declare_parameter('turn_stall_window_sec', 8.0)
-        self.declare_parameter('turn_reflex_distance_m', 0.12)
+        self.declare_parameter('turn_reflex_distance_m', 0.15)
+        self.declare_parameter('turn_bump_x_m', (0.08, 0.13))
+        self.declare_parameter('turn_bump_y_m', (0.07, 0.10, 0.13))
+        # Remembered low obstacles near the robot (low_obstacle_memory, base
+        # frame). Reflexes and the clearance escape check them as well as the
+        # LiDAR, which passes over casters and chair arms.
+        self.declare_parameter('memory_topic', 'low_obstacle_points_local')
+        self.declare_parameter('memory_max_age_sec', 5.0)
         # Clearance escape. Nav2's planner (Smac 2D) refuses to start while
         # the robot's own cell is inscribed, i.e. anything is within the
-        # global costmap's robot_radius (0.16 m) of the axle. The controller
-        # lets the robot stop closer than that (0.13 m), and the Burger's
+        # global costmap's robot_radius (0.18 m) of the axle. The controller
+        # lets the robot stop closer than that (0.15 m), and the Burger's
         # front edge is only 0.04 m ahead of the axle, so a stop facing a
         # box or a wall left Nav2 unable to plan from where it stood; nothing
         # moved it, and the explorer blacklisted goal after goal. With no
         # motion command for clearance_idle_sec and a LiDAR return within
         # clearance_radius_m, the robot moves straight forward or back the
         # shortest distance (at most clearance_max_m) that clears it, through
-        # a strip the LiDAR shows empty.
+        # a strip the LiDAR shows empty. The planner compares 5 cm cells, so
+        # a return 0.225 m away can sit in a cell 0.19 m from the robot's own
+        # (0.18 m plus two half-cell diagonals is ~0.25 m); at 0.21 m Inky
+        # stayed in "Starting point in lethal space" for four minutes.
+        # When the obstacle runs alongside and no straight move clears it,
+        # the robot first turns to face away from it (only when nothing is
+        # within clearance_turn_min_m, the body's turning radius plus a
+        # margin), then makes the straight move.
         self.declare_parameter('clearance_escape_enabled', True)
-        self.declare_parameter('clearance_radius_m', 0.19)
+        self.declare_parameter('clearance_radius_m', 0.26)
         self.declare_parameter('clearance_idle_sec', 3.0)
         self.declare_parameter('clearance_max_m', 0.15)
+        self.declare_parameter('clearance_turn_min_m', 0.16)
+        self.declare_parameter('turn_speed', 0.6)
         # Tilt escape. A Burger that drives onto a chair leg or a cable ends
         # up with one end raised; on Inky, a chair leg under the rear caster
         # left it 11 deg nose-down, and three back-off reflexes each moved
@@ -148,6 +180,15 @@ class StuckDetector(Node):
         self.declare_parameter('tilt_threshold_deg', 5.0)
         self.declare_parameter('tilt_hold_sec', 1.0)
         self.declare_parameter('tilt_escape_m', 0.15)
+        # Only when the robot is held: the wheels moved less than this while
+        # it stayed tilted. Rolling over a floor cable tilts the robot just
+        # as much, and backing off then left a bump wall across the cable.
+        self.declare_parameter('tilt_max_travel_m', 0.03)
+        # A stuck state that lasts this long gets a reflex even if no second
+        # stall event arrives: a wheel caught on a chair leg mid-turn was
+        # declared stuck once and then left for 32 s.
+        self.declare_parameter('stuck_reflex_after_sec', 4.0)
+        self.declare_parameter('stuck_reflex_distance_m', 0.15)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         ns = self.get_namespace().strip('/')
@@ -163,6 +204,7 @@ class StuckDetector(Node):
         self._bump_front = float(p('bump_front_m'))
         self._bump_rear = float(p('bump_rear_m'))
         self._bump_half = float(p('bump_half_width_m'))
+        self._bump_depth = max(0.0, float(p('bump_depth_m')))
         self._bump_cooldown = float(p('bump_cooldown_sec'))
         self._reflex_enabled = bool(p('reflex_enabled'))
         self._reflex_dist = float(p('reflex_distance_m'))
@@ -176,9 +218,16 @@ class StuckDetector(Node):
         self._turn_stall_events = max(1, int(p('turn_stall_events')))
         self._turn_stall_window = float(p('turn_stall_window_sec'))
         self._turn_reflex_dist = float(p('turn_reflex_distance_m'))
+        self._turn_bump_x = [float(v) for v in p('turn_bump_x_m')]
+        self._turn_bump_y = [float(v) for v in p('turn_bump_y_m')]
         self._turn_stalls = deque()
+        self._memory_max_age = float(p('memory_max_age_sec'))
+        # (receipt time, Nx2 points in the base frame, wheel pose they are relative to)
+        self._memory = None
         self._clearance_enabled = bool(p('clearance_escape_enabled'))
         self._clearance_radius = float(p('clearance_radius_m'))
+        self._clearance_turn_min = float(p('clearance_turn_min_m'))
+        self._turn_speed = abs(float(p('turn_speed')))
         self._clearance_idle = float(p('clearance_idle_sec'))
         self._clearance_max = float(p('clearance_max_m'))
         self._last_motion_cmd = self.get_clock().now().nanoseconds * 1e-9
@@ -187,6 +236,8 @@ class StuckDetector(Node):
         self._tilt_escape = float(p('tilt_escape_m'))
         self._accel = deque(maxlen=200)   # (t, ax, ay, az)
         self._tilted_since = None
+        self._tilt_start_pose = None
+        self._tilt_max_travel = float(p('tilt_max_travel_m'))
         # Direction and distance covered by the last reflex; a reflex that
         # barely moved means that way is held, so the next one tries the other.
         self._last_reflex_result = None
@@ -201,26 +252,37 @@ class StuckDetector(Node):
         self._scans = deque(maxlen=40)       # (t, Nx2 points in base)
         self._streak = {'stalled': 0, 'slipping': 0, 'not_turning': 0}
         self._stuck = False
+        self._stuck_since = None
+        self._stuck_reflex_after = float(p('stuck_reflex_after_sec'))
+        self._stuck_reflex_dist = float(p('stuck_reflex_distance_m'))
         self._last_bump = 0.0
         self._last_check = {}
 
         self.create_subscription(Twist, str(p('cmd_vel_topic')), self._on_cmd, 20)
         self.create_subscription(Odometry, str(p('wheel_odom_topic')), self._on_wheel, 20)
-        # odom supplies the heading (the EKF's, which follows the IMU; with
-        # use_ekf:=false the driver's, which is the IMU heading). It also
-        # stands in for odom/wheel when that topic is silent (use_ekf:=false).
+        # The heading comes from the IMU's orientation (the same yaw the EKF
+        # follows). odom stands in for odom/wheel only when that topic is
+        # silent (use_ekf:=false); it is subscribed just then, because each
+        # 30 Hz topic received in Python costs CPU on the Pi.
         self._last_wheel_msg = -1e9
-        self.create_subscription(Odometry, 'odom', self._on_odom, 20)
+        self._odom_sub = None
+        self._odom_check = self.create_timer(3.0, self._maybe_subscribe_odom)
         self.create_subscription(Odometry, str(p('visual_odom_topic')), self._on_vo, 10)
         self.create_subscription(LaserScan, str(p('scan_topic')), self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Imu, str(p('imu_topic')), self._on_imu, qos_profile_sensor_data)
+        self.create_subscription(PointCloud2, str(p('memory_topic')), self._on_memory, 5)
         self._stuck_pub = self.create_publisher(Bool, 'stuck', 10)
         self._event_pub = self.create_publisher(String, 'stuck/event', 10)
         self._debug_pub = self.create_publisher(String, 'stuck/debug', 10)
         self._bump_pub = self.create_publisher(PointCloud2, 'bump_points', 10)
         self._cmd_pub = self.create_publisher(Twist, str(p('cmd_vel_topic')), 10)
         self._reflex_pub = self.create_publisher(Bool, 'stuck/reflex_active', 10)
-        self.create_timer(1.0 / max(5.0, float(p('reflex_rate_hz'))), self._reflex_tick)
+        self._lethal_pub = self.create_publisher(Bool, 'nav2_lethal_inflation', 10)
+        # The 40 Hz reflex timer exists only while a reflex drives: every
+        # wake-up of rclpy's executor costs CPU on the Pi.
+        self._reflex_period = 1.0 / max(5.0, float(p('reflex_rate_hz')))
+        self._reflex_timer = None
+        self._scan_count = 0
         self.create_timer(1.0, self._publish_state)
         self.create_timer(1.0, self._clearance_tick)
         self.create_timer(0.5, self._tilt_tick)
@@ -239,6 +301,13 @@ class StuckDetector(Node):
     def _on_imu(self, msg: Imu) -> None:
         a = msg.linear_acceleration
         self._accel.append((self._now(), float(a.x), float(a.y), float(a.z)))
+        self._imu.append((_stamp(msg), _yaw(msg.orientation)))
+
+    def _maybe_subscribe_odom(self) -> None:
+        self._odom_check.cancel()
+        if self._now() - self._last_wheel_msg > 2.0 and self._odom_sub is None:
+            self.get_logger().info('odom/wheel is silent; using odom for wheel motion')
+            self._odom_sub = self.create_subscription(Odometry, 'odom', self._on_odom, 20)
 
     def _tilt(self):
         """(tilt rad, forward component of gravity) averaged over the last second, or None.
@@ -254,7 +323,6 @@ class StuckDetector(Node):
         return math.atan2(math.hypot(ax, ay), az), ax
 
     def _on_odom(self, msg: Odometry) -> None:
-        self._imu.append((_stamp(msg), _yaw(msg.pose.pose.orientation)))
         if self._now() - self._last_wheel_msg > 1.0:
             self._store_wheel(msg)
 
@@ -266,6 +334,36 @@ class StuckDetector(Node):
         p = msg.pose.pose
         self._wheel.append((_stamp(msg), (p.position.x, p.position.y, _yaw(p.orientation))))
 
+    def _on_memory(self, msg: PointCloud2) -> None:
+        pts = np.asarray([[x, y] for x, y, _z in point_cloud2.read_points(
+            msg, field_names=('x', 'y', 'z'), skip_nans=True)], dtype=float).reshape(-1, 2)
+        t = _stamp(msg)
+        ref = _interp(self._wheel, t)
+        if ref is None and self._wheel and abs(self._wheel[-1][0] - t) < 0.5:
+            ref = self._wheel[-1][1]
+        self._memory = None if ref is None else (self._now(), pts, ref)
+
+    def _memory_points(self) -> np.ndarray:
+        """Remembered low obstacles near the robot, moved into the current base frame by wheel odometry."""
+        m = self._memory
+        if m is None or not self._wheel or len(m[1]) == 0 \
+                or self._now() - m[0] > self._memory_max_age:
+            return np.zeros((0, 2))
+        (x0, y0, a0), (x1, y1, a1) = m[2], self._wheel[-1][1]
+        c0, s0 = math.cos(a0), math.sin(a0)
+        dx, dy = c0 * (x1 - x0) + s0 * (y1 - y0), -s0 * (x1 - x0) + c0 * (y1 - y0)
+        c, s = math.cos(a1 - a0), math.sin(a1 - a0)
+        p = m[1] - np.array([dx, dy])
+        return np.stack([c * p[:, 0] + s * p[:, 1], -s * p[:, 0] + c * p[:, 1]], axis=1)
+
+    def _obstacles(self):
+        """(LiDAR points, remembered points) in the base frame; empty arrays when missing."""
+        lidar = self._scans[-1][1] if self._scans else np.zeros((0, 2))
+        memory = self._memory_points()
+        # Cells under the body are left out of the costmap too (keep_clear_radius_m).
+        memory = memory[np.hypot(memory[:, 0], memory[:, 1]) > 0.12]
+        return lidar, memory
+
     def _on_vo(self, msg: Odometry) -> None:
         self._vo.append((_stamp(msg), float(msg.twist.twist.linear.x)))
 
@@ -276,7 +374,11 @@ class StuckDetector(Node):
         pts = np.stack([r[ok] * np.cos(a[ok]) + self._lidar_x, r[ok] * np.sin(a[ok])], axis=1)
         t = _stamp(msg)
         self._scans.append((t, pts))
-        self._check(t)
+        # Every other scan (5 Hz) is plenty for 2 s windows and halves the
+        # cost of the LiDAR match while driving.
+        self._scan_count += 1
+        if self._scan_count % 2 == 0:
+            self._check(t)
 
     # --- evidence -------------------------------------------------------
     def _commanded(self, t0: float, t1: float):
@@ -367,7 +469,9 @@ class StuckDetector(Node):
         gyro_turn = abs(_wrap(y_cur - y_ref)) if y_ref is not None and y_cur is not None else None
         dyaw = _wrap(y_cur - y_ref) if gyro_turn is not None else _wrap(w_cur[2] - w_ref[2])
 
+        turn_sum = sum(w for (t, _v, w) in self._cmd if now - span <= t <= now)
         info = {'cmd_dist': round(cmd_dist, 3), 'cmd_turn': round(cmd_turn, 3), 'cmd_steady': cmd_steady,
+                'turn_dir': 0 if abs(turn_sum) < 1e-6 else int(math.copysign(1, turn_sum)),
                 'wheel_travel': round(wheel_travel, 3),
                 'gyro_turn': None if gyro_turn is None else round(gyro_turn, 3)}
 
@@ -409,13 +513,31 @@ class StuckDetector(Node):
             self._declare(fired, cmd_dir, info)
         elif self._stuck and moving:
             self._stuck = False
+            self._stuck_since = None
             self.get_logger().info('no longer stuck')
             self._publish_state()
+        elif self._stuck and self._stuck_since is not None \
+                and now - self._stuck_since >= self._stuck_reflex_after:
+            self._stuck_since = now  # next attempt only after another full wait
+            dist = self._stuck_reflex_dist
+            tilt = self._tilt()
+            if tilt is not None and tilt[0] >= self._tilt_threshold:
+                preferred = 1.0 if tilt[1] < 0.0 else -1.0
+            elif cmd_dir != 0.0 and cmd_dist >= self._min_travel:
+                preferred = -cmd_dir          # away from where it was pushing
+            else:
+                preferred = -1.0 if self._strip_clear(-1.0, dist) else 1.0
+            direction = self._pick_direction(preferred)
+            self.get_logger().warning(
+                f'still stuck after {self._stuck_reflex_after:.0f} s: freeing the wheels')
+            self._start_reflex(direction, now, dist)
 
     # --- outputs --------------------------------------------------------
     def _declare(self, reasons, cmd_dir, info) -> None:
-        self._stuck = True
         now = self._now()
+        if not self._stuck:
+            self._stuck_since = now
+        self._stuck = True
         bump = None
         # A bump is placed only for a steady push in one direction. In a
         # "collision ahead" loop Nav2 sends short start/stop commands, the
@@ -430,7 +552,10 @@ class StuckDetector(Node):
             self._start_reflex(-cmd_dir, now)
         elif 'not_turning' in reasons or (
                 not info.get('cmd_steady') and info.get('cmd_turn', 0.0) >= self._min_turn):
-            self._turn_stalled(now)
+            # Only a clean not-turning reading says which way the turn was held.
+            turn_dir = info.get('turn_dir', 0) if 'not_turning' in reasons else 0
+            if self._turn_stalled(now, turn_dir):
+                bump = 'right wheel' if info.get('turn_dir', 0) > 0 else 'left wheel'
         self.get_logger().warning(f'stuck: {"+".join(reasons)} bump={bump} {info}')
         evt = String()
         evt.data = json.dumps(dict(info, reasons=reasons, bump=bump, t=round(now, 3)))
@@ -439,35 +564,58 @@ class StuckDetector(Node):
 
     # --- bumper reflex ----------------------------------------------------
     def _strip_clear(self, direction: float, distance: float) -> bool:
-        """True when the latest scan has nothing in the strip the body sweeps."""
+        """True when neither the latest scan nor the memory has anything in the strip the body sweeps."""
         if not self._scans:
             return False
-        pts = self._scans[-1][1]
+        lidar, memory = self._obstacles()
         reach = distance + self._reflex_margin
         if direction < 0:
             near, far = -self._body_rear, -self._body_rear - reach
-            in_x = (pts[:, 0] <= near) & (pts[:, 0] >= far)
         else:
             near, far = self._body_front, self._body_front + reach
-            in_x = (pts[:, 0] >= near) & (pts[:, 0] <= far)
-        return not bool(np.any(in_x & (np.abs(pts[:, 1]) <= self._body_half)))
+        lo, hi = min(near, far), max(near, far)
+        # Remembered cells are 5 cm squares given by their centres.
+        for pts, grow in ((lidar, 0.0), (memory, 0.025)):
+            if len(pts) and bool(np.any(
+                    (pts[:, 0] >= lo - grow) & (pts[:, 0] <= hi + grow)
+                    & (np.abs(pts[:, 1]) <= self._body_half + grow))):
+                return False
+        return True
 
-    def _clearance_tick(self) -> None:
-        if not self._clearance_enabled or self._reflex is not None or not self._scans:
+    def _clearance_tick(self, chained: bool = False) -> None:
+        """chained: called right after the escape's own turn, skipping the idle and cooldown waits."""
+        if not self._scans:
             return
         now = self._now()
-        if now - self._last_motion_cmd < self._clearance_idle:
+        idle = now - self._last_motion_cmd >= self._clearance_idle
+        # Remembered cells count too: a bump or a caster mark beside the robot
+        # left Nav2 failing "Starting point in lethal space" for over a minute
+        # with nothing near the robot in the LiDAR.
+        lidar, memory = self._obstacles()
+        pts = np.vstack([lidar, memory]) if len(memory) else lidar
+        dist = np.hypot(pts[:, 0], pts[:, 1]) if len(pts) else np.zeros(0)
+        near = float(np.min(dist)) if len(dist) else np.inf
+        # nav2_lethal_inflation for the central explorer: standing where the
+        # planner cannot start. While it is true the explorer holds the goal
+        # instead of blacklisting every goal that fails to plan; in one run
+        # four minutes of this blacklisted every frontier and exploration
+        # ended with six left. Only while idle, so passing close to furniture
+        # does not hold anything.
+        self._lethal_pub.publish(Bool(data=bool(
+            idle and self._reflex is None and near < self._clearance_radius)))
+        if not self._clearance_enabled or self._reflex is not None:
             return
-        if now - self._last_reflex < self._reflex_cooldown:
-            return
-        pts = self._scans[-1][1]
-        if pts.size == 0:
-            return
-        near = float(np.min(np.hypot(pts[:, 0], pts[:, 1])))
+        if not chained:
+            if not idle:
+                return
+            if now - self._last_reflex < self._reflex_cooldown:
+                return
         if near >= self._clearance_radius:
             return
-        # Shortest straight move, either way, after which every return is
-        # clearance_radius_m away, through a strip the LiDAR shows empty.
+        source = 'remembered low obstacle' if len(memory) and near < float(
+            np.min(np.hypot(lidar[:, 0], lidar[:, 1])) if len(lidar) else np.inf) else 'LiDAR return'
+        # Shortest straight move, either way, after which everything is
+        # clearance_radius_m away, through a strip that is empty.
         best = None
         for step in np.arange(0.02, self._clearance_max + 1e-6, 0.01):
             for direction in (-1.0, 1.0):
@@ -478,11 +626,38 @@ class StuckDetector(Node):
             if best is not None:
                 break
         if best is None:
+            if chained:
+                return
+            # Alongside: turn to face away from what is close, then move.
+            close = pts[dist < self._clearance_radius]
+            away = math.atan2(-float(np.mean(close[:, 1])), -float(np.mean(close[:, 0])))
+            if near < self._clearance_turn_min or abs(away) < 0.35:
+                return
+            self.get_logger().warning(
+                f'too close to stand and plan: {source} {near:.2f} m from the axle, alongside; '
+                f'turning {math.degrees(away):+.0f} deg to move away from it')
+            self._start_turn(away, now)
             return
         self.get_logger().warning(
-            f'too close to stand and plan: LiDAR return {near:.2f} m from the axle '
+            f'too close to stand and plan: {source} {near:.2f} m from the axle '
             f'(Nav2 needs {self._clearance_radius:.2f}); moving clear')
+        if chained:
+            self._last_reflex = now - self._reflex_cooldown  # the turn was part of this escape
         self._start_reflex(best[0], now, best[1])
+
+    def _start_turn(self, angle: float, now: float) -> None:
+        """Turn in place by angle (rad) on wheel odometry, then try the straight clearance move."""
+        if not self._reflex_enabled or self._reflex is not None or not self._wheel:
+            return
+        yaw0 = self._wheel[-1][1][2]
+        self._reflex = {'turn': True, 'target': yaw0 + angle, 'dir': math.copysign(1.0, angle),
+                        't0': now, 'start': self._wheel[-1][1][:2], 'dist': 0.0}
+        if self._reflex_timer is None:
+            self._reflex_timer = self.create_timer(self._reflex_period, self._reflex_tick)
+        else:
+            self._reflex_timer.reset()
+        self._last_reflex = now
+        self._reflex_pub.publish(Bool(data=True))
 
     def _tilt_tick(self) -> None:
         tilt = self._tilt()
@@ -490,8 +665,16 @@ class StuckDetector(Node):
         if tilt is None or tilt[0] < self._tilt_threshold:
             self._tilted_since = None
             return
+        pose = self._wheel[-1][1] if self._wheel else None
         if self._tilted_since is None:
             self._tilted_since = now
+            self._tilt_start_pose = pose
+            return
+        if pose is not None and self._tilt_start_pose is not None and math.hypot(
+                pose[0] - self._tilt_start_pose[0], pose[1] - self._tilt_start_pose[1]) > self._tilt_max_travel:
+            # Still moving while tilted: driving over something, not held by it.
+            self._tilted_since = now
+            self._tilt_start_pose = pose
             return
         if self._reflex is not None or now - self._tilted_since < self._tilt_hold:
             return
@@ -518,13 +701,21 @@ class StuckDetector(Node):
             return -preferred
         return preferred
 
-    def _turn_stalled(self, now: float) -> None:
+    def _turn_stalled(self, now: float, turn_dir: int) -> bool:
+        """Count a stalled turn; on enough of them free the wheels. True when a bump was placed."""
         self._turn_stalls.append(now)
         while self._turn_stalls and now - self._turn_stalls[0] > self._turn_stall_window:
             self._turn_stalls.popleft()
         if len(self._turn_stalls) < self._turn_stall_events:
-            return
+            return False
         self._turn_stalls.clear()
+        bumped = False
+        if turn_dir != 0 and now - self._last_bump >= self._bump_cooldown:
+            # Counter-clockwise drives the right wheel forward, clockwise the left.
+            side = -1.0 if turn_dir > 0 else 1.0
+            self._publish_points_base([(x, side * y) for x in self._turn_bump_x for y in self._turn_bump_y])
+            self._last_bump = now
+            bumped = True
         dist = self._turn_reflex_dist
         tilt = self._tilt()
         if tilt is not None and tilt[0] >= self._tilt_threshold:
@@ -532,8 +723,9 @@ class StuckDetector(Node):
         else:
             preferred = -1.0 if self._strip_clear(-1.0, dist) else 1.0
         direction = self._pick_direction(preferred)
-        self.get_logger().warning('turn keeps stalling: freeing the wheels')
+        self.get_logger().warning('turn stalled: freeing the wheels')
         self._start_reflex(direction, now, dist)
+        return bumped
 
     def _start_reflex(self, direction: float, now: float, distance: float = None) -> bool:
         if not self._reflex_enabled or self._reflex is not None or not self._wheel:
@@ -547,6 +739,10 @@ class StuckDetector(Node):
             return False
         x, y, _ = self._wheel[-1][1]
         self._reflex = {'dir': direction, 'start': (x, y), 't0': now, 'dist': dist}
+        if self._reflex_timer is None:
+            self._reflex_timer = self.create_timer(self._reflex_period, self._reflex_tick)
+        else:
+            self._reflex_timer.reset()
         self._last_reflex = now
         self._reflex_pub.publish(Bool(data=True))
         self.get_logger().warning(f'bumper reflex: driving {side} {dist:.2f} m')
@@ -557,6 +753,23 @@ class StuckDetector(Node):
         if r is None:
             return
         now = self._now()
+        if r.get('turn'):
+            left = _wrap(r['target'] - self._wheel[-1][1][2])
+            if abs(left) < 0.08 or now - r['t0'] > self._reflex_timeout:
+                for _ in range(3):
+                    self._cmd_pub.publish(Twist())
+                self._reflex = None
+                if self._reflex_timer is not None:
+                    self._reflex_timer.cancel()
+                self._reflex_pub.publish(Bool(data=False))
+                self.get_logger().info(f'clearance turn: {"done" if abs(left) < 0.08 else "timed out"}')
+                self._clearance_tick(chained=True)
+                return
+            cmd = Twist()
+            # Slow down over the last 0.3 rad so the turn does not overshoot.
+            cmd.angular.z = math.copysign(max(0.25, min(self._turn_speed, 2.0 * abs(left))), left)
+            self._cmd_pub.publish(cmd)
+            return
         x, y, _ = self._wheel[-1][1]
         done = math.hypot(x - r['start'][0], y - r['start'][1])
         reason = None
@@ -570,6 +783,8 @@ class StuckDetector(Node):
             for _ in range(3):
                 self._cmd_pub.publish(Twist())
             self._reflex = None
+            if self._reflex_timer is not None:
+                self._reflex_timer.cancel()
             self._last_reflex_result = (r['dir'], done, now)
             self._reflex_pub.publish(Bool(data=False))
             self.get_logger().info(f'bumper reflex: {reason}')
@@ -579,12 +794,19 @@ class StuckDetector(Node):
         self._cmd_pub.publish(cmd)
 
     def _publish_bump(self, direction: float) -> None:
-        x = self._bump_front if direction > 0 else -self._bump_rear
+        x0 = self._bump_front if direction > 0 else -self._bump_rear
+        sign = 1.0 if direction > 0 else -1.0
         ys = np.arange(-self._bump_half, self._bump_half + 1e-6, 0.03)
+        xs = x0 + sign * np.arange(0.0, self._bump_depth + 1e-6, 0.05)
+        self._publish_points_base([(x, y) for x in xs for y in ys])
+
+    def _publish_points_base(self, xy) -> None:
+        """Contact points (base frame) for low_obstacle_memory."""
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
         header.frame_id = self._base_frame
-        self._bump_pub.publish(point_cloud2.create_cloud_xyz32(header, [[x, float(y), 0.02] for y in ys]))
+        self._bump_pub.publish(point_cloud2.create_cloud_xyz32(
+            header, [[float(x), float(y), 0.02] for x, y in xy]))
 
     def _publish_state(self) -> None:
         self._stuck_pub.publish(Bool(data=self._stuck))

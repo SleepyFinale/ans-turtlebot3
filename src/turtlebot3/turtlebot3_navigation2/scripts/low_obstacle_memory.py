@@ -55,12 +55,18 @@ class LowObstacleMemory(Node):
         self.declare_parameter('clear_scan_topic', 'stereo_clear_scan')
         self.declare_parameter('bump_topic', 'bump_points')
         self.declare_parameter('points_topic', 'low_obstacle_points')
+        # The cells within local_radius_m, in the base frame, for
+        # stuck_detector: its reflexes must not drive into a remembered caster
+        # the LiDAR cannot see. Published with the cloud, plus right after a bump.
+        self.declare_parameter('local_points_topic', 'low_obstacle_points_local')
+        self.declare_parameter('local_radius_m', 0.8)
         self.declare_parameter('resolution', 0.05)
         # Only cells within this distance of the robot are sent.
         self.declare_parameter('publish_radius_m', 6.0)
         self.declare_parameter('publish_hz', 1.0)
         self.declare_parameter('extrude_m', 0.15)
-        self.declare_parameter('clear_min_range_m', 0.40)
+        # Same as the costmap's stereo_clear_min_range (navigation2_slam.launch.py).
+        self.declare_parameter('clear_min_range_m', 0.35)
         # Memory is for what the robot passed recently, not a map: a false
         # stereo mark that outlives the moment can wall the robot in, because
         # Nav2's costmap clears no longer remove it.
@@ -79,6 +85,12 @@ class LowObstacleMemory(Node):
         # touching the footprint outline does block Nav2's spin and backup;
         # stuck_detector's bumper reflex backs the robot off in that case.
         self.declare_parameter('keep_clear_radius_m', 0.12)
+        # Bumps that land within bump_link_m of an earlier one (younger than
+        # bump_link_sec) are joined by a line of cells. A robot sliding along
+        # a large low object touches its face at points a little apart; the
+        # line between them is that face, which the bumps alone left open.
+        self.declare_parameter('bump_link_m', 0.6)
+        self.declare_parameter('bump_link_sec', 120.0)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         ns = self.get_namespace().strip('/')
@@ -92,6 +104,9 @@ class LowObstacleMemory(Node):
         self._ttl = {'mark': float(p('mark_ttl_sec')), 'bump': float(p('bump_ttl_sec'))}
         self._max_cells = int(p('max_cells'))
         self._keep_clear = float(p('keep_clear_radius_m'))
+        self._bump_link = float(p('bump_link_m'))
+        self._bump_link_sec = float(p('bump_link_sec'))
+        self._recent_bumps = []  # (time, centroid x, centroid y)
         self._confirm_scans = max(1, int(p('confirm_scans')))
         self._confirm_window = float(p('confirm_window_sec'))
         # (i, j) -> (sightings, first sighting time) for cells not yet confirmed
@@ -104,6 +119,8 @@ class LowObstacleMemory(Node):
         self._tf_listener = TransformListener(self._tf, self)
 
         self._points_pub = self.create_publisher(PointCloud2, str(p('points_topic')), 5)
+        self._local_pub = self.create_publisher(PointCloud2, str(p('local_points_topic')), 5)
+        self._local_radius = float(p('local_radius_m'))
 
         self.create_subscription(LaserScan, str(p('mark_scan_topic')), self._on_marks, 10)
         self.create_subscription(LaserScan, str(p('clear_scan_topic')), self._on_clear, 10)
@@ -218,12 +235,26 @@ class LowObstacleMemory(Node):
         px, py, yaw = pose
         c, s = math.cos(yaw), math.sin(yaw)
         now = self._now()
-        n = 0
-        for x, y, _z in point_cloud2.read_points(msg, field_names=('x', 'y', 'z'), skip_nans=True):
-            self._add(px + c * x - s * y, py + s * x + c * y, 'bump', now)
-            n += 1
+        pts = [(px + c * x - s * y, py + s * x + c * y) for x, y, _z in point_cloud2.read_points(
+            msg, field_names=('x', 'y', 'z'), skip_nans=True)]
+        for wx, wy in pts:
+            self._add(wx, wy, 'bump', now)
+        linked = 0
+        if pts:
+            cx = sum(p[0] for p in pts) / len(pts)
+            cy = sum(p[1] for p in pts) / len(pts)
+            self._recent_bumps = [b for b in self._recent_bumps if now - b[0] <= self._bump_link_sec]
+            for _t, bx, by in self._recent_bumps:
+                d = math.hypot(cx - bx, cy - by)
+                if 0.0 < d <= self._bump_link:
+                    for f in np.arange(0.0, 1.0 + 1e-6, 0.5 * self._res / d):
+                        self._add(bx + f * (cx - bx), by + f * (cy - by), 'bump', now)
+                    linked += 1
+            self._recent_bumps.append((now, cx, cy))
         self._publish_points()
-        self.get_logger().info(f'remembered bump: {n} points near ({px:.2f}, {py:.2f})')
+        self.get_logger().info(
+            f'remembered bump: {len(pts)} points near ({px:.2f}, {py:.2f})'
+            + (f', joined to {linked} earlier bump(s)' if linked else ''))
 
     def _on_stereo_status(self, msg: String) -> None:
         try:
@@ -253,22 +284,35 @@ class LowObstacleMemory(Node):
             del self._cells[key]
         for key in [k for k, v in self._pending.items() if now - v[1] > self._confirm_window]:
             del self._pending[key]
-        pose = self._pose(self._base_frame, self.get_clock().now().to_msg(), latest_ok=True)
-        if pose is None:
+        stamp = self.get_clock().now().to_msg()
+        try:
+            # The pose the TF buffer has now, and its own stamp, so the local
+            # cloud says exactly which robot pose it is relative to.
+            tf = self._tf.lookup_transform(self._map_frame, self._base_frame, Time())
+        except TransformException:
             return
-        rx, ry, _ = pose
+        t = tf.transform
+        rx, ry, ryaw = t.translation.x, t.translation.y, _yaw(t.rotation)
         pts = []
+        local = []
         if self._cells:
             cells = np.asarray(list(self._cells.keys()), dtype=float)
             xy = (cells + 0.5) * self._res
             dist = np.hypot(xy[:, 0] - rx, xy[:, 1] - ry)
             keep = (dist > self._keep_clear) & (dist < self._publish_radius)
             pts = [[float(x), float(y), 0.05] for x, y in xy[keep]]
+            near = xy[dist < self._local_radius] - np.array([rx, ry])
+            c, s = math.cos(ryaw), math.sin(ryaw)
+            local = [[float(c * dx + s * dy), float(-s * dx + c * dy), 0.05] for dx, dy in near]
         header = Header()
-        header.stamp = self.get_clock().now().to_msg()
+        header.stamp = stamp
         header.frame_id = self._map_frame
         # Sent every period, empty or not: the layer re-marks after a costmap clear.
         self._points_pub.publish(point_cloud2.create_cloud_xyz32(header, pts))
+        local_header = Header()
+        local_header.stamp = tf.header.stamp
+        local_header.frame_id = self._base_frame
+        self._local_pub.publish(point_cloud2.create_cloud_xyz32(local_header, local))
 
 
 def main(args=None) -> None:

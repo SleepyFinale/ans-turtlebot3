@@ -21,7 +21,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
-from sensor_msgs.msg import Image, LaserScan, PointCloud2
+from sensor_msgs.msg import Image, Imu, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header, String
 from tf2_ros import StaticTransformBroadcaster
@@ -50,9 +50,16 @@ class StereoDepthNode(Node):
         self.declare_parameter('parent_frame', '')
         self.declare_parameter('left_frame', '')
         self.declare_parameter('right_frame', '')
-        self.declare_parameter('publish_hz', 4.0)
+        # 2.5 Hz: at 0.22 m/s the robot moves 9 cm between frames, well inside
+        # the 0.40-0.80 m band. At 4 Hz this node took about a core of the Pi,
+        # which left Nav2's controller missing its 10 Hz loop.
+        self.declare_parameter('publish_hz', 2.5)
         self.declare_parameter('sync_slop_sec', 0.03)
-        self.declare_parameter('min_range_m', 0.12)
+        # About where the lowest image row meets the floor (0.20 m from Inky's
+        # cameras). It sets the disparity levels, and with full_width the
+        # padding: rectified focal length x baseline / min_range, so 80 levels
+        # with Inky's 2026-10-22 calibration, where 0.12 m needed 128.
+        self.declare_parameter('min_range_m', 0.20)
         self.declare_parameter('max_range_m', 1.5)
         # Obstacles and clearing only within this bearing of straight ahead.
         # Near the edge of the ~120 deg lenses the calibration's lens model
@@ -62,15 +69,48 @@ class StereoDepthNode(Node):
         # disparity is within 0.5 px out to about 41 deg.
         self.declare_parameter('max_bearing_deg', 45.0)
         self.declare_parameter('min_obstacle_height_m', 0.025)
+        # Low obstacles are reported between these distances ahead. Closer
+        # than ~0.28 m the view no longer spans the robot's width; past
+        # obstacle_far_x_m the needed height rises to min_obstacle_height_far_m
+        # (see stereo_common.build_blob_scan). At 0.80 m the robot met a chair
+        # base already inside the band's near edge before two frames confirmed it.
+        self.declare_parameter('obstacle_near_x_m', 0.28)
+        self.declare_parameter('obstacle_far_x_m', 1.10)
+        self.declare_parameter('min_obstacle_height_far_m', 0.04)
+        # Match the full width of the left image (stereo_common.padded_disparity).
+        self.declare_parameter('full_width', True)
+        # Image rows used for 3D points (1 = all).
+        self.declare_parameter('point_row_stride', 2)
         # base_scan is 0.172 m above base_link, and base_link is 0.010 m above
         # base_footprint, so the lidar plane is 0.182 m above the ground.
         self.declare_parameter('lidar_height_m', 0.182)
+        # Stereo hits with a LiDAR return on the same bearing, from 0.10 m
+        # nearer to lidar_match_m further (scan_topic_lidar, at most
+        # lidar_max_age_sec old), are left to the LiDAR. lidar_x_m is the
+        # LiDAR's offset ahead of base_footprint (the Burger's is behind).
+        self.declare_parameter('scan_topic_lidar', 'scan')
+        self.declare_parameter('lidar_x_m', -0.032)
+        self.declare_parameter('lidar_match_m', 0.25)
+        self.declare_parameter('lidar_max_age_sec', 1.0)
+        # Obstacles and drops are measured against the floor where the mount
+        # calibration puts it, which only holds while the robot is level.
+        # Rolling over a floor cable tipped Inky 7 deg nose-up; the floor then
+        # seemed to fall away and stereo reported drops at 0.40-0.45 m that
+        # stopped it. Above max_tilt_deg (accelerometer, imu_topic) a frame
+        # publishes nothing.
+        self.declare_parameter('imu_topic', 'imu')
+        self.declare_parameter('max_tilt_deg', 4.0)
         self.declare_parameter('ground_x_min_m', 0.22)
         self.declare_parameter('ground_x_max_m', 1.20)
         self.declare_parameter('drop_z_m', -0.15)
         self.declare_parameter('min_valid_ratio', 0.05)
         self.declare_parameter('cloud_stride', 4)
-        self.declare_parameter('num_disparities', 128)
+        # 0 = just enough disparity levels to reach min_range_m with this
+        # calibration (rectified focal length x baseline / min_range, rounded
+        # up to a multiple of 16, at most 128). SGBM time grows with the
+        # number of levels; a fixed 128 took 168 ms a pair on the Pi where 80
+        # covers the same range.
+        self.declare_parameter('num_disparities', 0)
         self.declare_parameter('block_size', 5)
         self.declare_parameter('close_obstacle_m', 0.45)
         # StereoBM's textureThreshold, applied to SGBM output. Blank floor
@@ -91,12 +131,36 @@ class StereoDepthNode(Node):
         # and the floor itself reads as a drop. Drops are then left out.
         self.declare_parameter('max_floor_offset_m', 0.03)
         self.declare_parameter('floor_check_frames', 5)
+        # Self-alignment, for a camera mount that is not rigid. The file stays
+        # the baseline; drift is re-fitted in memory (and again after every
+        # restart) with the same methods as stereo_refine_extrinsics.py,
+        # stereo_fit_offset.py and stereo_fit_floor.py, only while the robot
+        # is still (odom_topic; with no odometry at all it counts as still):
+        #  - rows: re-fit pitch/roll between the cameras once the row error
+        #    passes realign_row_trigger_px, before max_row_error_px turns
+        #    obstacles off;
+        #  - range: move the right principal point when the disparity of
+        #    LiDAR returns 0.6-3 m away is off by more than offset_trigger_px;
+        #  - floor: re-fit camera height and pitch when the floor check fails
+        #    with the robot level (IMU), within floor_refit_max_* of the file
+        #    so a ramp is never taken for the floor.
+        self.declare_parameter('self_align', True)
+        self.declare_parameter('odom_topic', 'odom')
+        self.declare_parameter('realign_row_trigger_px', 1.0)
+        self.declare_parameter('realign_accept_px', 1.0)
+        self.declare_parameter('realign_min_matches', 300)
+        self.declare_parameter('offset_trigger_px', 0.5)
+        self.declare_parameter('offset_min_samples', 150)
+        self.declare_parameter('offset_max_total_px', 4.0)
+        self.declare_parameter('floor_refit_frames', 6)
+        self.declare_parameter('floor_refit_max_height_m', 0.03)
+        self.declare_parameter('floor_refit_max_pitch_deg', 5.0)
         # Stereo visual odometry on the same pairs, published on odom/visual
         # for the bringup EKF. It has its own row-error tolerance, so it keeps
         # running while misalignment turns obstacle marking off.
         self.declare_parameter('visual_odometry', False)
         self.declare_parameter('visual_odom_topic', 'odom/visual')
-        self.declare_parameter('visual_odometry_hz', 5.0)
+        self.declare_parameter('visual_odometry_hz', 3.0)
         self.declare_parameter('odom_frame', '')
 
         ns = _namespace_of(self)
@@ -114,6 +178,7 @@ class StereoDepthNode(Node):
         )
         self._publish_period = 1.0 / max(0.5, float(self.get_parameter('publish_hz').value))
         self._min_range = float(self.get_parameter('min_range_m').value)
+        self._point_row_stride = max(1, int(self.get_parameter('point_row_stride').value))
         self._max_range = float(self.get_parameter('max_range_m').value)
         self._max_bearing = math.radians(
             min(90.0, max(5.0, float(self.get_parameter('max_bearing_deg').value))))
@@ -138,6 +203,15 @@ class StereoDepthNode(Node):
         # before two failed checks turned it off, and low_obstacle_memory
         # kept those marks around the robot's start pose.
         self._alignment_verified = self._alignment_period <= 0.0
+        self._self_align = bool(self.get_parameter('self_align').value)
+        self._realign_pts = []  # (left Nx2, right Nx2) raw matches gathered while still
+        self._offset_gaps = []  # measured - expected disparity at LiDAR returns
+        self._offset_frames = 0
+        self._floor_pts = []  # lower-half points in the rectified left frame
+        self._last_moving_s = 0.0
+        self._odom_seen = False
+        self._calib = None
+        self._calib_file = None
 
         self._bridge = CvBridge()
         self._last_status_s = 0.0
@@ -150,6 +224,7 @@ class StereoDepthNode(Node):
         self._warned_uncalibrated = False
         self._calibrated = False
         self._maps = None
+        self._pad = 0
         self._num_disp = 128
 
         # Two scans for one costmap layer: stereo_blob_scan marks confirmed
@@ -199,6 +274,19 @@ class StereoDepthNode(Node):
         self.create_subscription(
             Image, right_topic, lambda raw: self._on_raw(raw, self._raw_right, 'right'),
             qos_profile_sensor_data, raw=True)
+        self._lidar = None  # (monotonic time, Nx2 points in the base frame)
+        # (monotonic time, ax, ay, az); ~30 s at the IMU's 20 Hz for the resting attitude.
+        self._accel = deque(maxlen=600)
+        self.create_subscription(
+            Imu, str(self.get_parameter('imu_topic').value),
+            lambda m: self._accel.append((time.monotonic(), m.linear_acceleration.x,
+                                          m.linear_acceleration.y, m.linear_acceleration.z)),
+            qos_profile_sensor_data)
+        self.create_subscription(
+            LaserScan, str(self.get_parameter('scan_topic_lidar').value), self._on_lidar,
+            qos_profile_sensor_data)
+        self.create_subscription(
+            Odometry, str(self.get_parameter('odom_topic').value), self._on_odom, 10)
         self.create_timer(
             self._publish_period, self._on_tick, callback_group=MutuallyExclusiveCallbackGroup())
         self.create_timer(0.5, self._publish_idle_debug)
@@ -230,16 +318,19 @@ class StereoDepthNode(Node):
             d2 = stereo_common.as_vector(data['right_distortion'])
             rotation = stereo_common.as_matrix3(data['R'])
             translation = stereo_common.as_vector(data['T']).reshape(3)
-            r1, _r2, p1, _p2, q, _roi1, _roi2 = cv2.stereoRectify(
+            _r1, _r2, _p1, _p2, _q, _roi1, _roi2 = cv2.stereoRectify(
                 k1, d1, k2, d2, size, rotation, translation.reshape(3, 1),
                 flags=cv2.CALIB_ZERO_DISPARITY,
                 alpha=0,
             )
-            map1 = cv2.initUndistortRectifyMap(k1, d1, r1, p1, size, cv2.CV_32FC1)
-            map2 = cv2.initUndistortRectifyMap(k2, d2, _r2, _p2, size, cv2.CV_32FC1)
             num_disp = int(self.get_parameter('num_disparities').value)
+            if num_disp <= 0:
+                focal_baseline = abs(float(_p2[0, 3]))  # rectified f x baseline (px m)
+                needed = focal_baseline / max(0.05, self._min_range)
+                num_disp = min(128, int(math.ceil(needed / 16.0)) * 16)
             num_disp = max(16, num_disp - (num_disp % 16))
             self._num_disp = num_disp
+            self._pad = num_disp if bool(self.get_parameter('full_width').value) else 0
             block = int(self.get_parameter('block_size').value)
             if block % 2 == 0:
                 block += 1
@@ -257,40 +348,63 @@ class StereoDepthNode(Node):
                 speckleRange=2,
                 mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
             )
-            baseline = float(np.linalg.norm(translation))
-            if baseline < 1e-4:
-                baseline = float(data.get('baseline_m', 0.0508))
-            optical_r = stereo_common.left_optical_rotation(float(data.get('camera_pitch_rad', 0.354706)))
-            optical_t = stereo_common.left_camera_translation(
-                float(data.get('camera_x_m', 0.0254)),
-                baseline,
-                float(data.get('camera_height_m', 0.127)),
-            )
-            right_t, right_r = stereo_common.right_camera_pose_in_left(rotation, translation)
+            self._cv2 = cv2
+            # The file is the baseline; self_align replaces these at runtime.
+            self._calib = {
+                'size': size, 'k1': k1, 'd1': d1, 'k2': k2, 'd2': d2,
+                'rotation': rotation, 'translation': translation,
+                'pitch': float(data.get('camera_pitch_rad', 0.354706)),
+                'height': float(data.get('camera_height_m', 0.127)),
+                'camera_x': float(data.get('camera_x_m', 0.0254)),
+                'baseline_m': float(data.get('baseline_m', 0.0508)),
+            }
+            self._calib_file = dict(self._calib)
+            self._matcher = matcher
+            self._maps = self._build_maps(self._calib)
         except Exception as exc:
             self.get_logger().error(f'Failed to load stereo calibration {self._calib_path}: {exc}')
             return
 
-        self._cv2 = cv2
-        self._maps = {
+        self._calibrated = True
+        self.get_logger().info(f'Loaded stereo calibration {self._calib_path}')
+
+    def _build_maps(self, c: dict) -> dict:
+        """Rectification maps and floor model for one set of calibration values."""
+        cv2 = self._cv2
+        size = c['size']
+        r1, r2, p1, p2, q, _roi1, _roi2 = cv2.stereoRectify(
+            c['k1'], c['d1'], c['k2'], c['d2'], size, c['rotation'],
+            np.asarray(c['translation'], dtype=float).reshape(3, 1),
+            flags=cv2.CALIB_ZERO_DISPARITY, alpha=0,
+        )
+        map1 = cv2.initUndistortRectifyMap(c['k1'], c['d1'], r1, p1, size, cv2.CV_32FC1)
+        map2 = cv2.initUndistortRectifyMap(c['k2'], c['d2'], r2, p2, size, cv2.CV_32FC1)
+        baseline = float(np.linalg.norm(c['translation']))
+        if baseline < 1e-4:
+            baseline = c['baseline_m']
+        optical_r = stereo_common.left_optical_rotation(c['pitch'])
+        optical_t = stereo_common.left_camera_translation(c['camera_x'], baseline, c['height'])
+        right_t, right_r = stereo_common.right_camera_pose_in_left(c['rotation'], c['translation'])
+        self._publish_static_tf(optical_r, optical_t, right_r, right_t)
+        return {
             'size': size,
             'map1': map1,
             'map2': map2,
             'q': q,
+            'p1': np.asarray(p1, dtype=float),
+            'p2': np.asarray(p2, dtype=float),
+            'baseline': baseline,
             'floor': stereo_common.expected_floor_disparity(
                 size, p1, r1, optical_r, optical_t, baseline,
             ),
             'r1': np.asarray(r1, dtype=float),
-            'matcher': matcher,
+            'matcher': self._matcher,
             'optical_r': optical_r,
             'optical_t': optical_t,
-            'k1': k1, 'd1': d1, 'k2': k2, 'd2': d2,
-            'rotation': rotation,
-            'translation': translation,
+            'k1': c['k1'], 'd1': c['d1'], 'k2': c['k2'], 'd2': c['d2'],
+            'rotation': c['rotation'],
+            'translation': c['translation'],
         }
-        self._calibrated = True
-        self._publish_static_tf(optical_r, optical_t, right_r, right_t)
-        self.get_logger().info(f'Loaded stereo calibration {self._calib_path}')
 
     def _publish_static_tf(self, optical_r, optical_t, right_r, right_t) -> None:
         stamp = self.get_clock().now().to_msg()
@@ -406,6 +520,58 @@ class StereoDepthNode(Node):
                 'error': str(exc),
             })
 
+    def _on_odom(self, msg: Odometry) -> None:
+        self._odom_seen = True
+        twist = msg.twist.twist
+        if abs(twist.linear.x) > 0.01 or abs(twist.angular.z) > 0.02:
+            self._last_moving_s = time.monotonic()
+
+    def _still(self) -> bool:
+        """Stopped for at least a second. The cameras are not synchronized, so
+        frames taken while moving are offset and would corrupt a re-fit."""
+        if not self._odom_seen:
+            return True
+        return time.monotonic() - self._last_moving_s > 1.0
+
+    def _on_lidar(self, msg: LaserScan) -> None:
+        # Converted only when a stereo frame uses it (publish_hz, not 10 Hz).
+        self._lidar = (time.monotonic(), msg)
+
+    def _tilt_deg(self):
+        """Tilt over the last 0.5 s against the robot's resting attitude, or None without an IMU.
+
+        The resting attitude is the median accelerometer reading over the last
+        30 s (the IMU on Inky sits ~1.5 deg off level). Measured from level,
+        that offset plus the robot speeding up or braking (0.4-0.7 m/s^2,
+        2-4 deg) read as tilted in 20% of frames while exploring, and those
+        frames published no obstacles.
+        """
+        now = time.monotonic()
+        # The IMU callback appends from another executor thread; list() copies
+        # the deque in one step, a comprehension over it can see it change.
+        samples = np.asarray(list(self._accel), dtype=float).reshape(-1, 4)
+        recent = samples[now - samples[:, 0] <= 0.5]
+        if len(recent) < 3:
+            return None
+        cur = recent[:, 1:].mean(axis=0)
+        rest = np.median(samples[:, 1:], axis=0)
+        if len(samples) < 50 or not np.all(np.isfinite(rest)):
+            rest = np.array([0.0, 0.0, 1.0])
+        cos_a = float(cur @ rest) / max(1e-9, float(np.linalg.norm(cur) * np.linalg.norm(rest)))
+        return math.degrees(math.acos(max(-1.0, min(1.0, cos_a))))
+
+    def _lidar_points(self):
+        if self._lidar is None:
+            return None
+        if time.monotonic() - self._lidar[0] > float(self.get_parameter('lidar_max_age_sec').value):
+            return None
+        msg = self._lidar[1]
+        r = np.asarray(msg.ranges, dtype=float)
+        a = msg.angle_min + np.arange(r.size) * msg.angle_increment
+        ok = np.isfinite(r) & (r > max(0.05, msg.range_min)) & (r < 2.0)
+        x0 = float(self.get_parameter('lidar_x_m').value)
+        return np.stack([r[ok] * np.cos(a[ok]) + x0, r[ok] * np.sin(a[ok])], axis=1)
+
     def _process_pair(self, left_msg: Image, right_msg: Image) -> None:
         cv2 = self._cv2
         width, height = self._maps['size']
@@ -417,6 +583,22 @@ class StereoDepthNode(Node):
             right = cv2.resize(right, (width, height), interpolation=cv2.INTER_AREA)
         stamp = left_msg.header.stamp
         self._check_alignment(left, right)
+        tilt = self._tilt_deg()
+        if tilt is not None and tilt > float(self.get_parameter('max_tilt_deg').value):
+            self._obstacle_streak = 0
+            self._drop_streak = 0
+            self._publish_scan(stamp, None)
+            self._publish_debug({
+                'status': 'tilted',
+                'calibrated': True,
+                'tilt_deg': tilt,
+                'obstacle_range_m': None,
+                'drop': False,
+                'drop_range_m': None,
+                'obstacle_streak': 0,
+                'drop_streak': 0,
+            })
+            return
         if self._misaligned or not self._alignment_verified:
             self._obstacle_streak = 0
             self._drop_streak = 0
@@ -434,7 +616,8 @@ class StereoDepthNode(Node):
             return
         left_r = cv2.remap(left, self._maps['map1'][0], self._maps['map1'][1], cv2.INTER_LINEAR)
         right_r = cv2.remap(right, self._maps['map2'][0], self._maps['map2'][1], cv2.INTER_LINEAR)
-        disparity = self._maps['matcher'].compute(left_r, right_r).astype(np.float32) / 16.0
+        disparity = stereo_common.padded_disparity(
+            self._maps['matcher'], left_r, right_r, self._pad)
         valid = disparity > 0.0
         valid_ratio = float(np.count_nonzero(valid)) / float(valid.size)
 
@@ -458,6 +641,11 @@ class StereoDepthNode(Node):
         mask = valid & np.isfinite(points_rect).all(axis=2)
         z = points_rect[:, :, 2]
         mask &= (z > self._min_range) & (z < self._max_range)
+        # Every point costs Python-side numpy time on the Pi (~50k a frame);
+        # alternate rows keep ~20 hits per 1 deg beam on a caster 1 m away.
+        stride = self._point_row_stride
+        if stride > 1:
+            mask[np.arange(mask.shape[0]) % stride != 0, :] = False
         kept = points_rect[mask]
         base = stereo_common.rectified_to_base(
             kept,
@@ -473,10 +661,15 @@ class StereoDepthNode(Node):
             base,
             angle_min=-self._max_bearing,
             angle_max=self._max_bearing,
+            lidar_xy=self._lidar_points(),
+            lidar_match_m=float(self.get_parameter('lidar_match_m').value),
             min_range=self._min_range,
             max_range=self._max_range,
             min_height=self._min_height,
             max_height=self._lidar_height,
+            obstacle_x_min=float(self.get_parameter('obstacle_near_x_m').value),
+            obstacle_x_max=float(self.get_parameter('obstacle_far_x_m').value),
+            min_height_far=float(self.get_parameter('min_obstacle_height_far_m').value),
             ground_x_min=self._ground_x_min,
             ground_x_max=self._ground_x_max,
             drop_z=self._drop_z,
@@ -487,7 +680,7 @@ class StereoDepthNode(Node):
                 x_min=max(0.15, self._min_range),
                 x_max=min(0.72, self._ground_x_max),
                 texture_min=self._drop_texture_threshold,
-                min_column=self._num_disp,
+                min_column=0 if self._pad else self._num_disp,
             ),
         )
         floor_z = blob['floor_z_m']
@@ -508,6 +701,8 @@ class StereoDepthNode(Node):
                     'this and needs nothing. If it happens on open flat floor, refit with: '
                     'ros2 run turtlebot3_navigation2 stereo_fit_floor.py '
                     f'--ros-args -r __ns:={self.get_namespace()}')
+        if self._self_align:
+            self._self_align_frame(disparity)
         if blob['obstacle_range_m'] is not None:
             self._shadow_obstacle_m = blob['obstacle_range_m']
             self._shadow_until_s = now_s + 1.0
@@ -550,7 +745,9 @@ class StereoDepthNode(Node):
         if self._alignment_period <= 0.0:
             return
         now = time.monotonic()
-        if self._last_alignment_s and (now - self._last_alignment_s) < self._alignment_period:
+        # While gathering matches for a re-fit, check every second instead.
+        period = 1.0 if self._realign_pts else self._alignment_period
+        if self._last_alignment_s and (now - self._last_alignment_s) < period:
             return
         self._last_alignment_s = now
         m = self._maps
@@ -564,6 +761,16 @@ class StereoDepthNode(Node):
         # Most matches are right; the median ignores the odd wrong one.
         error = float(np.median(np.abs(rows)))
         self._row_error_px = error
+        if (
+            self._self_align
+            and error > float(self.get_parameter('realign_row_trigger_px').value)
+            and self._still()
+        ):
+            if self._realign_rows(pts_l, pts_r):
+                return
+        else:
+            # Moving, or aligned again: matches gathered so far no longer belong together.
+            self._realign_pts = []
         if error > self._max_row_error:
             self._misaligned_checks += 1
         else:
@@ -584,11 +791,209 @@ class StereoDepthNode(Node):
         elif was:
             self.get_logger().info(f'Stereo alignment recovered ({error:.1f} px)')
 
+    def _realign_rows(self, pts_l: np.ndarray, pts_r: np.ndarray) -> bool:
+        """Gather matches; once there are enough, re-fit the pose between the cameras.
+
+        Returns True when a new alignment was applied.
+        """
+        cv2 = self._cv2
+        c = self._calib
+        norm_l = cv2.undistortPoints(pts_l.reshape(-1, 1, 2), c['k1'], c['d1']).reshape(-1, 2)
+        norm_r = cv2.undistortPoints(pts_r.reshape(-1, 1, 2), c['k2'], c['d2']).reshape(-1, 2)
+        _e, mask = cv2.findEssentialMat(
+            norm_l, norm_r, np.eye(3), cv2.RANSAC, 0.999, 1.5 / float(c['k1'][0, 0]))
+        if mask is None:
+            return False
+        keep = mask.ravel() > 0
+        self._realign_pts.append((pts_l[keep], pts_r[keep]))
+        total = sum(len(a) for a, _ in self._realign_pts)
+        if total < int(self.get_parameter('realign_min_matches').value):
+            return False
+        all_l = np.vstack([a for a, _ in self._realign_pts])
+        all_r = np.vstack([b for _, b in self._realign_pts])
+        self._realign_pts = []
+        rotation, translation, before, after, inliers = stereo_common.refine_extrinsics(
+            all_l, all_r, c['k1'], c['d1'], c['k2'], c['d2'], c['size'],
+            c['rotation'], c['translation'],
+        )
+        accept = float(self.get_parameter('realign_accept_px').value)
+        if not np.isfinite(after) or after > accept or after >= before or inliers < 100:
+            self.get_logger().warning(
+                f'Stereo self-alignment: rows {before:.2f} px -> {after:.2f} px is not good '
+                f'enough (need <= {accept:.2f} px); keeping the current alignment. If this '
+                'repeats, the lens calibration needs redoing (stereo_calibrate.py).')
+            return False
+        candidate = dict(c, rotation=rotation, translation=np.asarray(translation).reshape(3))
+        ok, reason = stereo_common.calibration_data_usable({
+            **{k: v for k, v in self._file_payload().items()},
+            'R': [float(v) for v in np.asarray(rotation).reshape(-1)],
+            'T': [float(v) for v in candidate['translation']],
+        })
+        if not ok:
+            self.get_logger().warning(f'Stereo self-alignment rejected ({reason})')
+            return False
+        self._apply_calib(candidate)
+        self._misaligned_checks = 0
+        self._misaligned = False
+        self._alignment_verified = True
+        self._row_error_px = after
+        self.get_logger().info(
+            f'Stereo self-aligned: rows {before:.2f} px -> {after:.2f} px over {inliers} matches '
+            '(in memory; the calibration file is unchanged)')
+        return True
+
+    def _self_align_frame(self, disparity: np.ndarray) -> None:
+        """Range-scale and floor checks on an aligned frame; re-fit when they drift."""
+        if not self._still():
+            self._offset_gaps = []
+            self._offset_frames = 0
+            self._floor_pts = []
+            return
+        self._check_range_offset(disparity)
+        floor_frames = int(self.get_parameter('floor_check_frames').value)
+        tilt = self._tilt_deg()
+        if self._floor_off_streak >= floor_frames and tilt is not None and tilt < 1.5:
+            self._refit_floor(disparity)
+        else:
+            self._floor_pts = []
+
+    def _check_range_offset(self, disparity: np.ndarray) -> None:
+        """Compare SGBM disparity at LiDAR returns with the disparity their range implies.
+
+        A small sideways turn of one camera adds the same few pixels of
+        disparity everywhere, which row alignment cannot see; it places
+        everything too near or too far. As in stereo_fit_offset.py it is removed
+        by moving the right camera's principal point.
+        """
+        lidar = self._lidar_points()
+        if lidar is None or len(lidar) == 0:
+            return
+        m = self._maps
+        rng = np.hypot(lidar[:, 0], lidar[:, 1])
+        lidar = lidar[(rng > 0.6) & (rng < 3.0)]
+        if len(lidar) == 0:
+            return
+        pts = np.column_stack([lidar, np.full(len(lidar), self._lidar_height)])
+        rect = ((pts - m['optical_t']) @ m['optical_r']) @ m['r1'].T
+        rect = rect[rect[:, 2] > 0.3]
+        p1 = m['p1']
+        f, cx, cy = float(p1[0, 0]), float(p1[0, 2]), float(p1[1, 2])
+        baseline = abs(float(m['p2'][0, 3]) / float(m['p2'][0, 0]))
+        u = np.rint(f * rect[:, 0] / rect[:, 2] + cx).astype(int)
+        v = np.rint(f * rect[:, 1] / rect[:, 2] + cy).astype(int)
+        expected = f * baseline / rect[:, 2]
+        height, width = disparity.shape
+        inside = (
+            (u >= self._num_disp + 2) & (u < width - 2) & (v >= 8) & (v < height - 8)
+            & (np.abs(rect[:, 0]) <= math.tan(self._max_bearing) * rect[:, 2])
+        )
+        for ui, vi, de in zip(u[inside], v[inside], expected[inside]):
+            # Walls are vertical, so rows around the LiDAR plane see the same surface.
+            w = disparity[vi - 8:vi + 9, ui - 1:ui + 2]
+            w = w[w > 0.0]
+            if w.size >= 8:
+                self._offset_gaps.append(float(np.median(w)) - de)
+        self._offset_frames += 1
+        if len(self._offset_gaps) < int(self.get_parameter('offset_min_samples').value) \
+                or self._offset_frames < 5:
+            return
+        gap = float(np.median(self._offset_gaps))
+        samples = len(self._offset_gaps)
+        self._offset_gaps = []
+        self._offset_frames = 0
+        if abs(gap) <= float(self.get_parameter('offset_trigger_px').value):
+            return
+        # How far the right rectified image moves per pixel of right cx, at the centre.
+        c = self._calib
+        cv2 = self._cv2
+        centre = np.array([[[c['size'][0] / 2.0, c['size'][1] / 2.0]]])
+        r1, r2, p1n, p2n, _q, _a, _b = stereo_common._rectify(
+            c['k1'], c['d1'], c['k2'], c['d2'], c['size'], c['rotation'], c['translation'])
+        k2b = c['k2'].copy()
+        k2b[0, 2] += 1.0
+        x0 = cv2.undistortPoints(centre, c['k2'], c['d2'], R=r2, P=p2n)[0, 0, 0]
+        x1 = cv2.undistortPoints(centre, k2b, c['d2'], R=r2, P=p2n)[0, 0, 0]
+        if abs(x1 - x0) < 1e-3:
+            return
+        # disparity = x_left - x_right, so it changes by -(x1 - x0) per pixel of cx.
+        correction = gap / float(x1 - x0)
+        k2 = c['k2'].copy()
+        k2[0, 2] += correction
+        total = float(k2[0, 2] - self._calib_file['k2'][0, 2])
+        limit = float(self.get_parameter('offset_max_total_px').value)
+        if abs(total) > limit:
+            self.get_logger().warning(
+                f'Stereo range scale is off by {gap:+.2f} px against the LiDAR, but fixing it '
+                f'needs the right cx moved {total:+.1f} px from the file (limit {limit:.1f}); '
+                'recalibrate with stereo_calibrate.py.')
+            return
+        self._apply_calib(dict(c, k2=k2))
+        self.get_logger().info(
+            f'Stereo self-aligned: disparity was {gap:+.2f} px off the LiDAR over {samples} '
+            f'samples; right cx moved {correction:+.2f} px ({total:+.2f} px from the file, in memory)')
+
+    def _refit_floor(self, disparity: np.ndarray) -> None:
+        """Re-fit camera height and pitch, as stereo_fit_floor.py does, when the floor check fails."""
+        cv2 = self._cv2
+        disp = disparity.copy()
+        disp[: disp.shape[0] // 2, :] = 0.0  # floor is in the lower half
+        xyz = cv2.reprojectImageTo3D(disp, self._maps['q'])
+        pts = xyz[disp > 1.0]
+        pts = pts[np.isfinite(pts).all(axis=1)]
+        pts = pts[(pts[:, 2] > self._min_range) & (pts[:, 2] < self._max_range * 1.2)]
+        if len(pts) < 200:
+            return
+        self._floor_pts.append(pts[:: max(1, len(pts) // 2000)])
+        if len(self._floor_pts) < int(self.get_parameter('floor_refit_frames').value):
+            return
+        pts = np.concatenate(self._floor_pts)
+        self._floor_pts = []
+        fit = stereo_common.plane_ransac(pts)
+        if fit is None:
+            return
+        n, height, ratio = fit
+        pitch, residual = stereo_common.pitch_for_floor_normal(self._maps['r1'], n)
+        base = self._calib_file
+        dh = height - base['height']
+        dp = math.degrees(pitch - base['pitch'])
+        ok = (
+            ratio >= 0.6 and residual <= math.radians(3.0)
+            and abs(dh) <= float(self.get_parameter('floor_refit_max_height_m').value)
+            and abs(dp) <= float(self.get_parameter('floor_refit_max_pitch_deg').value)
+        )
+        if not ok:
+            self.get_logger().warning(
+                f'Stereo floor re-fit not applied: plane {ratio:.0%} inliers, height {dh:+.3f} m '
+                f'and pitch {dp:+.1f} deg from the file, side tilt {math.degrees(residual):.1f} deg. '
+                'Not open level floor, or the camera moved too far; if the floor is flat, run '
+                'stereo_fit_floor.py.')
+            return
+        self._apply_calib(dict(self._calib, height=float(height), pitch=float(pitch)))
+        self.get_logger().info(
+            f'Stereo self-aligned: floor re-fitted, camera height {height:.4f} m '
+            f'({dh:+.3f} m), pitch {pitch:.4f} rad ({dp:+.1f} deg) from the file, in memory')
+
+    def _file_payload(self) -> dict:
+        with open(self._calib_path, 'r', encoding='utf-8') as handle:
+            return yaml.safe_load(handle) or {}
+
+    def _apply_calib(self, calib: dict) -> None:
+        """Swap in new calibration values; the tick callback is single-threaded."""
+        self._calib = calib
+        self._maps = self._build_maps(calib)
+        self._prev_obstacles = None
+        self._floor_off_streak = 0
+        self._offset_gaps = []
+        self._offset_frames = 0
+        self._floor_pts = []
+
     def _confirmed_marks(self, blob) -> np.ndarray:
         """Hits seen in this frame and the previous one, so one bad frame is not remembered.
 
-        A neighbour within 3 beams and 0.10 m counts, which allows for the
-        robot turning between frames. Drops use the node's drop streak.
+        A neighbour within 3 beams counts, which allows for the robot turning
+        between frames, within 0.12 m plus a tenth of the range: at 0.22 m/s
+        the robot closes 9 cm per frame, and at 1 m one pixel of disparity is
+        already 0.2 m of range. Drops use the node's drop streak.
         """
         now = np.asarray(blob['obstacle_ranges'], dtype=float)
         prev = self._prev_obstacles
@@ -597,7 +1002,7 @@ class StereoDepthNode(Node):
         if prev is not None and prev.shape == now.shape:
             for i in np.flatnonzero(np.isfinite(now)):
                 lo, hi = max(0, i - 3), min(now.size, i + 4)
-                if np.any(np.abs(prev[lo:hi] - now[i]) <= 0.10):
+                if np.any(np.abs(prev[lo:hi] - now[i]) <= 0.12 + 0.10 * now[i]):
                     marks[i] = now[i]
         if blob['drop'] and self._drop_streak >= 2:
             marks = np.minimum(marks, np.asarray(blob['ranges'], dtype=float))
@@ -633,6 +1038,10 @@ class StereoDepthNode(Node):
         self._clear_pub.publish(msg)
 
     def _publish_cloud(self, stamp, points_base: np.ndarray) -> None:
+        # Packing up to 8000 points one by one costs ~36 ms a frame on the
+        # Pi; nothing on the robot reads stereo/points (it is for RViz).
+        if self._points_pub.get_subscription_count() == 0:
+            return
         pts = np.asarray(points_base, dtype=float)
         if pts.size == 0:
             return

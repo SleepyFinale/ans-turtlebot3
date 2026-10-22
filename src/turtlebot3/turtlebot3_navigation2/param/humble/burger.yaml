@@ -225,13 +225,15 @@ local_costmap:
       resolution: 0.05
       # The controller (collision ahead), spin and backup check this circle.
       # The Burger body reaches 0.125 m from base_footprint (rear corners of
-      # the 0.14 m box centred 0.032 m behind the axle). The global costmap
-      # uses 0.16 m: the planner only routes through gaps the controller
-      # clears with a few cm to spare. With both at 0.15 m, a gap between
-      # two chairs that just fit on the planner's map was a collision on the
-      # controller's (a cell or so apart), and the robot drove up, aborted,
-      # recovered and replanned the same gap again and again.
-      robot_radius: 0.13
+      # the 0.14 m box centred 0.032 m behind the axle). 0.13 m left the
+      # wheels clipping chair legs: the LiDAR sees a leg at 18 cm, and splayed
+      # legs and caster feet reach a few cm further at floor level. The
+      # global costmap uses 0.18 m so the planner only routes through gaps
+      # the controller clears with a few cm to spare. With both at 0.15 m, a
+      # gap between two chairs that just fit on the planner's map was a
+      # collision on the controller's (a cell or so apart), and the robot
+      # drove up, aborted, recovered and replanned the same gap repeatedly.
+      robot_radius: 0.15
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -284,9 +286,9 @@ global_costmap:
       transform_timeout: 0.75
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways. Kept above the
-      # local costmap's 0.13 m so planned gaps are passable for the
+      # local costmap's 0.15 m so planned gaps are passable for the
       # controller (see local_costmap robot_radius).
-      robot_radius: 0.16
+      robot_radius: 0.18
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]

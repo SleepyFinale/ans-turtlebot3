@@ -32,33 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stereo_common  # noqa: E402
 
 
-def _plane_ransac(pts: np.ndarray, iters: int = 300, tol: float = 0.01):
-    """Unit normal n and offset d with n.x = d for the dominant plane, plus inlier ratio."""
-    rng = np.random.default_rng(0)
-    best = None
-    best_count = 0
-    for _ in range(iters):
-        a, b, c = pts[rng.choice(len(pts), 3, replace=False)]
-        n = np.cross(b - a, c - a)
-        norm = np.linalg.norm(n)
-        if norm < 1e-9:
-            continue
-        n = n / norm
-        d = float(n @ a)
-        count = int(np.count_nonzero(np.abs(pts @ n - d) < tol))
-        if count > best_count:
-            best_count, best = count, (n, d)
-    if best is None:
-        return None
-    n, d = best
-    inl = pts[np.abs(pts @ n - d) < tol]
-    centroid = inl.mean(axis=0)
-    _u, _s, vt = np.linalg.svd(inl - centroid, full_matrices=False)
-    n = vt[2]
-    d = float(n @ centroid)
-    if d < 0:
-        n, d = -n, -d
-    return n, d, best_count / float(len(pts))
+_plane_ransac = stereo_common.plane_ransac
 
 
 class StereoFitFloor(Node):
@@ -171,16 +145,7 @@ class StereoFitFloor(Node):
                 f'Only {ratio:.0%} of points lie on one plane (need {self._min_inliers:.0%}); '
                 'clear the lower half of the view and retry.')
             return
-        # With n.x = d and d > 0, n points from the camera down to the floor, so
-        # "up" in the rectified left frame is -n. The mount model gives
-        # up_rect = R1 @ optical_r(pitch).T @ [0, 0, 1].
-        best = None
-        for pitch in np.linspace(-0.2, 1.0, 2401):
-            up = self._r1 @ stereo_common.left_optical_rotation(pitch).T @ np.array([0.0, 0.0, 1.0])
-            ang = math.acos(max(-1.0, min(1.0, float(up @ -n))))
-            if best is None or ang < best[1]:
-                best = (float(pitch), ang)
-        pitch, residual = best
+        pitch, residual = stereo_common.pitch_for_floor_normal(self._r1, n)
         old_h = float(self._data.get('camera_height_m', 0.0))
         old_p = float(self._data.get('camera_pitch_rad', 0.0))
         self.get_logger().info(
