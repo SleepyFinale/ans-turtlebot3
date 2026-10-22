@@ -339,12 +339,12 @@ def _generate_nav2_params(
             }
 
     if nav2_enable_stereo_blob_layer:
-        # Stereo gets its own ObstacleLayer in both costmaps. Sharing the lidar
-        # layer would let lidar beams, which pass over a low object, clear it.
-        # The global costmap is fixed to the map frame, so its marks are the
-        # robot's memory: an object seen on route A stays until stereo sees
-        # floor through it again, and the planner and the explorer's path
-        # precheck route around it meanwhile. The SLAM map is never touched.
+        # Stereo gets its own ObstacleLayer. Sharing the lidar layer would let
+        # lidar beams, which pass over a low object, clear it. Without
+        # low_obstacle_memory it is in both costmaps, and the global one (fixed
+        # to the map frame) is the robot's memory: an object seen on route A
+        # stays until stereo sees floor through it again. The SLAM map is never
+        # touched.
         prefix = f'/{namespace}/' if namespace else ''
         stereo_layer = {
             'plugin': 'nav2_costmap_2d::ObstacleLayer',
@@ -381,7 +381,14 @@ def _generate_nav2_params(
                 'inf_is_valid': False,
             },
         }
-        for section in ('local_costmap', 'global_costmap'):
+        # With low_obstacle_memory the global costmap takes stereo marks from
+        # the memory layer only: the same confirmed marks, cleared the same
+        # way, but with a time-to-live, and visible to stuck_detector. A
+        # stereo layer there kept its marks with no limit; when a camera
+        # dropped off USB mid-run, marks around the robot froze, the planner
+        # refused to start, and nothing on the robot could see why.
+        sections = ('local_costmap',) if low_obstacle_memory else ('local_costmap', 'global_costmap')
+        for section in sections:
             costmap_node = params.get(section, {}).get(section, {}).get('ros__parameters', {})
             if not isinstance(costmap_node, dict):
                 continue
