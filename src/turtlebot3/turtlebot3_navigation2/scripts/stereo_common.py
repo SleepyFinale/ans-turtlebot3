@@ -8,6 +8,7 @@ path and the same obstacle projection.
 import glob
 import math
 import os
+import re
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -117,11 +118,21 @@ def _video_index(path: str) -> int:
         return 0
 
 
-def list_stereo_cameras() -> List[dict]:
-    """USB capture nodes first, in numeric /dev/videoN order.
+def _bus_key(bus_info: str):
+    """Natural sort key for a V4L bus_info such as usb-0000:01:00.0-1.2 (port 1.2 before 1.10)."""
+    return [int(part) if part.isdigit() else part for part in re.split(r'(\d+)', bus_info)]
 
-    Lexicographic order picks /dev/video14 before /dev/video2. The Pi ISP also
-    advertises a capture node, so two Arducams must be chosen by driver.
+
+def list_stereo_cameras() -> List[dict]:
+    """USB capture nodes first, in USB port order; others in numeric /dev/videoN order.
+
+    /dev/videoN numbers follow the order the cameras enumerate, which changes:
+    after Inky's left camera dropped off USB and came back, it was /dev/video2
+    and the right one /dev/video0, so the pair would have been loaded
+    swapped. The USB port (bus_info) stays with the cable, so USB cameras are
+    ordered by it. Lexicographic device order would also pick /dev/video14
+    before /dev/video2. The Pi ISP also advertises a capture node, so two
+    Arducams must be chosen by driver.
     """
     found: List[dict] = []
     for path in sorted(glob.glob('/dev/video*'), key=_video_index):
@@ -130,7 +141,7 @@ def list_stereo_cameras() -> List[dict]:
             found.append(info)
     usb = [info for info in found if info['driver'] == 'uvcvideo']
     if len(usb) >= 2:
-        return usb
+        return sorted(usb, key=lambda info: _bus_key(info.get('bus_info', '')))
     return [info for info in found if info['driver'] not in _SKIP_DRIVERS]
 
 
@@ -179,6 +190,7 @@ def _query_capture_device(path: str) -> Optional[dict]:
         'path': path,
         'driver': cap.driver.split(b'\x00', 1)[0].decode('utf-8', errors='replace'),
         'card': cap.card.split(b'\x00', 1)[0].decode('utf-8', errors='replace'),
+        'bus_info': cap.bus_info.split(b'\x00', 1)[0].decode('utf-8', errors='replace'),
     }
 
 

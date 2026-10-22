@@ -29,7 +29,9 @@ import numpy as np
 
 cv2.setNumThreads(1)
 import rclpy
+from action_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
+from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -168,6 +170,20 @@ class StuckDetector(Node):
         self.declare_parameter('clearance_max_m', 0.15)
         self.declare_parameter('clearance_turn_min_m', 0.16)
         self.declare_parameter('turn_speed', 0.6)
+        # Plans that keep failing while the robot stands still: clear the
+        # global costmap once. Its obstacle layer keeps LiDAR marks until a
+        # beam passes through them, so a chair moved or a person's legs seen
+        # where the LiDAR cannot look again stay forever; on Inky they closed
+        # every way out of a spot the robot had driven into, while the SLAM
+        # map alone left it open. Nav2's own navigation clears the costmap
+        # on failure, but the central explorer's path checks call the planner
+        # directly. After plan_fail_clear_count aborted plans within
+        # plan_fail_window_sec, idle, the global costmap is cleared (at most
+        # once per plan_fail_cooldown_sec); LiDAR, stereo and the low-obstacle
+        # memory re-mark what is really there within a second.
+        self.declare_parameter('plan_fail_clear_count', 4)
+        self.declare_parameter('plan_fail_window_sec', 30.0)
+        self.declare_parameter('plan_fail_cooldown_sec', 30.0)
         # Tilt escape. A Burger that drives onto a chair leg or a cable ends
         # up with one end raised; on Inky, a chair leg under the rear caster
         # left it 11 deg nose-down, and three back-off reflexes each moved
@@ -285,6 +301,16 @@ class StuckDetector(Node):
         self._scan_count = 0
         self.create_timer(1.0, self._publish_state)
         self.create_timer(1.0, self._clearance_tick)
+        self._plan_fail_count = max(1, int(p('plan_fail_clear_count')))
+        self._plan_fail_window = float(p('plan_fail_window_sec'))
+        self._plan_fail_cooldown = float(p('plan_fail_cooldown_sec'))
+        self._plan_failures = deque()
+        self._plan_seen = set()
+        self._last_costmap_clear = -1e9
+        self.create_subscription(
+            GoalStatusArray, 'compute_path_to_pose/_action/status', self._on_plan_status, 10)
+        self._clear_cli = self.create_client(
+            ClearEntireCostmap, 'global_costmap/clear_entirely_global_costmap')
         self.create_timer(0.5, self._tilt_tick)
         self.get_logger().info('stuck detector: cmd_vel vs wheels, wheels vs LiDAR/VO, turn vs gyro')
 
@@ -531,6 +557,35 @@ class StuckDetector(Node):
             self.get_logger().warning(
                 f'still stuck after {self._stuck_reflex_after:.0f} s: freeing the wheels')
             self._start_reflex(direction, now, dist)
+
+    def _on_plan_status(self, msg: GoalStatusArray) -> None:
+        now = self._now()
+        for st in msg.status_list:
+            if st.status != GoalStatus.STATUS_ABORTED:
+                continue
+            key = bytes(st.goal_info.goal_id.uuid)
+            if key in self._plan_seen:
+                continue
+            self._plan_seen.add(key)
+            self._plan_failures.append(now)
+        if len(self._plan_seen) > 500:
+            self._plan_seen = set()
+        while self._plan_failures and now - self._plan_failures[0] > self._plan_fail_window:
+            self._plan_failures.popleft()
+        if len(self._plan_failures) < self._plan_fail_count:
+            return
+        if now - self._last_motion_cmd < self._clearance_idle or self._reflex is not None:
+            return
+        if now - self._last_costmap_clear < self._plan_fail_cooldown:
+            return
+        if not self._clear_cli.service_is_ready():
+            return
+        self._last_costmap_clear = now
+        self._plan_failures.clear()
+        self._clear_cli.call_async(ClearEntireCostmap.Request())
+        self.get_logger().warning(
+            f'{self._plan_fail_count}+ plans failed in {self._plan_fail_window:.0f} s with the robot '
+            'standing still: clearing the global costmap (stale LiDAR marks)')
 
     # --- outputs --------------------------------------------------------
     def _declare(self, reasons, cmd_dir, info) -> None:

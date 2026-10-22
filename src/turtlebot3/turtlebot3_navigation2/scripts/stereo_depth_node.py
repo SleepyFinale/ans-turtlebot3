@@ -51,7 +51,7 @@ class StereoDepthNode(Node):
         self.declare_parameter('left_frame', '')
         self.declare_parameter('right_frame', '')
         # 2.5 Hz: at 0.22 m/s the robot moves 9 cm between frames, well inside
-        # the 0.40-0.80 m band. At 4 Hz this node took about a core of the Pi,
+        # the 0.28-1.10 m obstacle band. At 4 Hz this node took about a core of the Pi,
         # which left Nav2's controller missing its 10 Hz loop.
         self.declare_parameter('publish_hz', 2.5)
         self.declare_parameter('sync_slop_sec', 0.03)
@@ -81,6 +81,9 @@ class StereoDepthNode(Node):
         self.declare_parameter('full_width', True)
         # Image rows used for 3D points (1 = all).
         self.declare_parameter('point_row_stride', 2)
+        # No pair processed for this long: publish empty scans and report
+        # status no_images (see _check_images).
+        self.declare_parameter('images_timeout_sec', 2.0)
         # base_scan is 0.172 m above base_link, and base_link is 0.010 m above
         # base_footprint, so the lidar plane is 0.182 m above the ground.
         self.declare_parameter('lidar_height_m', 0.182)
@@ -225,6 +228,12 @@ class StereoDepthNode(Node):
         self._calibrated = False
         self._maps = None
         self._pad = 0
+        # 40 s of grace while the cameras lock focus and start streaming (under
+        # the full launch on Inky, pairs first matched in time after ~25 s).
+        self._last_pair_s = time.monotonic() + 40.0
+        self._last_image_s = {'left': time.monotonic() + 40.0, 'right': time.monotonic() + 40.0}
+        self._images_lost = False
+        self._last_images_warn_s = 0.0
         self._num_disp = 128
 
         # Two scans for one costmap layer: stereo_blob_scan marks confirmed
@@ -430,6 +439,7 @@ class StereoDepthNode(Node):
 
     def _publish_idle_debug(self) -> None:
         if self._calibrated:
+            self._check_images()
             return
         self._publish_debug({
             'status': 'uncalibrated',
@@ -452,7 +462,46 @@ class StereoDepthNode(Node):
         msg.data = json.dumps(payload)
         self._debug_pub.publish(msg)
 
+    def _check_images(self) -> None:
+        """While no pair has been processed for images_timeout_sec, publish empty scans.
+
+        Nav2 re-applies a source's last observation until a new one arrives.
+        When a camera dropped off USB mid-run, the last stereo marks and
+        clears were replayed at the spot where it died for the rest of the
+        run. Empty scans with current stamps replace them: no marks, and no
+        clearing of what stereo can no longer see.
+        """
+        now = time.monotonic()
+        timeout = float(self.get_parameter('images_timeout_sec').value)
+        if now - self._last_pair_s <= timeout:
+            if self._images_lost:
+                self._images_lost = False
+                self.get_logger().info('Stereo images are back')
+            return
+        self._publish_scan(self.get_clock().now().to_msg(), None)
+        missing = [side for side, t in self._last_image_s.items() if now - t > timeout]
+        self._publish_debug({
+            'status': 'no_images',
+            'calibrated': True,
+            'missing': missing,
+            'obstacle_range_m': None,
+            'drop': False,
+            'drop_range_m': None,
+            'obstacle_streak': 0,
+            'drop_streak': 0,
+        })
+        if not self._images_lost or now - self._last_images_warn_s > 30.0:
+            self._last_images_warn_s = now
+            self.get_logger().error(
+                f'No stereo pairs for {now - self._last_pair_s:.0f} s '
+                f'(no frames from: {", ".join(missing) or "neither; pairs do not match in time"}). '
+                'Stereo obstacles are OFF; the LiDAR still works. A camera that dropped off '
+                'USB ("No such device" from v4l2_camera) needs its cable reseated and the stack '
+                'restarted.')
+        self._images_lost = True
+
     def _on_raw(self, raw, queue, side: str) -> None:
+        self._last_image_s[side] = time.monotonic()
         queue.append(raw)
         if self._vo is not None:
             (self._vo_left if side == 'left' else self._vo_right).append(raw)
@@ -573,6 +622,7 @@ class StereoDepthNode(Node):
         return np.stack([r[ok] * np.cos(a[ok]) + x0, r[ok] * np.sin(a[ok])], axis=1)
 
     def _process_pair(self, left_msg: Image, right_msg: Image) -> None:
+        self._last_pair_s = time.monotonic()
         cv2 = self._cv2
         width, height = self._maps['size']
         left = self._bridge.imgmsg_to_cv2(left_msg, desired_encoding='mono8')
