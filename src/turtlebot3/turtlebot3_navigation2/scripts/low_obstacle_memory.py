@@ -76,6 +76,14 @@ class LowObstacleMemory(Node):
         # mark it within confirm_window_sec. Single flickers are dropped.
         self.declare_parameter('confirm_scans', 2)
         self.declare_parameter('confirm_window_sec', 10.0)
+        # ...and only when the confirming scan was taken at least
+        # confirm_move_m or confirm_turn_rad from the first sighting. A real
+        # object is there from every viewpoint; an artefact of one viewpoint
+        # (floor noise at the far edge of the stereo band, seen frame after
+        # frame while the robot waited) was remembered as an arc on open
+        # floor. The local costmap's stereo layer still marks at once.
+        self.declare_parameter('confirm_move_m', 0.10)
+        self.declare_parameter('confirm_turn_rad', 0.2)
         self.declare_parameter('max_cells', 4000)
         # Only cells right under the robot are left out of the cloud. Low
         # objects closer than ~0.40 m are invisible to stereo and below the
@@ -109,7 +117,9 @@ class LowObstacleMemory(Node):
         self._recent_bumps = []  # (time, centroid x, centroid y)
         self._confirm_scans = max(1, int(p('confirm_scans')))
         self._confirm_window = float(p('confirm_window_sec'))
-        # (i, j) -> (sightings, first sighting time) for cells not yet confirmed
+        self._confirm_move = float(p('confirm_move_m'))
+        self._confirm_turn = float(p('confirm_turn_rad'))
+        # (i, j) -> (sightings, first sighting time, first sighting pose) for cells not yet confirmed
         self._pending = {}
 
         # (i, j) map cell -> (expiry time, source)
@@ -193,16 +203,22 @@ class LowObstacleMemory(Node):
             if key in self._cells:
                 self._cells[key] = (max(self._cells[key][0], now + self._ttl['mark']), self._cells[key][1])
                 continue
-            count, first = self._pending.get(key, (0, now))
+            count, first, seen_from = self._pending.get(key, (0, now, pose))
             if now - first > self._confirm_window:
-                count, first = 0, now
+                count, first, seen_from = 0, now, pose
+            if count > 0 and not self._new_viewpoint(seen_from, pose):
+                continue
             count += 1
             if count >= self._confirm_scans:
                 self._pending.pop(key, None)
                 self._cells[key] = (now + self._ttl['mark'], 'mark')
             else:
-                self._pending[key] = (count, first)
+                self._pending[key] = (count, first, seen_from)
         self._trim()
+
+    def _new_viewpoint(self, a, b) -> bool:
+        turn = abs((b[2] - a[2] + math.pi) % (2.0 * math.pi) - math.pi)
+        return math.hypot(b[0] - a[0], b[1] - a[1]) >= self._confirm_move or turn >= self._confirm_turn
 
     def _on_clear(self, msg: LaserScan) -> None:
         if not self._cells:

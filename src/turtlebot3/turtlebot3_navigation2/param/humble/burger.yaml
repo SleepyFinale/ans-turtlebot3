@@ -287,7 +287,10 @@ global_costmap:
       # Slightly conservative radius so the global plan prefers the center of
       # free space but still passes through normal doorways. Kept above the
       # local costmap's 0.15 m so planned gaps are passable for the
-      # controller (see local_costmap robot_radius).
+      # controller (see local_costmap robot_radius). stuck_detector lowers
+      # this to 0.15 m for a while when the robot is stuck behind a gap the
+      # controller let it through (squeeze_*; squeeze_normal_radius_m must
+      # match the value here).
       robot_radius: 0.18
       resolution: 0.05
       track_unknown_space: true

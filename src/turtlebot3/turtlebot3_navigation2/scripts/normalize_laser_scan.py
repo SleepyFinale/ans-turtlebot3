@@ -13,6 +13,7 @@ import array
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from sensor_msgs.msg import Imu
 from sensor_msgs.msg import LaserScan
 from sensor_msgs.msg import Range
 from tf2_msgs.msg import TFMessage
@@ -47,6 +48,16 @@ class LaserScanNormalizer(Node):
         # SLAM keeps the full-rate topic. Empty topic or max_hz <= 0 disables it.
         self.declare_parameter('costmap_output_topic', '')
         self.declare_parameter('costmap_max_hz', 0.0)
+        # Tilt gate. The LiDAR sits 0.18 m above the floor, so a robot pitched
+        # 2 deg sees the floor ~5 m away and 4 deg at ~2.6 m. SLAM (8 m range,
+        # occupancy threshold 0.1) kept those hits as walls in open floor, and
+        # on Inky they closed off a doorway the planner then would not use.
+        # Scans taken while the IMU's fused orientation is more than
+        # max_tilt_deg from the robot's resting attitude (slow average of the
+        # same, tilt_rest_sec) are not published. 0 disables.
+        self.declare_parameter('imu_topic', 'imu')
+        self.declare_parameter('max_tilt_deg', 1.5)
+        self.declare_parameter('tilt_rest_sec', 20.0)
         
         # Ultrasonic fusion parameters. These stay separate from the lidar
         # normalization path so the robot can disable or tune them independently.
@@ -147,6 +158,17 @@ class LaserScanNormalizer(Node):
                 reliability=ReliabilityPolicy.RELIABLE,
             ),
         )
+
+        self._max_tilt = math.radians(float(self.get_parameter('max_tilt_deg').value))
+        self._tilt_rest_sec = max(1.0, float(self.get_parameter('tilt_rest_sec').value))
+        self._rest = None          # (pitch, roll) resting attitude, slow average
+        self._last_imu_ns = None
+        self._tilted_until_ns = 0  # a scan overlapping a tilt up to here is dropped
+        self._tilt_dropped = 0
+        if self._max_tilt > 0.0:
+            self.create_subscription(
+                Imu, str(self.get_parameter('imu_topic').value), self._on_imu,
+                rclpy.qos.qos_profile_sensor_data)
 
         # Subscribe to the original scan with sensor QoS (best effort, volatile)
         # to match the typical lidar driver profile and avoid back-pressure.
@@ -450,7 +472,31 @@ class LaserScanNormalizer(Node):
         filtered_msg.range = filtered_range
         self._range_msgs[topic_index] = filtered_msg
     
+    def _on_imu(self, msg):
+        q = msg.orientation
+        pitch = math.asin(max(-1.0, min(1.0, 2.0 * (q.w * q.y - q.z * q.x))))
+        roll = math.atan2(2.0 * (q.w * q.x + q.y * q.z), 1.0 - 2.0 * (q.x * q.x + q.y * q.y))
+        now_ns = self.get_clock().now().nanoseconds
+        if self._rest is None:
+            self._rest = (pitch, roll)
+        else:
+            dt = 0.05 if self._last_imu_ns is None else min(1.0, (now_ns - self._last_imu_ns) * 1e-9)
+            k = dt / self._tilt_rest_sec
+            self._rest = (self._rest[0] + k * (pitch - self._rest[0]),
+                          self._rest[1] + k * (roll - self._rest[1]))
+        self._last_imu_ns = now_ns
+        if math.hypot(pitch - self._rest[0], roll - self._rest[1]) > self._max_tilt:
+            # Covers the scan in progress and the one after (10 Hz LiDAR).
+            self._tilted_until_ns = now_ns + 200_000_000
+
     def scan_callback(self, msg):
+        if self._max_tilt > 0.0 and self.get_clock().now().nanoseconds < self._tilted_until_ns:
+            self._tilt_dropped += 1
+            if self._tilt_dropped in (1, 10, 100) or self._tilt_dropped % 1000 == 0:
+                self.get_logger().info(
+                    f'robot tilted more than {math.degrees(self._max_tilt):.1f} deg: '
+                    f'{self._tilt_dropped} scan(s) withheld so far (floor hits)')
+            return
         # Throttle: only process and publish every Nth scan to reduce SLAM message filter queue overflow
         self._scan_counter += 1
         if self._scan_counter < self.publish_every_n:
