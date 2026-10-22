@@ -32,6 +32,8 @@ import rclpy
 from action_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
 from nav2_msgs.srv import ClearEntireCostmap
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -184,6 +186,22 @@ class StuckDetector(Node):
         self.declare_parameter('plan_fail_clear_count', 4)
         self.declare_parameter('plan_fail_window_sec', 30.0)
         self.declare_parameter('plan_fail_cooldown_sec', 30.0)
+        # Squeeze. The global planner keeps squeeze_normal_radius_m (0.18 m)
+        # from obstacles, the controller only 0.15 m, so the robot can drive
+        # through a gap the planner then will not route back through. On Inky
+        # it entered a room through a doorway with exactly 0.18 m clearance
+        # and stayed: every plan out failed, and clearing the costmap changed
+        # nothing (the doorway was in the SLAM map). When plans keep failing
+        # within squeeze_after_clear_sec of a clear, the global costmap's
+        # robot_radius is set to squeeze_radius_m (the controller's) until the
+        # robot has moved squeeze_release_m or squeeze_sec has passed.
+        self.declare_parameter('squeeze_enabled', True)
+        self.declare_parameter('squeeze_radius_m', 0.15)
+        self.declare_parameter('squeeze_normal_radius_m', 0.18)
+        self.declare_parameter('squeeze_after_clear_sec', 90.0)
+        self.declare_parameter('squeeze_sec', 60.0)
+        self.declare_parameter('squeeze_release_m', 0.8)
+        self.declare_parameter('global_costmap_node', 'global_costmap/global_costmap')
         # Tilt escape. A Burger that drives onto a chair leg or a cable ends
         # up with one end raised; on Inky, a chair leg under the rear caster
         # left it 11 deg nose-down, and three back-off reflexes each moved
@@ -311,6 +329,16 @@ class StuckDetector(Node):
             GoalStatusArray, 'compute_path_to_pose/_action/status', self._on_plan_status, 10)
         self._clear_cli = self.create_client(
             ClearEntireCostmap, 'global_costmap/clear_entirely_global_costmap')
+        self._squeeze_enabled = bool(p('squeeze_enabled'))
+        self._squeeze_radius = float(p('squeeze_radius_m'))
+        self._normal_radius = float(p('squeeze_normal_radius_m'))
+        self._squeeze_after = float(p('squeeze_after_clear_sec'))
+        self._squeeze_sec = float(p('squeeze_sec'))
+        self._squeeze_release = float(p('squeeze_release_m'))
+        self._squeeze = None  # {'t0', 'pose'} while the radius is lowered
+        self._radius_cli = self.create_client(
+            SetParameters, f"{str(p('global_costmap_node')).strip('/')}/set_parameters")
+        self.create_timer(1.0, self._squeeze_tick)
         self.create_timer(0.5, self._tilt_tick)
         self.get_logger().info('stuck detector: cmd_vel vs wheels, wheels vs LiDAR/VO, turn vs gyro')
 
@@ -580,12 +608,47 @@ class StuckDetector(Node):
             return
         if not self._clear_cli.service_is_ready():
             return
+        squeeze = (
+            self._squeeze_enabled and self._squeeze is None
+            and now - self._last_costmap_clear < self._squeeze_after
+            and self._wheel and self._set_global_radius(self._squeeze_radius))
         self._last_costmap_clear = now
         self._plan_failures.clear()
         self._clear_cli.call_async(ClearEntireCostmap.Request())
+        if squeeze:
+            self._squeeze = {'t0': now, 'pose': self._wheel[-1][1][:2]}
+            self.get_logger().warning(
+                'plans still fail after clearing the costmap: global robot_radius '
+                f'{self._normal_radius:.2f} -> {self._squeeze_radius:.2f} m (the controller\'s) '
+                f'until the robot has moved {self._squeeze_release:.1f} m or {self._squeeze_sec:.0f} s')
+            return
         self.get_logger().warning(
             f'{self._plan_fail_count}+ plans failed in {self._plan_fail_window:.0f} s with the robot '
             'standing still: clearing the global costmap (stale LiDAR marks)')
+
+    def _set_global_radius(self, radius: float) -> bool:
+        if not self._radius_cli.service_is_ready():
+            return False
+        req = SetParameters.Request()
+        req.parameters = [Parameter(name='robot_radius', value=ParameterValue(
+            type=ParameterType.PARAMETER_DOUBLE, double_value=float(radius)))]
+        self._radius_cli.call_async(req)
+        return True
+
+    def _squeeze_tick(self) -> None:
+        sq = self._squeeze
+        if sq is None or not self._wheel:
+            return
+        x, y, _ = self._wheel[-1][1]
+        moved = math.hypot(x - sq['pose'][0], y - sq['pose'][1])
+        age = self._now() - sq['t0']
+        if moved < self._squeeze_release and age < self._squeeze_sec:
+            return
+        if self._set_global_radius(self._normal_radius):
+            self._squeeze = None
+            self.get_logger().info(
+                f'global robot_radius back to {self._normal_radius:.2f} m '
+                f'(moved {moved:.2f} m in {age:.0f} s)')
 
     # --- outputs --------------------------------------------------------
     def _declare(self, reasons, cmd_dir, info) -> None:
