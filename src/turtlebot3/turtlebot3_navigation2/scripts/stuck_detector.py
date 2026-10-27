@@ -389,8 +389,9 @@ class StuckDetector(Node):
         self._wheel.append((_stamp(msg), (p.position.x, p.position.y, _yaw(p.orientation))))
 
     def _on_memory(self, msg: PointCloud2) -> None:
-        pts = np.asarray([[x, y] for x, y, _z in point_cloud2.read_points(
-            msg, field_names=('x', 'y', 'z'), skip_nans=True)], dtype=float).reshape(-1, 2)
+        # Vectorized: a per-point Python loop over up to 4000 cells each second.
+        pts = point_cloud2.read_points_numpy(
+            msg, field_names=('x', 'y'), skip_nans=True).astype(float).reshape(-1, 2)
         t = _stamp(msg)
         ref = _interp(self._wheel, t)
         if ref is None and self._wheel and abs(self._wheel[-1][0] - t) < 0.5:

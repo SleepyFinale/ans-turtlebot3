@@ -182,15 +182,18 @@ class LaserScanNormalizer(Node):
 
         # One subscription per ultrasonic sensor lets the node track age,
         # filtering, and frame mismatches separately for left/front/right.
+        # With fusion off nothing reads them: the OpenCR still publishes all
+        # three at 20 Hz, and receiving them cost ~0.1 core in rclpy.
         for index, topic in enumerate(self._range_topics):
-            self._range_subs.append(
-                self.create_subscription(
-                    Range,
-                    topic,
-                    lambda msg, topic_index=index: self.range_callback(msg, topic_index),
-                    qos_profile_sensor_data
+            if self._ultrasonic_fusion_enabled:
+                self._range_subs.append(
+                    self.create_subscription(
+                        Range,
+                        topic,
+                        lambda msg, topic_index=index: self.range_callback(msg, topic_index),
+                        qos_profile_sensor_data
+                    )
                 )
-            )
             self._range_msgs.append(None)
             self._range_windows.append(deque(maxlen=self._ultrasonic_window_size))
             self._range_previous_filtered.append(None)

@@ -620,7 +620,7 @@ Visual odometry (`stereo_visual_odometry.py`) runs inside `stereo_depth_node` on
 Robot DDS never leaves the Pi. `scripts/env/ros_robot_env.bash` selects Cyclone DDS with `config/cyclonedds/robot_localhost.xml` (loopback only, raised participant cap) and sets the robot's domain from `scripts/env/ros_domain_profile.bash` (table above). Do not set `ROS_LOCALHOST_ONLY=1` on the robot; it brings back Cyclone's small participant cap. Because each robot is isolated, the domain number only has to match between the processes on that one Pi.
 
 
-**UDP receive buffers (do once per robot).** `robot_localhost.xml` asks Cyclone for 8 MB socket receive buffers, but the kernel caps them at `net.core.rmem_max`, which is 208 KB on Ubuntu. With the stereo streams on loopback and the CPU busy, that is too small. Packets are dropped (`netstat -su | grep "receive buffer errors"` keeps climbing), and the Zenoh bridge can miss discovering `tf_zenoh_publish`. The central explorer then shows `pos=na` and never sends goals. Raise the cap on each robot:
+**UDP receive buffers (do once per robot).** `robot_localhost.xml` asks Cyclone for 8 MB socket receive buffers, but the kernel caps them at `net.core.rmem_max`, which is 208 KB on Ubuntu. With the stereo streams on loopback and the CPU busy, that is too small. Packets are dropped (`netstat -su | grep "receive buffer errors"` keeps climbing), and the Zenoh bridge can miss discovering the TF relay. The central explorer then shows `pos=na` and never sends goals. Raise the cap on each robot:
 
 ```bash
 echo 'net.core.rmem_max=8388608' | sudo tee /etc/sysctl.d/60-cyclonedds.conf
@@ -636,7 +636,7 @@ What crosses the network (`config/zenoh/robot_client.json5.tmpl`):
 | Topic | Rate cap | Why |
 | --- | --- | --- |
 | `/<robot>/map_wire_z` | 1 Hz | zlib-compressed `/<robot>/map`; central rebuilds the map from it |
-| `/<robot>/tf_zenoh`, `/<robot>/tf_static_zenoh` | 10 Hz / 1 Hz | best-effort copy of `/<robot>/tf` made by `scripts/comms/tf_zenoh_publish.py`, so the bridge never holds a reliable reader on SLAM's TF |
+| `/<robot>/tf_zenoh`, `/<robot>/tf_static_zenoh` | 10 Hz / 1 Hz | best-effort copy of `/<robot>/tf` made by `tf_zenoh_relay` (C++, `turtlebot3_navigation2`; `scripts/comms/tf_zenoh_publish.py` is the fallback when it is not built), so the bridge never holds a reliable reader on SLAM's TF |
 | `/<robot>/navigate_to_pose`, `/<robot>/compute_path_to_pose` | — | Nav2 actions, both directions |
 | `/<robot>/nav2_collision_ahead`, `nav2_retrace_active` | — | optional helper signals for the explorer |
 | `/<robot>/plan`, `scan_normalized`, `local_costmap/costmap` | 2/2/1 Hz | RViz on the central PC; sent only while something there subscribes |

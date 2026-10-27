@@ -6,6 +6,10 @@
 #   on the Pi and hung on Ctrl+C.
 # - Lifecycle bonds are off, so a CPU spike cannot make the lifecycle manager
 #   tear the stack down.
+# - No smoother_server or waypoint_follower. The behavior trees never call
+#   SmoothPath and the central PC only sends NavigateToPose and
+#   ComputePathToPose, so they were two idle processes (~0.05 core, 40 MB and
+#   two more DDS participants) on the Pi.
 
 import os
 
@@ -29,8 +33,8 @@ def generate_launch_description():
     log_level = LaunchConfiguration('log_level')
 
     lifecycle_nodes = [
-        'controller_server', 'smoother_server', 'planner_server',
-        'behavior_server', 'bt_navigator', 'waypoint_follower', 'velocity_smoother'
+        'controller_server', 'planner_server',
+        'behavior_server', 'bt_navigator', 'velocity_smoother'
     ]
 
     # Inside the robot namespace these resolve to /<robot>/tf and
@@ -70,11 +74,9 @@ def generate_launch_description():
 
         # Nav2's velocity pipeline: controller -> cmd_vel_nav -> smoother -> cmd_vel.
         server('nav2_controller', 'controller_server', [('cmd_vel', 'cmd_vel_nav')]),
-        server('nav2_smoother', 'smoother_server'),
         server('nav2_planner', 'planner_server'),
         server('nav2_behaviors', 'behavior_server'),
         server('nav2_bt_navigator', 'bt_navigator'),
-        server('nav2_waypoint_follower', 'waypoint_follower'),
         server('nav2_velocity_smoother', 'velocity_smoother',
                [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]),
         Node(

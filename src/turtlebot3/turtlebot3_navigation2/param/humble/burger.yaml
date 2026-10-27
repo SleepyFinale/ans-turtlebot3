@@ -459,12 +459,9 @@ nav2_retrace_escape:
     tick_hz: 8.0
     tf_lookup_timeout_sec: 0.12
 
-waypoint_follower:
+velocity_smoother:
   ros__parameters:
-    loop_rate: 2000
-    stop_on_failure: false
-    waypoint_task_executor_plugin: "wait_at_waypoint"
-    wait_at_waypoint:
-      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
-      enabled: True
-      waypoint_pause_duration: 200
+    # Same as controller_frequency. At the default 20 Hz every controller
+    # command was sent twice, and each cmd_vel wakes turtlebot3_node and
+    # stuck_detector (Python). Other limits stay at the Nav2 defaults.
+    smoothing_frequency: 10.0

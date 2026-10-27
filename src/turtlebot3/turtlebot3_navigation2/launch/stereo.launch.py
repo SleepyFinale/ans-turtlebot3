@@ -16,7 +16,8 @@ from launch.actions import (
 )
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import ComposableNodeContainer, Node
+from launch_ros.descriptions import ComposableNode
 
 
 # numpy's OpenBLAS starts a busy-waiting thread per core in every process.
@@ -124,7 +125,7 @@ def _setup(context):
 
     left_focus, right_focus = _calibration_focus(calib_path)
 
-    def _camera(device: str, namespace: str, frame_id: str, name: str, focus) -> Node:
+    def _camera(device: str, namespace: str, frame_id: str, name: str, focus) -> ComposableNode:
         params = {
             'video_device': device,
             'pixel_format': pixel_format,
@@ -139,13 +140,13 @@ def _setup(context):
             # which turns autofocus on again unless these are given.
             params['focus_automatic_continuous'] = False
             params['focus_absolute'] = int(focus)
-        return Node(
+        return ComposableNode(
             package='v4l2_camera',
-            executable='v4l2_camera_node',
+            plugin='v4l2_camera::V4L2Camera',
             name=name,
             namespace=namespace,
             parameters=[params],
-            output='screen',
+            extra_arguments=[{'use_intra_process_comms': True}],
         )
 
     depth_params = {
@@ -167,18 +168,32 @@ def _setup(context):
     }
 
     nodes = [
-        _camera(left_dev, left_ns, left_frame, 'v4l2_camera', left_focus),
-        _camera(right_dev, right_ns, right_frame, 'v4l2_camera', right_focus),
-        # The cameras only offer 30 fps. Pairing and throttling them in C++
-        # keeps the Python depth node from waking 60 times a second. 3 Hz
-        # covers the depth node (2.5 Hz) and visual odometry (3 Hz).
-        Node(
-            package='turtlebot3_navigation2',
-            executable='stereo_pair_throttle',
-            name='stereo_pair_throttle',
-            namespace=ns if ns else None,
-            parameters=[{'rate_hz': 3.0, 'slop_sec': 0.03}],
+        # Both cameras and the pair throttle share one process with
+        # intra-process comms: the 60 frames/s reach the throttle as pointers
+        # instead of 2.3 MB/s of serialized images over loopback DDS, and two
+        # fewer processes run. Only the 3 Hz pairs leave the container.
+        ComposableNodeContainer(
+            name='stereo_container',
+            namespace=ns if ns else '',
+            package='rclcpp_components',
+            executable='component_container',
             output='screen',
+            composable_node_descriptions=[
+                _camera(left_dev, left_ns, left_frame, 'v4l2_camera', left_focus),
+                _camera(right_dev, right_ns, right_frame, 'v4l2_camera', right_focus),
+                # The cameras only offer 30 fps. Pairing and throttling them in
+                # C++ keeps the Python depth node from waking 60 times a
+                # second. 3 Hz covers the depth node (2.5 Hz) and visual
+                # odometry (3 Hz).
+                ComposableNode(
+                    package='turtlebot3_navigation2',
+                    plugin='StereoPairThrottle',
+                    name='stereo_pair_throttle',
+                    namespace=ns if ns else '',
+                    parameters=[{'rate_hz': 3.0, 'slop_sec': 0.03}],
+                    extra_arguments=[{'use_intra_process_comms': True}],
+                ),
+            ],
         ),
         Node(
             package='turtlebot3_navigation2',

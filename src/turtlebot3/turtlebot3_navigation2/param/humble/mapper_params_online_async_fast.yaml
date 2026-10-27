@@ -40,9 +40,15 @@ slam_toolbox:
     # Throttle scans to reduce queue overflow when TF isn't ready or processing is slow
     # Process every scan (1 = no throttle)
     throttle_scans: 1
-    transform_publish_period: 0.05  # 20 Hz; Nav2 tolerates 4 s of TF age, and 50 Hz cost every Python TF listener CPU
-    # Slightly faster map updates so the map grows more continuously as the robot moves
-    map_update_interval: 0.35
+    # 10 Hz. map->odom only changes when a scan is matched (<= 4.5 Hz with
+    # minimum_time_interval below); Nav2 tolerates 4 s of TF age, and every
+    # /tf message wakes all nine TF listeners on the robot.
+    transform_publish_period: 0.1
+    # Each update rebuilds the whole grid from every scan and sends it to the
+    # global costmap, map_wire_compressed_republisher and the graph markers.
+    # The central PC only receives the map at 1 Hz (map_wire_z), so 0.35 s
+    # rebuilt it three times for each copy that left the robot.
+    map_update_interval: 1.0
     resolution: 0.05
     min_laser_range: 0.0 #for rastering images
     max_laser_range: 8.0 # LDS-02 capability; avoid over-range warnings/noise

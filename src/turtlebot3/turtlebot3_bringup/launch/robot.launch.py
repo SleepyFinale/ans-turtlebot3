@@ -363,7 +363,9 @@ def generate_launch_description():
                 'publishes odom and odom->base_footprint. false = stock wheel+IMU odometry')),
         DeclareLaunchArgument(
             'ekf_frequency',
-            default_value='30.0',
+            # The wheels and IMU arrive at 20 Hz (OpenCR read loop), so 30 Hz
+            # only added predictions every /tf and odom listener had to take.
+            default_value='20.0',
             description='EKF output frequency (Hz); also the odom->base_footprint TF rate'),
         DeclareLaunchArgument(
             'ekf_param_dir',

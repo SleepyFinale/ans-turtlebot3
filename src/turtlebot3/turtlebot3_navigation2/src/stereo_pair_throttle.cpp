@@ -6,6 +6,10 @@
 // executor alone. This node takes the full streams in C++, keeps the last few
 // frames per side, and publishes the closest left/right pair within slop_sec
 // at most rate_hz times per second, stamps unchanged.
+//
+// It is also a component: stereo.launch.py loads it into one container with
+// both v4l2_camera nodes and intra-process comms, so the 30 fps frames are
+// handed over as pointers instead of crossing DDS (2.3 MB/s on loopback).
 
 #include <chrono>
 #include <cstdint>
@@ -15,6 +19,7 @@
 #include <string>
 
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp_components/register_node_macro.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
 using Image = sensor_msgs::msg::Image;
@@ -22,8 +27,8 @@ using Image = sensor_msgs::msg::Image;
 class StereoPairThrottle : public rclcpp::Node
 {
 public:
-  StereoPairThrottle()
-  : Node("stereo_pair_throttle")
+  explicit StereoPairThrottle(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : Node("stereo_pair_throttle", options)
   {
     rate_hz_ = declare_parameter<double>("rate_hz", 5.0);
     slop_ns_ = static_cast<int64_t>(declare_parameter<double>("slop_sec", 0.03) * 1e9);
@@ -96,10 +101,4 @@ private:
   rclcpp::Subscription<Image>::SharedPtr right_sub_;
 };
 
-int main(int argc, char ** argv)
-{
-  rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<StereoPairThrottle>());
-  rclcpp::shutdown();
-  return 0;
-}
+RCLCPP_COMPONENTS_REGISTER_NODE(StereoPairThrottle)

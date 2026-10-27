@@ -51,7 +51,11 @@ def generate_launch_description():
         PythonExpression(['"', namespace, '" + "/" if "', namespace, '" != "" else ""']),
     ])
 
-    rsp_params = {'robot_description': robot_desc}
+    # Only the two wheel joints move, and nothing on the robot or the central
+    # PC uses their frames (RViz shows the model at most). At the default
+    # 20 Hz they were a third of all /tf traffic, which every TF listener
+    # (nine on the robot, two of them in Python) has to receive.
+    rsp_params = {'robot_description': robot_desc, 'publish_frequency': 5.0}
 
     return LaunchDescription([
         DeclareLaunchArgument(
