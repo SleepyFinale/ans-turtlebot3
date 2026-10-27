@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Block forward cmd_vel when stereo reports a close obstacle or a drop.
 
-The gate waits for a second consecutive frame so one bad match does not stop
+Only obstacles in the robot's own path count (path_obstacle_m: marks two
+frames agree on, within path_half_width_m of the centre line). The gate waits for a second consecutive frame so one bad match does not stop
 the robot. It never stops while the depth node is uncalibrated. Turning and
 reversing from the controller still pass through, so a robot stopped facing a
 remembered obstacle can still turn away from it.
@@ -79,7 +80,9 @@ class StereoCmdVelEnforcer(Node):
             drop_streak = int(data.get('drop_streak') or 0)
         except (TypeError, ValueError):
             drop_streak = 0
-        obstacle_range = data.get('obstacle_range_m')
+        # Confirmed marks inside the robot's path only; the nearest hit
+        # anywhere in view (obstacle_range_m) includes door jambs beside it.
+        obstacle_range = data.get('path_obstacle_m')
         try:
             range_m = float(obstacle_range) if obstacle_range is not None else None
         except (TypeError, ValueError):

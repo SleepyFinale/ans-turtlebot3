@@ -84,6 +84,15 @@ class LowObstacleMemory(Node):
         # floor. The local costmap's stereo layer still marks at once.
         self.declare_parameter('confirm_move_m', 0.10)
         self.declare_parameter('confirm_turn_rad', 0.2)
+        # Marks within near_confirm_m are also confirmed after
+        # near_confirm_scans sightings from the same spot. The stereo stop
+        # gate holds the robot still in front of a caster; with only the
+        # new-viewpoint rule the caster never reached the global costmap, and
+        # Nav2 kept planning through it, aborting on "collision ahead" and
+        # replanning the same way. Close up, a pixel of disparity is ~2 cm;
+        # the artefacts above were at the band's far edge (~1 m).
+        self.declare_parameter('near_confirm_m', 0.6)
+        self.declare_parameter('near_confirm_scans', 3)
         self.declare_parameter('max_cells', 4000)
         # Only cells right under the robot are left out of the cloud. Low
         # objects closer than ~0.40 m are invisible to stereo and below the
@@ -119,7 +128,10 @@ class LowObstacleMemory(Node):
         self._confirm_window = float(p('confirm_window_sec'))
         self._confirm_move = float(p('confirm_move_m'))
         self._confirm_turn = float(p('confirm_turn_rad'))
-        # (i, j) -> (sightings, first sighting time, first sighting pose) for cells not yet confirmed
+        self._near_confirm = float(p('near_confirm_m'))
+        self._near_confirm_scans = max(1, int(p('near_confirm_scans')))
+        # (i, j) -> (sightings, first sighting time, first sighting pose,
+        # sightings from that same spot) for cells not yet confirmed
         self._pending = {}
 
         # (i, j) map cell -> (expiry time, source)
@@ -194,26 +206,32 @@ class LowObstacleMemory(Node):
         px, py, yaw = pose
         now = self._now()
         steps = np.arange(0.0, self._extrude + 1e-6, self._res)
-        seen = set()
+        seen = {}  # cell -> range of the face it extrudes from
         for rng, ang in zip(r, a):
             c, s = math.cos(yaw + ang), math.sin(yaw + ang)
             for d in steps:
-                seen.add(self._cell(px + (rng + d) * c, py + (rng + d) * s))
-        for key in seen:
+                key = self._cell(px + (rng + d) * c, py + (rng + d) * s)
+                seen[key] = min(rng, seen.get(key, rng))
+        for key, rng in seen.items():
             if key in self._cells:
                 self._cells[key] = (max(self._cells[key][0], now + self._ttl['mark']), self._cells[key][1])
                 continue
-            count, first, seen_from = self._pending.get(key, (0, now, pose))
+            count, first, seen_from, same = self._pending.get(key, (0, now, pose, 0))
             if now - first > self._confirm_window:
-                count, first, seen_from = 0, now, pose
+                count, first, seen_from, same = 0, now, pose, 0
             if count > 0 and not self._new_viewpoint(seen_from, pose):
-                continue
-            count += 1
+                same += 1
+                if rng > self._near_confirm or same + 1 < self._near_confirm_scans:
+                    self._pending[key] = (count, first, seen_from, same)
+                    continue
+                count = self._confirm_scans
+            else:
+                count += 1
             if count >= self._confirm_scans:
                 self._pending.pop(key, None)
                 self._cells[key] = (now + self._ttl['mark'], 'mark')
             else:
-                self._pending[key] = (count, first, seen_from)
+                self._pending[key] = (count, first, seen_from, same)
         self._trim()
 
     def _new_viewpoint(self, a, b) -> bool:
