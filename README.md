@@ -635,7 +635,7 @@ What crosses the network (`config/zenoh/robot_client.json5.tmpl`):
 
 | Topic | Rate cap | Why |
 | --- | --- | --- |
-| `/<robot>/map_wire_z` | 1 Hz | zlib-compressed `/<robot>/map`; central rebuilds the map from it |
+| `/<robot>/map_wire_z` | 1 Hz | zlib-compressed `/<robot>/map_live`; central rebuilds the map from it |
 | `/<robot>/tf_zenoh`, `/<robot>/tf_static_zenoh` | 10 Hz / 1 Hz | best-effort copy of `/<robot>/tf` made by `tf_zenoh_relay` (C++, `turtlebot3_navigation2`; `scripts/comms/tf_zenoh_publish.py` is the fallback when it is not built), so the bridge never holds a reliable reader on SLAM's TF |
 | `/<robot>/navigate_to_pose`, `/<robot>/compute_path_to_pose` | — | Nav2 actions, both directions |
 | `/<robot>/nav2_collision_ahead`, `nav2_retrace_active` | — | optional helper signals for the explorer |
@@ -660,6 +660,7 @@ If you add a topic, add it to both this template and `config/zenoh/central_route
 | visual odometry (inside `stereo_depth_node`) | `odom/visual` for the bringup EKF; only with two cameras and a usable stereo calibration (`stereo_visual_odometry:=false` to turn off) |
 | `stuck_detector` | `stuck`, `stuck/event`, `bump_points`, `nav2_lethal_inflation` (`enable_stuck_detector:=false` to turn off) |
 | `collision_resolver` | real-or-fake verdict on each controller give-up ("collision ahead"), on `collision/diagnosis` (`enable_collision_resolver:=false` to turn off) |
+| `live_map_filter` | `map_live`: the SLAM map without obstacles the LiDAR has since seen through (opened doors, moved chairs, people who stood still), for the global costmap's static layer and `map_wire_z` (`live_map_filter:=false` to turn off; both then use `map`) |
 | `low_obstacle_memory` | `low_obstacle_points` for the `memory_layer` obstacle layer in both costmaps, and `low_obstacle_points_local` for `stuck_detector` (`low_obstacle_memory:=false` to turn off) |
 
 Optional hardware is listed per robot in `config/sensors/<robot>.yaml`. A robot without the file keeps the defaults. `ultrasonic: false` (Inky) leaves out ultrasonic fusion, `ultrasonic_triangulation_blob` and its costmap layer. The OpenCR publishes a constant 3.0 m on the ultrasonic topics even with no sensors fitted, and the triangulation node alone used about a third of a core. The launch log prints `sensors: ultrasonic=...`.

@@ -197,6 +197,7 @@ def _generate_nav2_params(
     stereo_obstacle_max_range: float = 1.4,
     stereo_clear_min_range: float = 0.35,
     low_obstacle_memory: bool = False,
+    live_map: bool = False,
 ):
     """Generate a modified Nav2 params file with namespace-prefixed frame names.
 
@@ -244,6 +245,15 @@ def _generate_nav2_params(
         _rewrite_frame(params, 'global_frame_id', 'map', f'{namespace}/map')
         _rewrite_frame(params, 'map_topic', '/map', f'/{namespace}/map')
         _rewrite_frame(params, 'map_topic', 'map', f'/{namespace}/map')
+
+    if live_map:
+        # live_map_filter.py republishes the SLAM map without the obstacles
+        # the LiDAR now sees through (a door since opened, a chair since
+        # moved). The global costmap plans on that copy.
+        static = (params.get('global_costmap', {}).get('global_costmap', {})
+                  .get('ros__parameters', {}).get('static_layer'))
+        if isinstance(static, dict):
+            static['map_topic'] = f'/{namespace}/map_live' if namespace else 'map_live'
 
     if nav2_enable_range_layer:
         for costmap_root in ('local_costmap', 'global_costmap'):
@@ -628,6 +638,8 @@ def _launch_setup(context):
         'stereo_visual_odometry').perform(context)
     low_obstacle_memory_enabled = LaunchConfiguration(
         'low_obstacle_memory').perform(context).lower() in ('1', 'true', 'yes')
+    live_map_enabled = LaunchConfiguration(
+        'live_map_filter').perform(context).lower() in ('1', 'true', 'yes')
     stuck_detector_enabled = LaunchConfiguration(
         'enable_stuck_detector').perform(context).lower() in ('1', 'true', 'yes')
     stuck_snapshot_enabled = LaunchConfiguration(
@@ -949,7 +961,7 @@ def _launch_setup(context):
             name='map_wire_compressed_republisher',
             namespace=ns,
             parameters=[{
-                'input_topic': 'map',
+                'input_topic': 'map_live' if live_map_enabled else 'map',
                 'output_topic': 'map_wire_z',
                 # Fleet bridge contract: low-rate, compressed map side channel.
                 'max_publish_hz': 1.0,
@@ -1062,6 +1074,7 @@ def _launch_setup(context):
             use_custom_bt_recovery_tree_str.lower() in ('1', 'true', 'yes')),
         nav2_enable_stereo_blob_layer=stereo_blob_enabled,
         low_obstacle_memory=low_obstacle_memory_enabled,
+        live_map=live_map_enabled,
     )
 
     map_frame_for_nav = f'{ns}/map' if ns else 'map'
@@ -1290,6 +1303,19 @@ def _launch_setup(context):
             name='collision_resolver',
             additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
             namespace=ns if ns else None,
+            output='screen',
+        ))
+
+    # Live map: the SLAM map minus obstacles the LiDAR now sees through, for
+    # the global costmap and the central PC (map_wire_z).
+    if live_map_enabled:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='live_map_filter.py',
+            name='live_map_filter',
+            additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+            namespace=ns if ns else None,
+            remappings=tf_remappings,
             output='screen',
         ))
 
@@ -1688,6 +1714,12 @@ def generate_launch_description():
             description=(
                 'Detect driving without moving (stall, wheel slip, blocked turn); '
                 'publishes stuck, stuck/event and bump_points.')),
+        DeclareLaunchArgument(
+            'live_map_filter', default_value='true',
+            description=(
+                'Publish map_live, the SLAM map without obstacles the LiDAR now sees '
+                'through (opened doors, moved furniture), for the global costmap and '
+                'the central PC.')),
         DeclareLaunchArgument(
             'low_obstacle_memory', default_value='true',
             description=(
