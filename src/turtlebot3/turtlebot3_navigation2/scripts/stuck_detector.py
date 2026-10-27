@@ -40,7 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
-from std_msgs.msg import Bool, Header, String
+from std_msgs.msg import Bool, Float32, Header, String
 
 
 def _stamp(msg) -> float:
@@ -343,7 +343,16 @@ class StuckDetector(Node):
             SetParameters, f"{str(p('global_costmap_node')).strip('/')}/set_parameters")
         self.create_timer(1.0, self._squeeze_tick)
         self.create_timer(0.5, self._tilt_tick)
+        # collision_resolver asks for a short straight move (metres, + ahead,
+        # - back) to get room to turn or to bring a blocking cell into the
+        # cameras' view; the reflex's own strip check still applies.
+        self.create_subscription(Float32, 'stuck/reflex_request', self._on_reflex_request, 5)
         self.get_logger().info('stuck detector: cmd_vel vs wheels, wheels vs LiDAR/VO, turn vs gyro')
+
+    def _on_reflex_request(self, msg: Float32) -> None:
+        d = float(msg.data)
+        if abs(d) >= 0.02:
+            self._start_reflex(math.copysign(1.0, d), self._now(), min(abs(d), 0.25))
 
     # --- inputs ---------------------------------------------------------
     def _now(self) -> float:

@@ -73,6 +73,7 @@ install(
     scripts/stuck_detector.py
     scripts/stuck_snapshot.py
     scripts/low_obstacle_memory.py
+    scripts/collision_resolver.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

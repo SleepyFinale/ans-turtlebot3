@@ -659,6 +659,7 @@ If you add a topic, add it to both this template and `config/zenoh/central_route
 | `stereo_pair_throttle` (C++) | takes both 30 fps camera streams and republishes time-matched pairs at 5 Hz on `stereo_left/image_pair`, `stereo_right/image_pair` for `stereo_depth_node` |
 | visual odometry (inside `stereo_depth_node`) | `odom/visual` for the bringup EKF; only with two cameras and a usable stereo calibration (`stereo_visual_odometry:=false` to turn off) |
 | `stuck_detector` | `stuck`, `stuck/event`, `bump_points`, `nav2_lethal_inflation` (`enable_stuck_detector:=false` to turn off) |
+| `collision_resolver` | real-or-fake verdict on each controller give-up ("collision ahead"), on `collision/diagnosis` (`enable_collision_resolver:=false` to turn off) |
 | `low_obstacle_memory` | `low_obstacle_points` for the `memory_layer` obstacle layer in both costmaps, and `low_obstacle_points_local` for `stuck_detector` (`low_obstacle_memory:=false` to turn off) |
 
 Optional hardware is listed per robot in `config/sensors/<robot>.yaml`. A robot without the file keeps the defaults. `ultrasonic: false` (Inky) leaves out ultrasonic fusion, `ultrasonic_triangulation_blob` and its costmap layer. The OpenCR publishes a constant 3.0 m on the ultrasonic topics even with no sensors fitted, and the triangulation node alone used about a third of a core. The launch log prints `sensors: ultrasonic=...`.
@@ -751,6 +752,29 @@ While exploring, `stereo_depth_node` (depth plus VO) took about 1.2 cores. Once 
 A drop (stop gate and costmap) counts only when two sightings taken at least `drop_confirm_move_m` (0.12 m) of travel apart put the edge at the same odometry-frame spot, within half the travel. A real edge stays put as the robot approaches; on Inky, drops "at 0.50-0.55 m" followed the robot across flat carpet and doorway thresholds (18 stops in one run, 1 after this change). A real edge is first seen by 0.72 m and confirmed with about 0.5 m to go. A robot standing still never confirms one; without odometry two frames in a row do, as before.
 
 **Range self-alignment** moves the right camera's cx only when two batches in a row are off the LiDAR on the same side, and then by the smaller of the two. Single batches swung between −1.2 and +2.7 px (and +15 px) within a minute against chair legs and table edges, each was applied, and at 1 m a pixel is ~0.2 m of depth: floor read as obstacles or drops.
+
+**Collision resolver.** When the controller gives up on "collision ahead" (a `follow_path` abort with no replacement path running; a replaced path is also reported as aborted), `collision_resolver` takes the local costmap from just before it, since the behavior tree clears it right after. It checks each lethal cell ahead of the robot (0.50 m, ±0.22 m) or within 0.28 m against what the sensors see now:
+
+| Cell | Means | Verdict |
+| --- | --- | --- |
+| `lidar` | a LiDAR return there | real |
+| `stereo` | in the cameras' band (0.35–1.4 m) and marked by stereo | real |
+| `floor` | in the band, and stereo matched floor beyond it | fake |
+| `unseen` | in the band, no evidence either way | unverified |
+| `close` | ahead within the cameras' bearing but closer than 0.35 m | unverified |
+| `memory` | remembered by `low_obstacle_memory`, out of view | unverified |
+| `stale` | out of view, and no sensor or memory explains it | fake |
+
+It then acts:
+- **Fake:** forget the cells in the memory (`memory/forget`) and clear the local costmap (the global one too for stale cells). The clear is needed because fake cells held only by the local stereo layer are not in the memory.
+- **Real stereo:** remember the cells (`memory/confirm`). The global costmap has no stereo layer, so before this the plan kept going through a caster only the local costmap knew about.
+- **Real, ahead and closer than 0.30 m:** back off 0.10 m for room to turn.
+- **Unverified ahead:** back off 0.08–0.20 m so the cells come into the cameras' band, then look again with data from after the back-off has finished.
+  - On that second look, `unseen` cells count as fake: the cameras looked straight at them and found no obstacle.
+  - `close` and `memory` cells count as real.
+- **The same spot blocks for real `give_up_blocks` (3) times within 60 s:** cancel the navigation goal. The explorer blacklists that frontier and picks another; one pocket among chair legs gave six real blocks in a minute while Nav2 kept retrying the same approach.
+
+Back-offs go through `stuck/reflex_request` to `stuck_detector`'s reflex, which keeps its own clear-strip check, and are skipped while a Nav2 spin, backup or wait is running. Every verdict is one log line (`collision ahead: real (lidar=2 stereo=3; nearest (+0.36,+0.13) stereo): remembered 3 real cell(s) for the planner`) and JSON on `collision/diagnosis`. Sensor topics are only subscribed during an episode.
 
 ### LDS configuration
 
