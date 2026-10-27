@@ -632,6 +632,8 @@ def _launch_setup(context):
         'enable_stuck_detector').perform(context).lower() in ('1', 'true', 'yes')
     stuck_snapshot_enabled = LaunchConfiguration(
         'enable_stuck_snapshot').perform(context).lower() in ('1', 'true', 'yes')
+    collision_resolver_enabled = LaunchConfiguration(
+        'enable_collision_resolver').perform(context).lower() in ('1', 'true', 'yes')
 
     # fleet: the central PC drives this robot (map_wire_z for Zenoh).
     # standalone: no central PC (static map -> <robot>/map for RViz goals).
@@ -1279,6 +1281,18 @@ def _launch_setup(context):
             output='screen',
         ))
 
+    # Collision resolver: real-or-fake verdict on each "collision ahead"
+    # give-up, acted on through the memory and the stuck detector's reflex.
+    if collision_resolver_enabled:
+        actions.append(Node(
+            package='turtlebot3_navigation2',
+            executable='collision_resolver.py',
+            name='collision_resolver',
+            additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+            namespace=ns if ns else None,
+            output='screen',
+        ))
+
     # Low-obstacle memory: stereo marks (extended behind the visible face)
     # and bumps, fed to both costmaps as a keepout mask.
     if low_obstacle_memory_enabled:
@@ -1662,6 +1676,13 @@ def generate_launch_description():
             description=(
                 'Diagnostic: when "collision ahead" lasts 5 s, log which layer owns the '
                 'blocking cells and save ~/.ros/stuck_snapshots/*.npz.')),
+        DeclareLaunchArgument(
+            'enable_collision_resolver', default_value='true',
+            description=(
+                'On each controller give-up ("collision ahead"), check the blocking cells '
+                'against the sensors: forget fake ones, remember real ones for the planner, '
+                'back off to look at unverified ones. Needs the stuck detector and '
+                'low-obstacle memory for its actions.')),
         DeclareLaunchArgument(
             'enable_stuck_detector', default_value='true',
             description=(

@@ -147,6 +147,14 @@ class LowObstacleMemory(Node):
         self.create_subscription(LaserScan, str(p('mark_scan_topic')), self._on_marks, 10)
         self.create_subscription(LaserScan, str(p('clear_scan_topic')), self._on_clear, 10)
         self.create_subscription(PointCloud2, str(p('bump_topic')), self._on_bump, 10)
+        # collision_resolver's verdicts on what blocked the controller:
+        # memory/forget drops cells it found to be fake (the cameras see
+        # floor there now), memory/confirm keeps cells it found real, so the
+        # global planner routes around them at once.
+        self.create_subscription(
+            PointCloud2, 'memory/forget', lambda m: self._on_verdict(m, forget=True), 10)
+        self.create_subscription(
+            PointCloud2, 'memory/confirm', lambda m: self._on_verdict(m, forget=False), 10)
         # stereo_depth_node status: when it finds the pair out of alignment,
         # the marks it produced are not trustworthy and nothing will clear
         # them, so they are dropped. Bumps do not depend on the cameras.
@@ -289,6 +297,30 @@ class LowObstacleMemory(Node):
         self.get_logger().info(
             f'remembered bump: {len(pts)} points near ({px:.2f}, {py:.2f})'
             + (f', joined to {linked} earlier bump(s)' if linked else ''))
+
+    def _on_verdict(self, msg: PointCloud2, forget: bool) -> None:
+        pose = self._pose(msg.header.frame_id, msg.header.stamp, latest_ok=True)
+        if pose is None:
+            return
+        px, py, yaw = pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        now = self._now()
+        keys = {self._cell(px + c * x - s * y, py + s * x + c * y)
+                for x, y, _z in point_cloud2.read_points(msg, field_names=('x', 'y', 'z'), skip_nans=True)}
+        changed = 0
+        for i, j in keys:
+            if forget:
+                # The cell and its neighbours: a mark is placed to within a cell.
+                for key in [(i + di, j + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)]:
+                    changed += self._cells.pop(key, None) is not None
+                    self._pending.pop(key, None)
+            elif (i, j) not in self._cells:
+                self._cells[(i, j)] = (now + self._ttl['mark'], 'mark')
+                changed += 1
+        if changed:
+            self._publish_points()
+        self.get_logger().info(
+            f'{"forgot" if forget else "remembered"} {changed} cell(s) on collision_resolver\'s verdict')
 
     def _on_stereo_status(self, msg: String) -> None:
         try:
