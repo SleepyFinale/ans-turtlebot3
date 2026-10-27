@@ -51,7 +51,9 @@ class StereoCmdVelEnforcer(Node):
             20,
         )
         self._pub = self.create_publisher(Twist, self._cmd_vel_topic, 20)
-        self.create_timer(1.0 / self._publish_hz, self._tick)
+        # The override timer exists only while a stop is held: a 20 Hz timer
+        # that almost always found nothing to do cost ~0.08 core in rclpy.
+        self._timer = None
         self.get_logger().info(
             f'Stereo cmd_vel enforcer started: topic={self._cmd_vel_topic} '
             f'close_m={self._close_m:.2f} streak={self._required_streak}'
@@ -96,6 +98,9 @@ class StereoCmdVelEnforcer(Node):
             return
         self._last_reason = reason
         self._last_hazard_time_s = self.get_clock().now().nanoseconds * 1e-9
+        if self._timer is None:
+            self._timer = self.create_timer(1.0 / self._publish_hz, self._tick)
+            self._tick()
 
     def _on_nav_cmd(self, msg: Twist) -> None:
         self._nav_cmd = msg
@@ -119,6 +124,9 @@ class StereoCmdVelEnforcer(Node):
                 f'stereo_stop_active={active} reason={self._last_reason or "none"}'
             )
         self._last_state = active
+        if not active and self._timer is not None:
+            self.destroy_timer(self._timer)
+            self._timer = None
 
 
 def main(args=None) -> None:

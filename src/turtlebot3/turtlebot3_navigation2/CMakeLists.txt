@@ -13,19 +13,35 @@ endif()
 ################################################################################
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2_msgs REQUIRED)
 
 ################################################################################
 # Build
 ################################################################################
-add_executable(stereo_pair_throttle src/stereo_pair_throttle.cpp)
-ament_target_dependencies(stereo_pair_throttle rclcpp sensor_msgs)
+# Component (loaded next to the cameras by stereo.launch.py) plus the
+# standalone stereo_pair_throttle executable generated from it.
+add_library(stereo_pair_throttle_component SHARED src/stereo_pair_throttle.cpp)
+ament_target_dependencies(stereo_pair_throttle_component rclcpp rclcpp_components sensor_msgs)
+rclcpp_components_register_node(stereo_pair_throttle_component
+  PLUGIN "StereoPairThrottle"
+  EXECUTABLE stereo_pair_throttle)
+add_executable(tf_zenoh_relay src/tf_zenoh_relay.cpp)
+ament_target_dependencies(tf_zenoh_relay rclcpp geometry_msgs tf2_msgs)
 
 ################################################################################
 # Install
 ################################################################################
 install(
-  TARGETS stereo_pair_throttle
+  TARGETS stereo_pair_throttle_component
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+install(
+  TARGETS tf_zenoh_relay
   DESTINATION lib/${PROJECT_NAME}
 )
 install(

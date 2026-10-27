@@ -124,7 +124,15 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
-python3 "${SCRIPT_DIR}/tf_zenoh_publish.py" "${ROBOT}" &
+# C++ relay from turtlebot3_navigation2; the Python copy cost ~0.2 core on
+# the Pi and stays as the fallback for a workspace that is not rebuilt.
+RELAY_BIN="${WORKSPACE_DIR}/install/turtlebot3_navigation2/lib/turtlebot3_navigation2/tf_zenoh_relay"
+if [[ -x "${RELAY_BIN}" ]]; then
+  "${RELAY_BIN}" "${ROBOT}" &
+else
+  echo "NOTE: ${RELAY_BIN} is not built; using tf_zenoh_publish.py"
+  python3 "${SCRIPT_DIR}/tf_zenoh_publish.py" "${ROBOT}" &
+fi
 RELAY_PID=$!
 
 "${ZENOH_BIN}" -c "$RUNTIME_CONFIG"

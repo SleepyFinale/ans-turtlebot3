@@ -312,14 +312,21 @@ class LowObstacleMemory(Node):
         pts = []
         local = []
         if self._cells:
+            # Built as float32 arrays: create_cloud packs those directly,
+            # where per-point lists went through Python one cell at a time.
             cells = np.asarray(list(self._cells.keys()), dtype=float)
             xy = (cells + 0.5) * self._res
             dist = np.hypot(xy[:, 0] - rx, xy[:, 1] - ry)
             keep = (dist > self._keep_clear) & (dist < self._publish_radius)
-            pts = [[float(x), float(y), 0.05] for x, y in xy[keep]]
+            kept = xy[keep]
+            pts = np.column_stack([kept, np.full(len(kept), 0.05)]).astype(np.float32)
             near = xy[dist < self._local_radius] - np.array([rx, ry])
             c, s = math.cos(ryaw), math.sin(ryaw)
-            local = [[float(c * dx + s * dy), float(-s * dx + c * dy), 0.05] for dx, dy in near]
+            local = np.column_stack([
+                c * near[:, 0] + s * near[:, 1],
+                -s * near[:, 0] + c * near[:, 1],
+                np.full(len(near), 0.05),
+            ]).astype(np.float32)
         header = Header()
         header.stamp = stamp
         header.frame_id = self._map_frame

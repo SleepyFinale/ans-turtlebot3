@@ -15,6 +15,11 @@
   buffers overflowed (netstat -su "receive buffer errors"), and the Zenoh
   bridge lost discovery of tf_zenoh_publish: the central explorer never got
   the robot's pose and sent no goals.
+
+  Leave MaxMessageSize / FragmentSize at their defaults. 64 KB fragments cut
+  the camera streams' DDS cost by ~15%, but the Zenoh bridge (its own Cyclone
+  build) then never answered compute_path_to_pose requests from the central
+  PC, so the explorer could not send goals.
 -->
 <CycloneDDS xmlns="https://cdds.io/config">
   <Domain id="any">
