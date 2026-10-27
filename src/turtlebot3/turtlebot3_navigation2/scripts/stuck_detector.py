@@ -185,7 +185,10 @@ class StuckDetector(Node):
         # memory re-mark what is really there within a second.
         self.declare_parameter('plan_fail_clear_count', 4)
         self.declare_parameter('plan_fail_window_sec', 30.0)
-        self.declare_parameter('plan_fail_cooldown_sec', 30.0)
+        # 30 s left Inky boxed in among chair legs for ~35 s per episode
+        # before the squeeze below started; a clear is cheap (the sensors
+        # re-mark within a second), so the squeeze may follow 12 s after.
+        self.declare_parameter('plan_fail_cooldown_sec', 12.0)
         # Squeeze. The global planner keeps squeeze_normal_radius_m (0.18 m)
         # from obstacles, the controller only 0.15 m, so the robot can drive
         # through a gap the planner then will not route back through. On Inky

@@ -106,6 +106,10 @@ class StereoDepthNode(Node):
         self.declare_parameter('ground_x_min_m', 0.22)
         self.declare_parameter('ground_x_max_m', 1.20)
         self.declare_parameter('drop_z_m', -0.15)
+        # Travel between the two sightings that confirm a drop
+        # (_drop_confirmed): ~2 frames at full speed. A drop is first seen
+        # by 0.72 m, so it is confirmed with ~0.5 m still to go.
+        self.declare_parameter('drop_confirm_move_m', 0.12)
         self.declare_parameter('min_valid_ratio', 0.05)
         self.declare_parameter('cloud_stride', 4)
         # 0 = just enough disparity levels to reach min_range_m with this
@@ -116,6 +120,13 @@ class StereoDepthNode(Node):
         self.declare_parameter('num_disparities', 0)
         self.declare_parameter('block_size', 5)
         self.declare_parameter('close_obstacle_m', 0.45)
+        # The stop gate (obstacle_streak / path_obstacle_m) only counts
+        # confirmed marks within this distance of the robot's centre line.
+        # The nearest hit anywhere in the +-45 deg view stopped Inky about
+        # every 6 s while exploring, mostly at door jambs and furniture well
+        # to the side of its path (the Burger is 0.18 m wide). The costmap
+        # still gets every mark, so the planner steers around those.
+        self.declare_parameter('path_half_width_m', 0.14)
         # StereoBM's textureThreshold, applied to SGBM output. Blank floor
         # matches are not obstacles.
         self.declare_parameter('texture_threshold', 12.0)
@@ -165,6 +176,12 @@ class StereoDepthNode(Node):
         self.declare_parameter('visual_odom_topic', 'odom/visual')
         self.declare_parameter('visual_odometry_hz', 3.0)
         self.declare_parameter('odom_frame', '')
+        # Depth and VO rate while the robot has stood still for a second
+        # (odometry). This node took ~1.2 cores of Inky's Pi while exploring,
+        # and the robot spends much of a run waiting for goals and plans;
+        # pairs of an unchanged view add nothing. Full rate resumes on the
+        # first tick after odometry shows motion. 0 keeps the full rate.
+        self.declare_parameter('idle_hz', 1.0)
 
         ns = _namespace_of(self)
         calib_param = str(self.get_parameter('calibration_file').value).strip()
@@ -192,6 +209,7 @@ class StereoDepthNode(Node):
         self._drop_z = float(self.get_parameter('drop_z_m').value)
         self._min_valid_ratio = float(self.get_parameter('min_valid_ratio').value)
         self._close_obstacle_m = float(self.get_parameter('close_obstacle_m').value)
+        self._path_half_width = float(self.get_parameter('path_half_width_m').value)
         self._texture_threshold = float(self.get_parameter('texture_threshold').value)
         self._drop_texture_threshold = float(self.get_parameter('drop_texture_threshold').value)
         self._cloud_stride = max(1, int(self.get_parameter('cloud_stride').value))
@@ -210,9 +228,14 @@ class StereoDepthNode(Node):
         self._realign_pts = []  # (left Nx2, right Nx2) raw matches gathered while still
         self._offset_gaps = []  # measured - expected disparity at LiDAR returns
         self._offset_frames = 0
+        # Gap from the previous batch; a correction needs two that agree.
+        self._offset_pending = None
         self._floor_pts = []  # lower-half points in the rectified left frame
         self._last_moving_s = 0.0
         self._odom_seen = False
+        self._odom_pose = None  # (x, y, yaw) in the odom frame
+        self._drop_hits = []    # (time, robot x, y, edge x, y) of recent drop sightings
+        self._drop_prev = False
         self._calib = None
         self._calib_file = None
 
@@ -251,6 +274,7 @@ class StereoDepthNode(Node):
         self._load_calibration()
 
         self._vo = None
+        self._last_vo_s = 0.0
         if self._calibrated and bool(self.get_parameter('visual_odometry').value):
             self._vo = stereo_visual_odometry.StereoVO(self._calib_path)
             self._odom_frame = str(self.get_parameter('odom_frame').value).strip() or f'{prefix}odom'
@@ -525,12 +549,23 @@ class StereoDepthNode(Node):
             img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
         return img
 
+    def _idle_skip(self, last_s: float) -> bool:
+        """True while still and the last frame was processed less than 1/idle_hz ago."""
+        # Without odometry _still() is always true; never slow down then.
+        idle_hz = float(self.get_parameter('idle_hz').value)
+        return (
+            idle_hz > 0.0 and self._odom_seen and self._still()
+            and time.monotonic() - last_s < 1.0 / idle_hz)
+
     def _on_vo_tick(self) -> None:
+        if self._idle_skip(self._last_vo_s):
+            return
         best = self._best_pair(list(self._vo_left), list(self._vo_right))
         if best is None:
             return
         self._vo_left.clear()
         self._vo_right.clear()
+        self._last_vo_s = time.monotonic()
         _gap, left_msg, right_msg = best
         result = self._vo.process(self._mono(left_msg), self._mono(right_msg), self._stamp_ns(left_msg))
         if result is not None:
@@ -544,6 +579,9 @@ class StereoDepthNode(Node):
     def _on_tick(self) -> None:
         """Process the closest-in-time left/right pair, if one is within slop."""
         if not self._calibrated or self._maps is None:
+            return
+        # _last_pair_s also feeds the 2 s images timeout; idle_hz stays above it.
+        if self._idle_skip(self._last_pair_s):
             return
         # Snapshots: the camera callbacks append from another executor thread.
         best = self._best_pair(list(self._raw_left), list(self._raw_right))
@@ -574,6 +612,39 @@ class StereoDepthNode(Node):
         twist = msg.twist.twist
         if abs(twist.linear.x) > 0.01 or abs(twist.angular.z) > 0.02:
             self._last_moving_s = time.monotonic()
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self._odom_pose = (p.x, p.y, yaw)
+
+    def _drop_confirmed(self, drop: bool, drop_range) -> bool:
+        """A drop counts once two sightings taken drop_confirm_move_m apart in
+        travel put the edge at the same odometry-frame spot.
+
+        A real edge stays put while the robot approaches it. On Inky, drops
+        "at 0.50-0.55 m" followed the robot across carpet and doorway
+        thresholds (18 stops in one run) at a fixed place in the image.
+        Without odometry, two frames in a row confirm, as before.
+        """
+        now = time.monotonic()
+        self._drop_hits = [h for h in self._drop_hits if now - h[0] <= 4.0]
+        prev, self._drop_prev = self._drop_prev, bool(drop and drop_range is not None)
+        if not drop or drop_range is None:
+            return False
+        if self._odom_pose is None:
+            return prev
+        rx, ry, yaw = self._odom_pose
+        ex, ey = rx + drop_range * math.cos(yaw), ry + drop_range * math.sin(yaw)
+        move = float(self.get_parameter('drop_confirm_move_m').value)
+        # An artefact moves with the robot, so its edge shifts as far as the
+        # robot did; a real edge shifts only by the 5 cm range bins.
+        ok = False
+        for h in self._drop_hits:
+            moved = math.hypot(rx - h[1], ry - h[2])
+            if moved >= move and math.hypot(ex - h[3], ey - h[4]) <= min(0.12, 0.5 * moved):
+                ok = True
+                break
+        self._drop_hits.append((now, rx, ry, ex, ey))
+        return ok
 
     def _still(self) -> bool:
         """Stopped for at least a second. The cameras are not synchronized, so
@@ -756,13 +827,17 @@ class StereoDepthNode(Node):
         if blob['obstacle_range_m'] is not None:
             self._shadow_obstacle_m = blob['obstacle_range_m']
             self._shadow_until_s = now_s + 1.0
-        close = (
-            blob['obstacle_range_m'] is not None
-            and blob['obstacle_range_m'] <= self._close_obstacle_m
-        )
+        # A confirmed drop counts as two frames at once: the move between the
+        # two sightings already took a frame.
+        if self._drop_confirmed(blob['drop'], blob['drop_range_m']):
+            self._drop_streak = max(2, self._drop_streak + 1)
+        else:
+            self._drop_streak = 0
+        marks = self._confirmed_marks(blob)
+        path_m, path_bearing = self._path_obstacle(blob, marks)
+        close = path_m is not None and path_m <= self._close_obstacle_m
         self._obstacle_streak = self._obstacle_streak + 1 if close else 0
-        self._drop_streak = self._drop_streak + 1 if blob['drop'] else 0
-        self._publish_scan(stamp, blob)
+        self._publish_scan(stamp, blob, marks)
         self._publish_cloud(stamp, base)
         self._publish_debug({
             'status': 'ok',
@@ -770,6 +845,8 @@ class StereoDepthNode(Node):
             'valid_ratio': valid_ratio,
             'row_error_px': self._row_error_px,
             'obstacle_range_m': blob['obstacle_range_m'],
+            'path_obstacle_m': path_m,
+            'path_bearing_deg': path_bearing,
             'floor_z_m': blob['floor_z_m'],
             'drop': blob['drop'],
             'drop_range_m': blob['drop_range_m'],
@@ -782,6 +859,8 @@ class StereoDepthNode(Node):
             self._last_status_s = now
             obstacle = blob['obstacle_range_m']
             obstacle_text = 'none' if obstacle is None else f'{obstacle:.2f} m'
+            if path_m is not None:
+                obstacle_text += f' path={path_m:.2f} m@{path_bearing:+.0f}deg'
             drop_text = 'no' if not blob['drop'] else f'yes at {blob["drop_range_m"]:.2f} m'
             row_text = '?' if self._row_error_px is None else f'{self._row_error_px:.1f} px'
             self.get_logger().info(
@@ -951,8 +1030,20 @@ class StereoDepthNode(Node):
         samples = len(self._offset_gaps)
         self._offset_gaps = []
         self._offset_frames = 0
-        if abs(gap) <= float(self.get_parameter('offset_trigger_px').value):
+        trigger = float(self.get_parameter('offset_trigger_px').value)
+        prev, self._offset_pending = self._offset_pending, gap
+        if abs(gap) <= trigger:
             return
+        # One batch is not enough: LiDAR returns off chair legs and table
+        # edges sample the background in the disparity window. On Inky single
+        # batches swung between -1.2 and +2.7 px (and +15 px) within a minute
+        # and each was applied, moving every stereo depth by ~0.2 m per pixel
+        # at 1 m: floor then read as obstacles or drops. Only two batches in a
+        # row on the same side move cx, and only by the smaller of the two.
+        if prev is None or abs(prev) <= trigger or (prev > 0) != (gap > 0):
+            return
+        gap = math.copysign(min(abs(gap), abs(prev)), gap)
+        self._offset_pending = None
         # How far the right rectified image moves per pixel of right cx, at the centre.
         c = self._calib
         cv2 = self._cv2
@@ -1058,7 +1149,25 @@ class StereoDepthNode(Node):
             marks = np.minimum(marks, np.asarray(blob['ranges'], dtype=float))
         return marks
 
-    def _publish_scan(self, stamp, blob) -> None:
+    def _path_obstacle(self, blob, marks: np.ndarray):
+        """Nearest confirmed mark (range m, bearing deg) inside the robot's path, or (None, None).
+
+        Drops are left out: the depth node reports them through drop_streak.
+        """
+        obstacles = np.asarray(blob['obstacle_ranges'], dtype=float)
+        hits = np.isfinite(marks) & np.isfinite(obstacles)
+        if not np.any(hits):
+            return None, None
+        idx = np.flatnonzero(hits)
+        ang = float(blob['angle_min']) + idx * float(blob['angle_increment'])
+        rng = marks[idx]
+        inside = np.abs(rng * np.sin(ang)) <= self._path_half_width
+        if not np.any(inside):
+            return None, None
+        k = int(np.argmin(np.where(inside, rng * np.cos(ang), np.inf)))
+        return float(rng[k] * math.cos(ang[k])), math.degrees(float(ang[k]))
+
+    def _publish_scan(self, stamp, blob, marks=None) -> None:
         msg = LaserScan()
         msg.header.stamp = stamp
         msg.header.frame_id = self._parent_frame
@@ -1077,7 +1186,8 @@ class StereoDepthNode(Node):
         msg.angle_min = float(blob['angle_min'])
         msg.angle_max = float(blob['angle_max'])
         msg.angle_increment = float(blob['angle_increment'])
-        marks = self._confirmed_marks(blob)
+        if marks is None:
+            marks = self._confirmed_marks(blob)
         msg.ranges = [float(v) for v in marks]
         self._scan_pub.publish(msg)
         # Clear up to a confirmed hit, or up to the farthest floor match on an
