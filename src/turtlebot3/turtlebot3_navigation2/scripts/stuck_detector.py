@@ -67,7 +67,11 @@ class StuckDetector(Node):
         # rclpy's executor costs a few ms per wake-up on the Pi for every
         # entity it waits on; the parameter services are not needed here.
         super().__init__('stuck_detector', start_parameter_services=False)
+        # What the base is told (cmd_vel_mux output) and where reflexes go:
+        # a mux input that outranks Nav2, so a reflex is never interleaved
+        # with the controller's commands.
         self.declare_parameter('cmd_vel_topic', 'cmd_vel')
+        self.declare_parameter('reflex_cmd_topic', 'cmd_vel_reflex')
         self.declare_parameter('wheel_odom_topic', 'odom/wheel')
         self.declare_parameter('visual_odom_topic', 'odom/visual')
         self.declare_parameter('scan_topic', 'scan')
@@ -105,8 +109,8 @@ class StuckDetector(Node):
         # away reflex_distance_m. Nav2's backup cannot do this: it refuses to
         # start while any lethal cell touches the footprint outline, and the
         # object the robot just touched is exactly that. The reflex drives
-        # cmd_vel directly, faster than the velocity smoother publishes, and
-        # only if the LiDAR shows the strip it will drive through is empty.
+        # cmd_vel_reflex (cmd_vel_mux gives it priority over Nav2), and only
+        # if the LiDAR shows the strip it will drive through is empty.
         # (A low object behind is invisible to the LiDAR; the robot came
         # from that side moments ago, which is why straight back is chosen.)
         self.declare_parameter('reflex_enabled', True)
@@ -312,7 +316,7 @@ class StuckDetector(Node):
         self._event_pub = self.create_publisher(String, 'stuck/event', 10)
         self._debug_pub = self.create_publisher(String, 'stuck/debug', 10)
         self._bump_pub = self.create_publisher(PointCloud2, 'bump_points', 10)
-        self._cmd_pub = self.create_publisher(Twist, str(p('cmd_vel_topic')), 10)
+        self._cmd_pub = self.create_publisher(Twist, str(p('reflex_cmd_topic')), 10)
         self._reflex_pub = self.create_publisher(Bool, 'stuck/reflex_active', 10)
         self._lethal_pub = self.create_publisher(Bool, 'nav2_lethal_inflation', 10)
         # The 40 Hz reflex timer exists only while a reflex drives: every
@@ -451,10 +455,10 @@ class StuckDetector(Node):
     def _commanded(self, t0: float, t1: float):
         """(linear distance, |angle|, mean v sign, steady, turn_steady) asked for in [t0, t1].
 
-        steady is False when the drive commands were mixed with stops: the
-        stereo and ultrasonic enforcers publish zero cmd_vel next to Nav2's
-        commands, and the base then barely moves on purpose. A stall only
-        counts while every publisher kept asking for the same direction.
+        steady is False when the drive commands were mixed with stops (Nav2
+        starting and stopping, or a stop gate clamping it in cmd_vel_mux),
+        and the base then barely moves on purpose. A stall only counts while
+        the commands kept asking for the same direction.
         turn_steady is the same test for the turn rate (not-turning check).
         """
         samples = [c for c in self._cmd if t0 <= c[0] <= t1]
@@ -822,7 +826,12 @@ class StuckDetector(Node):
             # The raised end is on the object.
             self._publish_bump(-downhill)
             self._last_bump = now
-        self._start_reflex(direction, now, self._tilt_escape)
+        # Downhill can be blocked (a wall ahead of a robot whose rear caster
+        # is on a chair leg). Retrying it every tick left Inky tilted for
+        # 20 s at its start pose; the other way at least moves.
+        if not self._start_reflex(direction, now, self._tilt_escape) \
+                and not self._start_reflex(-direction, now, self._tilt_escape):
+            self._last_reflex = now  # neither way is clear: look again after the cooldown
 
     def _pick_direction(self, preferred: float) -> float:
         """preferred, unless the last reflex that way barely moved."""

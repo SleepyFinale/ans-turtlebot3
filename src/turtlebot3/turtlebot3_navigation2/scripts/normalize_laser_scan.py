@@ -48,16 +48,20 @@ class LaserScanNormalizer(Node):
         # SLAM keeps the full-rate topic. Empty topic or max_hz <= 0 disables it.
         self.declare_parameter('costmap_output_topic', '')
         self.declare_parameter('costmap_max_hz', 0.0)
-        # Tilt gate. The LiDAR sits 0.18 m above the floor, so a robot pitched
-        # 2 deg sees the floor ~5 m away and 4 deg at ~2.6 m. SLAM (8 m range,
-        # occupancy threshold 0.1) kept those hits as walls in open floor, and
-        # on Inky they closed off a doorway the planner then would not use.
-        # Scans taken while the IMU's fused orientation is more than
+        # Tilt gate. The LiDAR sits lidar_height_m above the floor, so a robot
+        # pitched 2 deg sees the floor ~5 m away and 4 deg at ~2.6 m. SLAM
+        # (8 m range, occupancy threshold 0.1) kept those hits as walls in
+        # open floor, and on Inky they closed off a doorway the planner then
+        # would not use. While the IMU's fused orientation is more than
         # max_tilt_deg from the robot's resting attitude (slow average of the
-        # same, tilt_rest_sec) are not published. 0 disables.
+        # same, tilt_rest_sec), beams long enough to reach the floor are
+        # blanked. Whole scans used to be withheld instead: SLAM then stopped
+        # updating map->odom, and a robot stuck nose-down on a chair leg froze
+        # every Nav2 server for 20 s on transform errors. 0 disables.
         self.declare_parameter('imu_topic', 'imu')
         self.declare_parameter('max_tilt_deg', 1.5)
         self.declare_parameter('tilt_rest_sec', 20.0)
+        self.declare_parameter('lidar_height_m', 0.18)
         
         # Ultrasonic fusion parameters. These stay separate from the lidar
         # normalization path so the robot can disable or tune them independently.
@@ -161,10 +165,12 @@ class LaserScanNormalizer(Node):
 
         self._max_tilt = math.radians(float(self.get_parameter('max_tilt_deg').value))
         self._tilt_rest_sec = max(1.0, float(self.get_parameter('tilt_rest_sec').value))
+        self._lidar_height = float(self.get_parameter('lidar_height_m').value)
         self._rest = None          # (pitch, roll) resting attitude, slow average
         self._last_imu_ns = None
-        self._tilted_until_ns = 0  # a scan overlapping a tilt up to here is dropped
-        self._tilt_dropped = 0
+        # (time ns, pitch, roll) away from rest while tilted, for the scan in progress
+        self._tilt_samples = deque()
+        self._tilt_masked_scans = 0
         if self._max_tilt > 0.0:
             self.create_subscription(
                 Imu, str(self.get_parameter('imu_topic').value), self._on_imu,
@@ -482,24 +488,53 @@ class LaserScanNormalizer(Node):
         now_ns = self.get_clock().now().nanoseconds
         if self._rest is None:
             self._rest = (pitch, roll)
-        else:
-            dt = 0.05 if self._last_imu_ns is None else min(1.0, (now_ns - self._last_imu_ns) * 1e-9)
-            k = dt / self._tilt_rest_sec
-            self._rest = (self._rest[0] + k * (pitch - self._rest[0]),
-                          self._rest[1] + k * (roll - self._rest[1]))
+        dp, dr = pitch - self._rest[0], roll - self._rest[1]
+        tilted = math.hypot(dp, dr) > self._max_tilt
+        dt = 0.05 if self._last_imu_ns is None else min(1.0, (now_ns - self._last_imu_ns) * 1e-9)
+        # A real tilt (up on something) is followed ten times slower, so it
+        # is still masked a minute later; slow drift is followed at once.
+        k = dt / (self._tilt_rest_sec * (10.0 if tilted else 1.0))
+        self._rest = (self._rest[0] + k * dp, self._rest[1] + k * dr)
         self._last_imu_ns = now_ns
-        if math.hypot(pitch - self._rest[0], roll - self._rest[1]) > self._max_tilt:
-            # Covers the scan in progress and the one after (10 Hz LiDAR).
-            self._tilted_until_ns = now_ns + 200_000_000
+        if tilted:
+            self._tilt_samples.append((now_ns, dp, dr))
+        # Covers the scan in progress and the one before (10 Hz LiDAR).
+        while self._tilt_samples and now_ns - self._tilt_samples[0][0] > 200_000_000:
+            self._tilt_samples.popleft()
+
+    def _mask_floor_hits(self, scan):
+        """Blank the beams that reach the floor while the robot is tilted.
+
+        A beam at bearing a dips by pitch*cos(a) - roll*sin(a) (pitch positive
+        nose-down, roll positive left side up) and meets the floor at
+        lidar_height over that slope; a return that far out is floor.
+        """
+        now_ns = self.get_clock().now().nanoseconds
+        tilts = [(dp, dr) for t, dp, dr in self._tilt_samples if now_ns - t <= 200_000_000]
+        if not tilts:
+            return
+        # The slope is linear in (pitch, roll), so its maximum over the
+        # samples is at one of these four.
+        extremes = {max(tilts), min(tilts), max(tilts, key=lambda v: v[1]), min(tilts, key=lambda v: v[1])}
+        masked = 0
+        for i in range(len(scan.ranges)):
+            r = scan.ranges[i]
+            if not math.isfinite(r):
+                continue
+            a = scan.angle_min + i * scan.angle_increment
+            c, s = math.cos(a), math.sin(a)
+            slope = max(dp * c - dr * s for dp, dr in extremes)
+            # 0.8: the IMU's tilt is a little behind and the floor not quite flat.
+            if slope > 1e-3 and r >= 0.8 * self._lidar_height / slope:
+                scan.ranges[i] = float('inf')
+                masked += 1
+        self._tilt_masked_scans += 1
+        if self._tilt_masked_scans in (1, 10) or self._tilt_masked_scans % 100 == 0:
+            self.get_logger().info(
+                f'robot tilted more than {math.degrees(self._max_tilt):.1f} deg: {masked} floor '
+                f'beam(s) blanked in this scan, {self._tilt_masked_scans} scan(s) so far')
 
     def scan_callback(self, msg):
-        if self._max_tilt > 0.0 and self.get_clock().now().nanoseconds < self._tilted_until_ns:
-            self._tilt_dropped += 1
-            if self._tilt_dropped in (1, 10, 100) or self._tilt_dropped % 1000 == 0:
-                self.get_logger().info(
-                    f'robot tilted more than {math.degrees(self._max_tilt):.1f} deg: '
-                    f'{self._tilt_dropped} scan(s) withheld so far (floor hits)')
-            return
         # Throttle: only process and publish every Nth scan to reduce SLAM message filter queue overflow
         self._scan_counter += 1
         if self._scan_counter < self.publish_every_n:
@@ -694,6 +729,9 @@ class LaserScanNormalizer(Node):
                 f'(target: {self.target_readings})'
             )
         
+        if self._max_tilt > 0.0 and self._tilt_samples:
+            self._mask_floor_hits(normalized_msg)
+
         # Publish the normalized scan
         self.publisher.publish(normalized_msg)
         if self._costmap_publisher is not None:

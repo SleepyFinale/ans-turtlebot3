@@ -20,10 +20,10 @@
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>tf2_msgs</depend>
+  <depend>std_msgs</depend>
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>map_msgs</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>

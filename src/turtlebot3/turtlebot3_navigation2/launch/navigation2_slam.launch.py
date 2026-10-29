@@ -464,11 +464,13 @@ def _generate_nav2_params(
             costmap_node['memory_layer'] = copy.deepcopy(memory_layer)
 
     if use_custom_bt_recovery_tree:
-        # Optional custom BT; baseline mode keeps stock Nav2 behavior tree.
+        # behavior_trees/navigate_to_pose_explore.xml: Nav2's stock tree with
+        # costmap clears that spare the robot's surroundings and shorter
+        # recoveries (see the file's header).
         bt_tree_path = os.path.join(
             get_package_share_directory('turtlebot3_navigation2'),
             'behavior_trees',
-            'navigate_to_pose_w_replanning_and_recovery_with_lethal_escape.xml',
+            'navigate_to_pose_explore.xml',
         )
         bt_nav_params = params.get('bt_navigator', {}).get('ros__parameters', {})
         if isinstance(bt_nav_params, dict):
@@ -921,6 +923,17 @@ def _launch_setup(context):
         f'sensors: ultrasonic={has_ultrasonic} '
         f'({os.path.join(workspace_dir, "config", "sensors", (ns or "robot") + ".yaml")})')))
 
+    # The only cmd_vel publisher: picks stuck_detector's reflexes over Nav2's
+    # behaviors over the controller, and applies the stereo/ultrasonic stop
+    # gates. See src/cmd_vel_mux.cpp.
+    actions.append(Node(
+        package='turtlebot3_navigation2',
+        executable='cmd_vel_mux',
+        name='cmd_vel_mux',
+        namespace=ns if ns else None,
+        output='screen',
+    ))
+
     if enable_startup_map_seeding_str.lower() in ('1', 'true', 'yes'):
         actions.append(Node(
             package='turtlebot3_navigation2',
@@ -931,7 +944,7 @@ def _launch_setup(context):
                 'controller_server_node': 'controller_server',
                 'wait_timeout_sec': float(startup_map_seed_wait_timeout_sec_str),
                 'publish_hz': float(startup_map_seed_publish_hz_str),
-                'cmd_topic': 'cmd_vel',
+                'cmd_topic': 'cmd_vel_reflex',
             }],
             output='screen',
         ))
@@ -1216,7 +1229,7 @@ def _launch_setup(context):
         condition=IfCondition(enable_controller_collision_watch_str),
     ))
 
-    # --- Hard-stop cmd_vel override from ultrasonic hazard clusters ---
+    # --- Ultrasonic stop gate (ultrasonic/forward_block for cmd_vel_mux) ---
     # Keep this as a narrow emergency override; normal avoidance should still
     # come from costmaps and the controller whenever possible.
     actions.append(Node(
@@ -1226,8 +1239,6 @@ def _launch_setup(context):
         namespace=ns if ns else None,
         parameters=[{
             'triangulation_debug_topic': 'ultrasonic_triangulation_debug',
-            'cmd_vel_topic': 'cmd_vel',
-            'publish_hz': 24.0,
             'hold_sec': float(ultrasonic_stop_hold_sec_str),
             'hazard_clusters': [
                 'front_emergency',
@@ -1250,8 +1261,9 @@ def _launch_setup(context):
         condition=IfCondition(enable_ultrasonic_cmd_vel_enforcer_str),
     ))
 
-    # Stereo stop is armed only after a usable calibration file exists.
-    # One bad frame is ignored inside the enforcer (required_streak >= 2).
+    # Stereo stop gate (stereo/forward_block for cmd_vel_mux), armed only
+    # after a usable calibration file exists. One bad frame is ignored inside
+    # the enforcer (required_streak >= 2).
     if stereo_stop_enabled:
         actions.append(Node(
             package='turtlebot3_navigation2',
@@ -1260,8 +1272,6 @@ def _launch_setup(context):
             namespace=ns if ns else None,
             parameters=[{
                 'debug_topic': 'stereo/debug',
-                'cmd_vel_topic': 'cmd_vel',
-                'publish_hz': 20.0,
                 'hold_sec': 0.50,
                 'close_obstacle_m': float(stereo_close_obstacle_m_str),
                 'required_streak': 2,
@@ -1454,10 +1464,10 @@ def generate_launch_description():
                 'front_emergency_replay (stops Nav2 forward commands when cost blinks). '
                 'Recommended true for repeated low-pipe or bag contacts.')),
         DeclareLaunchArgument(
-            'use_custom_bt_recovery_tree', default_value='false',
+            'use_custom_bt_recovery_tree', default_value='true',
             description=(
-                'If true, force custom recovery BT tree override; default false uses '
-                'stock Nav2 tree for baseline-stable behavior.')),
+                'true: behavior_trees/navigate_to_pose_explore.xml (clears spare the '
+                'robot\'s surroundings, short recoveries). false: Nav2\'s stock tree.')),
         DeclareLaunchArgument(
             'ultrasonic_cooperative_mode', default_value='true',
             description=(

@@ -72,13 +72,15 @@ def generate_launch_description():
         DeclareLaunchArgument('use_respawn', default_value='False'),
         DeclareLaunchArgument('log_level', default_value='info'),
 
-        # Nav2's velocity pipeline: controller -> cmd_vel_nav -> smoother -> cmd_vel.
+        # Velocity pipeline: controller -> cmd_vel_nav -> smoother ->
+        # cmd_vel_smoothed, and behaviors -> cmd_vel_behavior. cmd_vel_mux
+        # (navigation2_slam.launch.py) picks one of those or a stuck_detector
+        # reflex and is the only node that publishes cmd_vel.
         server('nav2_controller', 'controller_server', [('cmd_vel', 'cmd_vel_nav')]),
         server('nav2_planner', 'planner_server'),
-        server('nav2_behaviors', 'behavior_server'),
+        server('nav2_behaviors', 'behavior_server', [('cmd_vel', 'cmd_vel_behavior')]),
         server('nav2_bt_navigator', 'bt_navigator'),
-        server('nav2_velocity_smoother', 'velocity_smoother',
-               [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]),
+        server('nav2_velocity_smoother', 'velocity_smoother', [('cmd_vel', 'cmd_vel_nav')]),
         Node(
             package='nav2_lifecycle_manager',
             executable='lifecycle_manager',

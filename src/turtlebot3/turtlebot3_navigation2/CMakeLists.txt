@@ -17,6 +17,7 @@ find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 ################################################################################
 # Build
@@ -31,6 +32,9 @@ rclcpp_components_register_node(stereo_pair_throttle_component
 add_executable(tf_zenoh_relay src/tf_zenoh_relay.cpp)
 ament_target_dependencies(tf_zenoh_relay rclcpp geometry_msgs tf2_msgs)
 
+add_executable(cmd_vel_mux src/cmd_vel_mux.cpp)
+ament_target_dependencies(cmd_vel_mux rclcpp geometry_msgs std_msgs)
+
 ################################################################################
 # Install
 ################################################################################
@@ -41,7 +45,7 @@ install(
   RUNTIME DESTINATION bin
 )
 install(
-  TARGETS tf_zenoh_relay
+  TARGETS tf_zenoh_relay cmd_vel_mux
   DESTINATION lib/${PROJECT_NAME}
 )
 install(
