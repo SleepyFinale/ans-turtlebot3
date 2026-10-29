@@ -11,28 +11,27 @@ backpack picked up off the floor leave the same kind of stale mark.
 
 This node republishes the SLAM map with those stale obstacles removed. For
 every scan (up to max_scan_hz) it traces each beam through the map: cells a
-beam passed through without ending in count one pass; the cell a beam ends
+beam passed through, at least end_margin_m short of where it ended, count one
+pass; the cell a beam ends
 in counts a hit and resets that cell's count. A cell SLAM calls occupied is
 published free once it has been passed through clear_passes times in a row
 and has not been hit for hit_hold_sec. The first hit puts it back.
 
-A beam running nearly along a wall crosses the wall's edge cells without
-ending in them (its hit lands a few cells further along). Counted as passes,
-those beams ate holes into the walls the robot drove beside, and each hole
-opened a frontier onto the unknown space behind. So where the SLAM map shows
-a line (a wall, a closed door), a beam more than max_incidence_deg off the
-line's normal counts only if it ends at least grazing_offset_m off that
-line: a beam that grazes a real wall ends on the same wall further along,
-one through an open door seen edge-on (as the robot saw a door it had just
-driven past) carries on into the room beyond. Blobs and single cells, which have no
-direction, take beams from any side. The line's direction comes from the map's structure
-tensor, computed once per SLAM map. Pose error still erodes the odd cell at
-a wall's end, so a cell next to unknown space is never cleared: that is where
-a hole becomes a frontier.
+A beam only counts as passing a cell if, after it, the beam gets at least
+open_space_m from every SLAM obstacle before it ends. A beam through an open
+door carries on into the room beyond. A beam that only seems to cross a
+solid wall does not: it grazes the wall, or the LiDAR sees the wall a cell
+or two from where SLAM drew it, and either way it ends on that same wall,
+never leaving it. Counted as passes, such beams wore walls away whenever the
+robot drove off and saw them at a shallow angle (an earlier test on the
+wall's direction failed on SLAM's thick, ragged walls), and each hole opened
+a frontier onto the unknown space behind. As a last guard, a cell next to
+unknown space is never cleared: that is where a hole becomes a frontier.
 
 Unknown cells the beams have passed through the same way are published free,
-and unknown cells next to them that beams keep ending in, occupied. SLAM only adds a scan after the robot has moved (minimum_travel_distance), so
-a robot that stops in front of a door that has just opened never fills in the
+and unknown cells next to them that beams keep ending in, occupied. SLAM
+only adds a scan after the robot has moved (minimum_travel_distance), so a
+robot that stops in front of a door that has just opened never fills in the
 space right behind it; that unknown pocket then kept the door cells, which
 border it, from clearing, and the robot stood boxed in for minutes.
 
@@ -95,8 +94,11 @@ class LiveMapFilter(Node):
         self.declare_parameter('clear_max_range_m', 3.5)
         self.declare_parameter('clear_min_range_m', 0.12)
         # A beam counts as passing a cell only up to this short of where it
-        # ended, so a beam grazing an obstacle's edge does not erase it.
-        self.declare_parameter('end_margin_m', 0.10)
+        # ended. The LiDAR often sees a wall a few cm beyond where SLAM drew
+        # it, so beams ended just behind SLAM's wall cells and, at 0.10 m,
+        # wore a solid wall away. Through an open door a beam carries on well
+        # past the door cells.
+        self.declare_parameter('end_margin_m', 0.5)
         self.declare_parameter('clear_passes', 6)
         # Hits in a row an unknown cell needs to be published as an obstacle.
         self.declare_parameter('confirm_hits', 3)
@@ -105,14 +107,10 @@ class LiveMapFilter(Node):
         self.declare_parameter('hit_hold_sec', 8.0)
         # SLAM values at or above this are obstacles.
         self.declare_parameter('occupied_threshold', 65)
-        # Beams through a line-shaped obstacle count only within this angle
-        # of its normal (see module doc).
-        self.declare_parameter('max_incidence_deg', 60.0)
-        # Structure-tensor coherence above which an obstacle is a line.
-        self.declare_parameter('line_coherence', 0.5)
-        self.declare_parameter('grazing_offset_m', 0.15)
+        # See module doc: how far from every obstacle a beam must get, after
+        # a cell, for it to count as passing that cell.
+        self.declare_parameter('open_space_m', 0.2)
         self.declare_parameter('publish_hz', 1.0)
-        self.declare_parameter('max_tf_lag_sec', 0.2)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         ns = self.get_namespace().strip('/')
@@ -126,13 +124,9 @@ class LiveMapFilter(Node):
         self._confirm_hits = max(1, int(p('confirm_hits')))
         self._hit_hold = float(p('hit_hold_sec'))
         self._occ = int(p('occupied_threshold'))
-        self._max_tf_lag = float(p('max_tf_lag_sec'))
-        self._min_cos = math.cos(math.radians(float(p('max_incidence_deg'))))
-        self._line_coherence = float(p('line_coherence'))
-        self._grazing_offset = float(p('grazing_offset_m'))
-        # Per cell of a line-shaped obstacle: its unit normal; (0, 0) elsewhere.
-        self._normal_x = None
-        self._normal_y = None
+        self._open_m = float(p('open_space_m'))
+        # Per cell: distance (m) to the nearest SLAM obstacle.
+        self._clearance = None
 
         self._map = None          # latest SLAM OccupancyGrid
         self._grid = None         # its data as int8 (h, w)
@@ -143,6 +137,7 @@ class LiveMapFilter(Node):
         self._last_hit = None
         self._dirty = False
         self._last_scan = 0.0
+        self._pending = None      # scan waiting for its pose (see _on_scan)
         self._cleared_logged = 0
         # Times are kept relative to start: float32 cannot hold epoch seconds.
         self._t0 = self.get_clock().now().nanoseconds * 1e-9
@@ -182,22 +177,9 @@ class LiveMapFilter(Node):
             self._passes, self._hits, self._last_hit = self._realign(old.info, msg.info)
         self._map = msg
         self._grid = grid
-        self._normal_x, self._normal_y = self._line_normals(grid)
+        self._clearance = cv2.distanceTransform(
+            (grid < self._occ).astype(np.uint8), cv2.DIST_L2, 3) * msg.info.resolution
         self._dirty = True
-
-    def _line_normals(self, grid):
-        occ = (grid >= self._occ).astype(np.float32)
-        gx = cv2.Sobel(occ, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(occ, cv2.CV_32F, 0, 1, ksize=3)
-        jxx = cv2.GaussianBlur(gx * gx, (5, 5), 1.0)
-        jyy = cv2.GaussianBlur(gy * gy, (5, 5), 1.0)
-        jxy = cv2.GaussianBlur(gx * gy, (5, 5), 1.0)
-        diff = jxx - jyy
-        coherence = np.sqrt(diff * diff + 4.0 * jxy * jxy) / (jxx + jyy + 1e-6)
-        theta = 0.5 * np.arctan2(2.0 * jxy, diff)
-        line = (occ > 0) & (coherence > self._line_coherence)
-        return (np.where(line, np.cos(theta), 0.0).astype(np.float32),
-                np.where(line, np.sin(theta), 0.0).astype(np.float32))
 
     def _realign(self, old, new):
         """Carry the evidence over when SLAM grows or moves the grid."""
@@ -224,14 +206,28 @@ class LiveMapFilter(Node):
     def _on_scan(self, raw: bytes) -> None:
         if self._map is None:
             return
+        # A scan is traced one scan later, with the pose at its own stamp.
+        # When it arrives, the newest map -> base transform is usually a few
+        # ms older than it, and with the TF listener on this node's thread a
+        # lookup timeout cannot wait for a newer one. Tracing with the newest
+        # pose instead was up to 0.2 s off: turning at 1 rad/s that is 11
+        # degrees, 40 cm at 2 m, and beams swept straight through walls.
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            try:
+                tf = self._tf.lookup_transform(
+                    self._map_frame, pending.header.frame_id, Time.from_msg(pending.header.stamp))
+            except TransformException:
+                tf = None
+            if tf is not None:
+                self._trace(pending, tf)
         now = self._now()
-        if now - self._last_scan < self._min_scan_period:
-            return
-        msg = deserialize_message(raw, LaserScan)
-        tf = self._scan_pose(msg)
-        if tf is None:
-            return
-        self._last_scan = now
+        if now - self._last_scan >= self._min_scan_period:
+            self._last_scan = now
+            self._pending = deserialize_message(raw, LaserScan)
+
+    def _trace(self, msg: LaserScan, tf) -> None:
+        now = self._now()
         t = tf.transform
         px, py, yaw = t.translation.x, t.translation.y, _yaw(t.rotation)
 
@@ -249,29 +245,27 @@ class LiveMapFilter(Node):
         h, w = self._passes.shape
         c, s = np.cos(a), np.sin(a)
 
-        # Passed cells: samples every half cell from clear_min to the beam's
-        # end minus the margin (or clear_max).
-        length = np.minimum(r - self._end_margin, self._clear_max)
+        # Samples every half cell from clear_min to where the beam ended (or
+        # clear_max), each with its distance to the nearest SLAM obstacle.
         d = np.arange(self._clear_min, self._clear_max, 0.5 * res, dtype=np.float32)
-        along = d[None, :] < length[:, None]
-        xs = (px + c[:, None] * d[None, :])[along]
-        ys = (py + s[:, None] * d[None, :])[along]
-        bc = np.broadcast_to(c[:, None], along.shape)[along]
-        bs = np.broadcast_to(s[:, None], along.shape)[along]
-        beyond = (r[:, None] - d[None, :])[along]
-        pj = np.floor((xs - ox) / res).astype(np.int64)
-        pi = np.floor((ys - oy) / res).astype(np.int64)
+        inside = d[None, :] < np.minimum(r, self._clear_max)[:, None]
+        pj = np.floor((px + c[:, None] * d[None, :] - ox) / res).astype(np.int64)
+        pi = np.floor((py + s[:, None] * d[None, :] - oy) / res).astype(np.int64)
         inb = (pi >= 0) & (pi < h) & (pj >= 0) & (pj < w)
-        flat = pi[inb] * w + pj[inb]
-        # Drop samples that cross a line-shaped obstacle at a grazing angle.
-        nx = self._normal_x.reshape(-1)[flat]
-        ny = self._normal_y.reshape(-1)[flat]
-        on_line = (nx != 0.0) | (ny != 0.0)
-        cos_inc = np.abs(bc[inb] * nx + bs[inb] * ny)
-        steep = cos_inc >= self._min_cos
-        # How far off the line the beam ends.
-        through = beyond[inb] * cos_inc >= self._grazing_offset
-        passed = np.unique(flat[~on_line | steep | through])
+        flat = np.where(inb, pi * w + pj, 0)
+        # Off the map counts as open space.
+        dist = np.where(inb, self._clearance.reshape(-1)[flat], 1e3)
+        dist[~inside] = 0.0
+        # Furthest the beam gets from any obstacle from each sample on.
+        ahead = np.maximum.accumulate(dist[:, ::-1], axis=1)[:, ::-1]
+        # A pass needs the beam to end end_margin_m further on and, before
+        # that, to reach open space (see module doc).
+        passing = (
+            inb & inside
+            & (d[None, :] < (r - self._end_margin)[:, None])
+            & (ahead >= self._open_m)
+        )
+        passed = np.unique(flat[passing])
 
         # Hit cells: where beams within clear_max ended.
         near = r <= self._clear_max
@@ -290,28 +284,6 @@ class LiveMapFilter(Node):
         flat_n[passed] = 0
         flat_n[hit] = np.minimum(flat_n[hit].astype(np.int16) + 1, 255).astype(np.uint8)
         self._dirty = True
-
-    def _scan_pose(self, msg: LaserScan):
-        """Transform map <- scan frame at the scan's stamp, or the newest one
-        if that is at most max_tf_lag_sec older.
-
-        A scan is usually stamped a few ms after the newest map -> base
-        transform, and with the TF listener on this node's own thread a
-        timeout cannot wait for it: 99% of lookups at the scan stamp failed
-        ("extrapolation into the future") and the filter traced almost
-        nothing. At 0.22 m/s, 0.2 s is 4 cm.
-        """
-        stamp = Time.from_msg(msg.header.stamp)
-        try:
-            return self._tf.lookup_transform(self._map_frame, msg.header.frame_id, stamp)
-        except TransformException:
-            pass
-        try:
-            tf = self._tf.lookup_transform(self._map_frame, msg.header.frame_id, Time())
-        except TransformException:
-            return None
-        lag = (stamp - Time.from_msg(tf.header.stamp)).nanoseconds * 1e-9
-        return tf if abs(lag) <= self._max_tf_lag else None
 
     # --- output ---------------------------------------------------------
     def _publish(self) -> None:
