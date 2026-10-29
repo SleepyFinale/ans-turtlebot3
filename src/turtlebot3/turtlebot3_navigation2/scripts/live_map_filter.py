@@ -61,6 +61,8 @@ from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from rclpy_lean import lean_events
+
 MAP_QOS = QoSProfile(
     depth=1,
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -81,6 +83,7 @@ def _yaw(q) -> float:
 class LiveMapFilter(Node):
     def __init__(self) -> None:
         super().__init__('live_map_filter', start_parameter_services=False)
+        lean_events(self)
         self.declare_parameter('map_frame', '')
         self.declare_parameter('map_topic', 'map')
         self.declare_parameter('scan_topic', 'scan_normalized')

@@ -24,10 +24,13 @@ from collections import deque
 from collections import Counter
 from statistics import median
 
+from rclpy_lean import lean_events
+
 
 class LaserScanNormalizer(Node):
     def __init__(self):
         super().__init__('laser_scan_normalizer')
+        lean_events(self)
 
         # Scan-shape normalization parameters.
         # The fixed target is still kept as a fallback in case startup scans are

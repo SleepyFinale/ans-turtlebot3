@@ -67,6 +67,7 @@ install(
     scripts/orca_shadow_advisor.py
     scripts/standalone_world_map_tf.py
     scripts/stereo_common.py
+    scripts/rclpy_lean.py
     scripts/stereo_calibrate.py
     scripts/stereo_refine_extrinsics.py
     scripts/stereo_fit_floor.py

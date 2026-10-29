@@ -39,6 +39,8 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from rclpy_lean import lean_events
+
 
 def _yaw(q) -> float:
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
@@ -49,6 +51,7 @@ class LowObstacleMemory(Node):
         # rclpy's executor costs a few ms per wake-up on the Pi for every
         # entity it waits on; the parameter services are not needed here.
         super().__init__('low_obstacle_memory', start_parameter_services=False)
+        lean_events(self)
         self.declare_parameter('map_frame', '')
         self.declare_parameter('base_frame', '')
         self.declare_parameter('mark_scan_topic', 'stereo_blob_scan')

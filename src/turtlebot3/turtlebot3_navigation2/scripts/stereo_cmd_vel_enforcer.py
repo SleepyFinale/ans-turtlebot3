@@ -20,10 +20,13 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
+from rclpy_lean import lean_events
+
 
 class StereoCmdVelEnforcer(Node):
     def __init__(self) -> None:
         super().__init__('stereo_cmd_vel_enforcer')
+        lean_events(self)
         self.declare_parameter('debug_topic', 'stereo/debug')
         self.declare_parameter('gate_topic', 'stereo/forward_block')
         self.declare_parameter('publish_hz', 10.0)
