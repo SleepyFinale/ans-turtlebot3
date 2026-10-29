@@ -20,6 +20,9 @@ Reports:
 - time with no goal at all (the explorer between goals). Action status
   topics are hidden: without --include-hidden-topics the bag has none, and
   every stretch standing still is listed instead;
+- route flips: consecutive plans to the same goal whose first 2 m differ
+  by more than 0.3 m (the planner switching sides around an obstacle; needs
+  /<robot>/plan in the bag);
 - stuck_detector events and collision_resolver verdicts, by kind.
 """
 
@@ -47,6 +50,35 @@ def read_bag(path):
         yield topic, deserialize_message(data, classes[topic]), t_ns * 1e-9
 
 
+def _prefix(pts, length=2.0):
+    """The first `length` metres of a path, resampled every 0.1 m."""
+    out, travelled = [pts[0]], 0.0
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        travelled += math.hypot(bx - ax, by - ay)
+        if travelled >= 0.1 * len(out):
+            out.append((bx, by))
+        if travelled >= length:
+            break
+    return out
+
+
+def route_flips(plans, goal_tol=0.3, flip_m=0.3):
+    """(flips, comparisons) between consecutive plans to the same goal.
+
+    A flip: some point of the new plan's first 2 m is more than flip_m from
+    every point of the previous plan, i.e. the route around something changed
+    side, not just its start moving with the robot.
+    """
+    flips = compared = 0
+    for (_ta, a), (_tb, b) in zip(plans, plans[1:]):
+        if math.hypot(a[-1][0] - b[-1][0], a[-1][1] - b[-1][1]) > goal_tol:
+            continue  # a new goal
+        compared += 1
+        if max(min(math.hypot(px - qx, py - qy) for qx, qy in a) for px, py in _prefix(b)) > flip_m:
+            flips += 1
+    return flips, compared
+
+
 def spans(flags, times, min_len):
     """[(start, end)] of runs where flags is true, at least min_len long."""
     out, start = [], None
@@ -70,7 +102,7 @@ def main():
     ap.add_argument('--idle-min-sec', type=float, default=3.0)
     args = ap.parse_args()
 
-    cmd, odom, goal_active = [], [], []
+    cmd, odom, goal_active, plans = [], [], [], []
     stuck, diag, mux = Counter(), Counter(), Counter()
     for topic, msg, t in read_bag(args.bag):
         if topic.endswith('/cmd_vel'):
@@ -91,6 +123,10 @@ def main():
                 diag[json.loads(msg.data).get('verdict')] += 1
             except ValueError:
                 pass
+        elif topic.endswith('/plan'):
+            pts = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
+            if pts:
+                plans.append((t, pts))
         elif topic.endswith('cmd_vel_mux/active'):
             mux[msg.data] += 1
 
@@ -121,6 +157,24 @@ def main():
         print(f'  drive reversals within {args.flip_window_sec:.1f} s: {lin_flips} '
               f'({lin_flips / max(minutes, 1e-6):.1f}/min); turn reversals: {ang_flips} '
               f'({ang_flips / max(minutes, 1e-6):.1f}/min)')
+
+    # --- how the time was spent (measured motion, odom) --------------------
+    kinds = Counter()
+    dist = 0.0
+    for (ta, va, wa), (tb, _vb, _wb) in zip(odom, odom[1:]):
+        dt = min(tb - ta, 0.5)
+        dist += va * dt
+        if va >= 0.18:
+            kinds['full speed (>=0.18 m/s)'] += dt
+        elif va >= 0.05:
+            kinds['slowed (0.05-0.18 m/s)'] += dt
+        elif wa >= 0.2:
+            kinds['turning in place'] += dt
+        else:
+            kinds['stopped'] += dt
+    total = sum(kinds.values())
+    print(f'distance driven {dist:.1f} m, mean {dist / max(total, 1e-6):.2f} m/s; time: ' + ', '.join(
+        f'{k} {v:.0f} s ({100 * v / max(total, 1e-6):.0f}%)' for k, v in kinds.most_common()))
 
     # --- idle ------------------------------------------------------------
     times = [o[0] for o in odom]
@@ -155,6 +209,12 @@ def main():
         print(f'no goal (explorer between goals, >= {args.idle_min_sec:.0f} s): {nog:.0f} s in {len(no_goal)} spans')
     for a, b in sorted(no_goal, key=lambda s: s[0] - s[1])[:5]:
         print(f'  {b - a:5.1f} s at t+{a - t0:.0f}')
+
+    if plans:
+        flips, compared = route_flips(plans)
+        minutes = (t1 - t0) / 60.0
+        print(f'plans: {len(plans)}; route flips (first 2 m moved > 0.3 m from the previous plan, '
+              f'same goal): {flips} of {compared} ({flips / max(minutes, 1e-6):.1f}/min)')
 
     if stuck:
         print('stuck_detector events: ' + ', '.join(f'{k}={v}' for k, v in stuck.most_common()))

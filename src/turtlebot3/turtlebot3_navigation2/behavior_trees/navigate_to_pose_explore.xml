@@ -1,8 +1,15 @@
 <!--
   NavigateToPose for frontier exploration (the robot's default tree).
 
-  Nav2's navigate_to_pose_w_replanning_and_recovery.xml with three changes:
+  Nav2's navigate_to_pose_w_replanning_and_recovery.xml with four changes:
 
+  - The path is kept while it stays valid (IsPathValid: nothing lethal or
+    inscribed on it in the global costmap) and the goal is unchanged, and
+    replanned only otherwise. Replanning from scratch every second, the
+    planner flipped between near-equal routes (left or right of an obstacle)
+    as the robot turned, so it turned toward one, then the other, and stayed
+    where it was. A new obstacle on the path, including a low obstacle the
+    memory confirms, still forces a replan.
   - Costmap clears keep the 1 m square around the robot
     (ClearCostmapExceptRegion, reset_distance 1.0). In Humble every
     obstacle-type layer is clearable, including the stereo layer and the
@@ -21,11 +28,19 @@
     <RecoveryNode number_of_retries="4" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
-          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
-            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-            <ClearCostmapExceptRegion name="ClearGlobalCostmap-Context"
-              service_name="global_costmap/clear_except_global_costmap" reset_distance="1.0"/>
-          </RecoveryNode>
+          <Fallback name="KeepValidPath">
+            <ReactiveSequence>
+              <Inverter>
+                <GlobalUpdatedGoal/>
+              </Inverter>
+              <IsPathValid path="{path}"/>
+            </ReactiveSequence>
+            <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+              <ClearCostmapExceptRegion name="ClearGlobalCostmap-Context"
+                service_name="global_costmap/clear_except_global_costmap" reset_distance="1.0"/>
+            </RecoveryNode>
+          </Fallback>
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="FollowPath"/>

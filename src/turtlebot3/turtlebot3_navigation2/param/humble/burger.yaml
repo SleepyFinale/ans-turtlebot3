@@ -33,6 +33,8 @@ bt_navigator:
     - nav2_is_stuck_condition_bt_node
     - nav2_goal_reached_condition_bt_node
     - nav2_goal_updated_condition_bt_node
+    - nav2_globally_updated_goal_condition_bt_node
+    - nav2_is_path_valid_condition_bt_node
     - nav2_initial_pose_received_condition_bt_node
     - nav2_reinitialize_global_localization_service_bt_node
     - nav2_rate_controller_bt_node
@@ -100,7 +102,9 @@ controller_server:
       min_lookahead_dist: 0.35
       max_lookahead_dist: 0.55
       lookahead_time: 1.8
-      rotate_to_heading_angular_vel: 1.0
+      # 1.4 of the Burger's 2.8 rad/s. At 1.0, turning in place was 11% of
+      # an exploration run; faster smears LiDAR scans for SLAM.
+      rotate_to_heading_angular_vel: 1.4
       # map->odom can lag under Pi load; a wider window avoids extrapolation
       # aborts (paired with the costmaps' transform_tolerance).
       transform_tolerance: 4.0
@@ -119,12 +123,16 @@ controller_server:
       # Slows down where the local costmap's inflation is high, i.e. close
       # to obstacles, so a grazing approach has time to be corrected.
       use_cost_regulated_linear_velocity_scaling: true
-      cost_scaling_dist: 0.4
+      # Slows down within this distance (robot centre to obstacle). At 0.4 m
+      # Inky drove slowed half of a run in a furnished room, at 0.08 m/s on
+      # average against 0.22 m/s; 0.3 m still slows the last ~15 cm of body
+      # clearance.
+      cost_scaling_dist: 0.3
       cost_scaling_gain: 1.0
       # Must equal local_costmap inflation_layer.cost_scaling_factor.
       inflation_cost_scaling_factor: 4.0
-      regulated_linear_scaling_min_radius: 0.75
-      regulated_linear_scaling_min_speed: 0.12
+      regulated_linear_scaling_min_radius: 0.6
+      regulated_linear_scaling_min_speed: 0.15
       use_rotate_to_heading: true
       # ~30 deg. Lower values make the robot spin in place on ordinary curves;
       # SimpleProgressChecker does not count rotation as movement.
