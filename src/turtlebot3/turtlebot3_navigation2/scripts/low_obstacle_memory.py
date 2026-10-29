@@ -67,11 +67,14 @@ class LowObstacleMemory(Node):
         self.declare_parameter('extrude_m', 0.15)
         # Same as the costmap's stereo_clear_min_range (navigation2_slam.launch.py).
         self.declare_parameter('clear_min_range_m', 0.35)
-        # Memory is for what the robot passed recently, not a map: a false
-        # stereo mark that outlives the moment can wall the robot in, because
-        # Nav2's costmap clears no longer remove it.
-        self.declare_parameter('mark_ttl_sec', 120.0)
-        self.declare_parameter('bump_ttl_sec', 180.0)
+        # How long a cell is kept without being seen again. At 2-3 minutes a
+        # robot coming back to a room it had explored planned straight through
+        # the boxes and chair feet it had found there, and found them again by
+        # hitting them. A moved object is still forgotten as soon as stereo
+        # sees floor through it (stereo_clear_scan), and a false mark when
+        # collision_resolver finds no sensor that explains it (memory/forget).
+        self.declare_parameter('mark_ttl_sec', 1200.0)
+        self.declare_parameter('bump_ttl_sec', 1200.0)
         # A stereo cell is remembered only after this many separate scans
         # mark it within confirm_window_sec. Single flickers are dropped.
         self.declare_parameter('confirm_scans', 2)
@@ -93,7 +96,7 @@ class LowObstacleMemory(Node):
         # the artefacts above were at the band's far edge (~1 m).
         self.declare_parameter('near_confirm_m', 0.6)
         self.declare_parameter('near_confirm_scans', 3)
-        self.declare_parameter('max_cells', 4000)
+        self.declare_parameter('max_cells', 10000)
         # Only cells right under the robot are left out of the cloud. Low
         # objects closer than ~0.40 m are invisible to stereo and below the
         # LiDAR, so this memory is the only thing that still knows they are

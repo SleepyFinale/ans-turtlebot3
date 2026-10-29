@@ -50,8 +50,10 @@ unset _tf2_fix_lib
 # Bringup/SLAM must share this domain with the Zenoh robot bridge.
 _ros_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "${_ros_env_dir}/ros_domain_profile.bash" ]; then
+  # Pass an explicit empty name: a sourced file sees the caller's positional
+  # arguments, so a script run as `foo.sh run3` set the domain for robot "run3".
   # shellcheck disable=SC1091
-  source "${_ros_env_dir}/ros_domain_profile.bash"
+  source "${_ros_env_dir}/ros_domain_profile.bash" ""
 fi
 unset _ros_env_dir
 

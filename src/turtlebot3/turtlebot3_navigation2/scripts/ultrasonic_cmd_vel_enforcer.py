@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Publish zero ``cmd_vel`` while ultrasonic hazard clusters are active.
+"""Block forward motion while ultrasonic hazard clusters are active.
 
 This is intentionally narrow in scope: it is an emergency stop overlay, not a
-full obstacle-avoidance controller. Normal path tracking should still come from
-Nav2; this helper only clamps motion when close-range ultrasonic evidence says
-the robot should not keep driving forward.
+full obstacle-avoidance controller. Normal path tracking still comes from Nav2;
+this helper publishes ultrasonic/forward_block (Bool) and cmd_vel_mux clamps
+Nav2's forward speed while it is true.
 """
 
 import json
 from typing import Optional, Set
 
 import rclpy
-from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 
 class UltrasonicCmdVelEnforcer(Node):
@@ -21,8 +20,8 @@ class UltrasonicCmdVelEnforcer(Node):
         super().__init__('ultrasonic_cmd_vel_enforcer')
 
         self.declare_parameter('triangulation_debug_topic', 'ultrasonic_triangulation_debug')
-        self.declare_parameter('cmd_vel_topic', 'cmd_vel')
-        self.declare_parameter('publish_hz', 20.0)
+        self.declare_parameter('gate_topic', 'ultrasonic/forward_block')
+        self.declare_parameter('publish_hz', 10.0)
         self.declare_parameter('hold_sec', 0.7)
         self.declare_parameter(
             'hazard_clusters',
@@ -52,7 +51,7 @@ class UltrasonicCmdVelEnforcer(Node):
         self.declare_parameter('guarded_stop_max_blob_dist_m', 0.32)
 
         tri_topic = str(self.get_parameter('triangulation_debug_topic').value)
-        self._cmd_vel_topic = str(self.get_parameter('cmd_vel_topic').value)
+        gate_topic = str(self.get_parameter('gate_topic').value)
         self._publish_hz = max(2.0, float(self.get_parameter('publish_hz').value))
         self._hold_sec = max(0.0, float(self.get_parameter('hold_sec').value))
         self._hazard_clusters: Set[str] = {
@@ -75,11 +74,11 @@ class UltrasonicCmdVelEnforcer(Node):
         # Consume the triangulation debug stream because it already classifies
         # hazards into cluster labels the rest of the stack understands.
         self.create_subscription(String, tri_topic, self._on_triangulation_debug, 20)
-        self._pub = self.create_publisher(Twist, self._cmd_vel_topic, 20)
+        self._pub = self.create_publisher(Bool, gate_topic, 10)
         self.create_timer(1.0 / self._publish_hz, self._tick)
 
         self.get_logger().info(
-            f'Ultrasonic cmd_vel enforcer started: topic={self._cmd_vel_topic} hold_sec={self._hold_sec:.2f} '
+            f'Ultrasonic stop gate started: topic={gate_topic} hold_sec={self._hold_sec:.2f} '
             f'hazard_clusters={sorted(self._hazard_clusters)}'
         )
 
@@ -122,9 +121,8 @@ class UltrasonicCmdVelEnforcer(Node):
             self._last_hazard_time_s is not None
             and (now_s - self._last_hazard_time_s) <= self._hold_sec
         )
-        if active:
-            # Hard stop override: repeatedly publish zero twist while hazard active.
-            self._pub.publish(Twist())
+        if active or self._last_state:
+            self._pub.publish(Bool(data=active))
         if self._last_state is None or self._last_state != active:
             self.get_logger().info(
                 f'ultrasonic_stop_active={active} cluster={self._last_cluster or "unknown"}'
