@@ -17,6 +17,8 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import UInt8MultiArray
 
+from rclpy_lean import lean_events
+
 MAP_QOS = QoSProfile(
     depth=1,
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -27,6 +29,7 @@ MAP_QOS = QoSProfile(
 class MapWireCompressedRepublisher(Node):
     def __init__(self):
         super().__init__('map_wire_compressed_republisher')
+        lean_events(self)
         self.declare_parameter('input_topic', 'map')
         self.declare_parameter('output_topic', 'map_wire_z')
         self.declare_parameter('max_publish_hz', 1.0)

@@ -474,7 +474,10 @@ def _generate_nav2_params(
         )
         bt_nav_params = params.get('bt_navigator', {}).get('ros__parameters', {})
         if isinstance(bt_nav_params, dict):
-            bt_nav_params['default_bt_xml_filename'] = bt_tree_path
+            # Humble reads default_nav_to_pose_bt_xml; the older
+            # default_bt_xml_filename is ignored without a warning, and this
+            # tree never ran while it was set under that name.
+            bt_nav_params['default_nav_to_pose_bt_xml'] = bt_tree_path
 
     fd, path = tempfile.mkstemp(suffix='.yaml', prefix='nav2_params_')
     with os.fdopen(fd, 'w') as f:
@@ -1279,6 +1282,17 @@ def _launch_setup(context):
             output='screen',
         ))
 
+    def helper_scan_params(check: bool) -> dict:
+        # Python helpers read the 5 Hz costmap copy of the scan when there is
+        # one: they use at most 5 scans a second, and every message received
+        # wakes rclpy's executor (about 1 ms on the Pi) even if it is dropped.
+        if not costmap_scan_relay:
+            return {}
+        out = {'scan_topic': 'scan_costmap'}
+        if check:
+            out['check_every_n_scans'] = 1
+        return out
+
     # Stuck detection: cmd_vel vs wheels, wheels vs LiDAR / stereo VO, turn
     # vs gyro. A stall or slip publishes bump_points for the memory below.
     if stuck_detector_enabled:
@@ -1288,6 +1302,7 @@ def _launch_setup(context):
             name='stuck_detector',
             additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
             namespace=ns if ns else None,
+            parameters=[helper_scan_params(check=True)],
             output='screen',
         ))
     if stuck_snapshot_enabled:
@@ -1325,6 +1340,7 @@ def _launch_setup(context):
             name='live_map_filter',
             additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
             namespace=ns if ns else None,
+            parameters=[helper_scan_params(check=False)],
             remappings=tf_remappings,
             output='screen',
         ))

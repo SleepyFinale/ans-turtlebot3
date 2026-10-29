@@ -20,6 +20,8 @@ from sensor_msgs.msg import LaserScan, Range
 from std_msgs.msg import String
 import tf2_ros
 
+from rclpy_lean import lean_events
+
 
 def _stamp_to_s(stamp) -> float:
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
@@ -32,6 +34,7 @@ def _yaw_delta(a: float, b: float) -> float:
 class UltrasonicTriangulationBlob(Node):
     def __init__(self) -> None:
         super().__init__('ultrasonic_triangulation_blob')
+        lean_events(self)
 
         # Detection gating and blob-shape parameters.
         self.declare_parameter('range_topics', ['ultrasonic_l', 'ultrasonic_f', 'ultrasonic_r'])

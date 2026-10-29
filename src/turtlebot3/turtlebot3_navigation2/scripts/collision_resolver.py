@@ -56,6 +56,8 @@ from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Float32, Header, String
 
+from rclpy_lean import goal_statuses, lean_events
+
 LETHAL = 100  # nav2 publishes cost 254 as 100 in the OccupancyGrid
 
 
@@ -80,6 +82,7 @@ def _near(cells: np.ndarray, pts: np.ndarray, tol: float) -> np.ndarray:
 class CollisionResolver(Node):
     def __init__(self) -> None:
         super().__init__('collision_resolver', start_parameter_services=False)
+        lean_events(self)
         self.declare_parameter('lidar_x_m', -0.032)
         # Lethal cells looked at: ahead of the axle up to ahead_m within
         # half_width_m of the centre line, or anywhere within around_m
@@ -130,8 +133,11 @@ class CollisionResolver(Node):
         self.create_subscription(OccupancyGrid, 'local_costmap/costmap', self._on_grid, latched)
         self.create_subscription(
             OccupancyGridUpdate, 'local_costmap/costmap_updates', self._on_grid_update, 10)
+        # Status arrays are read raw (rclpy_lean.goal_statuses): Nav2 keeps
+        # every finished goal for 15 minutes, and follow_path gets a new goal
+        # with every replan.
         self.create_subscription(
-            GoalStatusArray, 'follow_path/_action/status', self._on_follow_status, 10)
+            GoalStatusArray, 'follow_path/_action/status', self._on_follow_status, 10, raw=True)
         self._reflex_active = False
         self._reflex_end_t = -1e9  # when the last reflex stopped (monotonic)
         self.create_subscription(Bool, 'stuck/reflex_active', self._on_reflex_active, 5)
@@ -141,9 +147,9 @@ class CollisionResolver(Node):
         for name in ('spin', 'backup', 'wait'):
             self.create_subscription(
                 GoalStatusArray, f'{name}/_action/status',
-                lambda m, n=name: self._behaviors.__setitem__(n, any(
-                    st.status in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
-                    for st in m.status_list)), 5)
+                lambda raw, n=name: self._behaviors.__setitem__(n, any(
+                    st in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
+                    for _uuid, st in goal_statuses(raw))), 5, raw=True)
         self._seen_aborts = set()
 
         self._forget_pub = self.create_publisher(PointCloud2, 'memory/forget', 5)
@@ -187,21 +193,21 @@ class CollisionResolver(Node):
         self._grids.append((time.monotonic(), grid, meta))
 
     # --- trigger ------------------------------------------------------------
-    def _on_follow_status(self, msg: GoalStatusArray) -> None:
+    def _on_follow_status(self, raw: bytes) -> None:
         # A new path replaces the running follow_path goal, and the replaced
         # one is reported ABORTED with its successor already active in the
         # same status array. Only an abort with nothing else running is the
         # controller giving up.
-        if any(st.status in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
-               for st in msg.status_list):
-            for st in msg.status_list:
-                if st.status == GoalStatus.STATUS_ABORTED:
-                    self._seen_aborts.add(bytes(st.goal_info.goal_id.uuid))
+        statuses = goal_statuses(raw)
+        if any(st in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
+               for _key, st in statuses):
+            for key, st in statuses:
+                if st == GoalStatus.STATUS_ABORTED:
+                    self._seen_aborts.add(key)
             return
-        for st in msg.status_list:
-            if st.status != GoalStatus.STATUS_ABORTED:
+        for key, st in statuses:
+            if st != GoalStatus.STATUS_ABORTED:
                 continue
-            key = bytes(st.goal_info.goal_id.uuid)
             if key in self._seen_aborts:
                 continue
             self._seen_aborts.add(key)

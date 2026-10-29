@@ -10,10 +10,9 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_footprint
     odom_topic: odom
-    # Nav2's stock tree; the launch replaces it with
-    # behavior_trees/navigate_to_pose_explore.xml unless
-    # use_custom_bt_recovery_tree:=false.
-    default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
+    # default_nav_to_pose_bt_xml is set by the launch to
+    # behavior_trees/navigate_to_pose_explore.xml (Nav2's stock tree with
+    # use_custom_bt_recovery_tree:=false).
     # Reduce BT tick pressure on the Pi (default 10 ms).
     bt_loop_duration: 100
     # Milliseconds. The upstream 20 ms produced false "acknowledge goal" /
@@ -108,7 +107,13 @@ controller_server:
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
-      max_allowed_time_to_collision_up_to_carrot: 1.0
+      # How far ahead (s) the current arc is checked for collision. At 1.0 s
+      # (22 cm at full speed) arcs the next tick would have straightened
+      # stopped the robot beside chair legs and box corners: 300 "collision
+      # ahead" in one run, most with the obstacle 0.17 m to the side. 0.7 s
+      # still looks 8-15 cm ahead at the slowed speeds near obstacles; the
+      # Burger stops within about a centimetre.
+      max_allowed_time_to_collision_up_to_carrot: 0.7
       use_collision_detection: true
       use_regulated_linear_velocity_scaling: true
       # Slows down where the local costmap's inflation is high, i.e. close

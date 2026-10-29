@@ -63,17 +63,27 @@ def _calibration_focus(path: str):
     return out[0], out[1]
 
 
-def _focus_command(devices_and_focus):
-    """One shell step that locks focus on each camera before its driver opens it.
+def _prepare_command(devices_and_focus):
+    """One shell step that readies each camera before its driver opens it.
 
     UVC cameras time out (and can wedge until a USB reset) when controls are
     written while the driver is starting, so this runs alone and the camera
     nodes start after it exits. focus_absolute is ignored while autofocus is
     on, and v4l2_camera writes focus_absolute before autofocus, so autofocus
     has to be off already when the node starts.
+
+    It also waits until each camera answers a query, then a second more. A
+    camera that had just been touched (the focus writes, USB autosuspend)
+    refused the driver's open with "Device or resource busy" in three of six
+    launches on Inky, and v4l2_camera never retries: stereo then ran on one
+    camera for the whole run.
     """
     steps = []
     for device, focus in devices_and_focus:
+        steps.append(
+            f'for i in $(seq 1 25); do v4l2-ctl -d {device} --get-fmt-video >/dev/null 2>&1 && break; '
+            f'sleep 0.2; done'
+        )
         if focus is None:
             continue
         steps.append(
@@ -81,8 +91,7 @@ def _focus_command(devices_and_focus):
             f'timeout 5 v4l2-ctl -d {device} -c focus_absolute={int(focus)} || '
             f'echo "could not lock focus on {device}; it stays on autofocus" >&2'
         )
-    if not steps:
-        return None
+    steps.append('sleep 1')
     return ExecuteProcess(cmd=['bash', '-c', '; '.join(steps)], output='screen')
 
 
@@ -205,7 +214,7 @@ def _setup(context):
             output='screen',
         ),
     ]
-    focus = _focus_command([(left_dev, left_focus), (right_dev, right_focus)])
+    prepare = _prepare_command([(left_dev, left_focus), (right_dev, right_focus)])
     info = LogInfo(msg=(
         f'stereo: left={left_dev} ({left_cam["card"]}) '
         f'right={right_dev} ({right_cam["card"]}) '
@@ -214,12 +223,10 @@ def _setup(context):
         f'focus={left_focus if left_focus is not None else "auto"}/'
         f'{right_focus if right_focus is not None else "auto"}'
     ))
-    if focus is None:
-        return [info, *nodes]
     return [
         info,
-        focus,
-        RegisterEventHandler(OnProcessExit(target_action=focus, on_exit=nodes)),
+        prepare,
+        RegisterEventHandler(OnProcessExit(target_action=prepare, on_exit=nodes)),
     ]
 
 

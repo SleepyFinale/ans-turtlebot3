@@ -42,6 +42,8 @@ from sensor_msgs.msg import Imu, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Float32, Header, String
 
+from rclpy_lean import goal_statuses, lean_events
+
 
 def _stamp(msg) -> float:
     return msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
@@ -67,6 +69,7 @@ class StuckDetector(Node):
         # rclpy's executor costs a few ms per wake-up on the Pi for every
         # entity it waits on; the parameter services are not needed here.
         super().__init__('stuck_detector', start_parameter_services=False)
+        lean_events(self)
         # What the base is told (cmd_vel_mux output) and where reflexes go:
         # a mux input that outranks Nav2, so a reflex is never interleaved
         # with the controller's commands.
@@ -75,6 +78,10 @@ class StuckDetector(Node):
         self.declare_parameter('wheel_odom_topic', 'odom/wheel')
         self.declare_parameter('visual_odom_topic', 'odom/visual')
         self.declare_parameter('scan_topic', 'scan')
+        # Checks run on every Nth scan: 2 for the 10 Hz raw scan; the launch
+        # passes the 5 Hz scan_costmap with 1, which wakes this node half as
+        # often for the same checks.
+        self.declare_parameter('check_every_n_scans', 2)
         self.declare_parameter('base_frame', '')
         self.declare_parameter('window_sec', 2.0)
         # Minimum motion inside the window before a check is meaningful.
@@ -324,6 +331,7 @@ class StuckDetector(Node):
         self._reflex_period = 1.0 / max(5.0, float(p('reflex_rate_hz')))
         self._reflex_timer = None
         self._scan_count = 0
+        self._check_every = max(1, int(p('check_every_n_scans')))
         self.create_timer(1.0, self._publish_state)
         self.create_timer(1.0, self._clearance_tick)
         self._plan_fail_count = max(1, int(p('plan_fail_clear_count')))
@@ -333,7 +341,7 @@ class StuckDetector(Node):
         self._plan_seen = set()
         self._last_costmap_clear = -1e9
         self.create_subscription(
-            GoalStatusArray, 'compute_path_to_pose/_action/status', self._on_plan_status, 10)
+            GoalStatusArray, 'compute_path_to_pose/_action/status', self._on_plan_status, 10, raw=True)
         self._clear_cli = self.create_client(
             ClearEntireCostmap, 'global_costmap/clear_entirely_global_costmap')
         self._squeeze_enabled = bool(p('squeeze_enabled'))
@@ -445,10 +453,10 @@ class StuckDetector(Node):
         pts = np.stack([r[ok] * np.cos(a[ok]) + self._lidar_x, r[ok] * np.sin(a[ok])], axis=1)
         t = _stamp(msg)
         self._scans.append((t, pts))
-        # Every other scan (5 Hz) is plenty for 2 s windows and halves the
-        # cost of the LiDAR match while driving.
+        # 5 Hz is plenty for 2 s windows and halves the cost of the LiDAR
+        # match while driving.
         self._scan_count += 1
-        if self._scan_count % 2 == 0:
+        if self._scan_count % self._check_every == 0:
             self._check(t)
 
     # --- evidence -------------------------------------------------------
@@ -603,12 +611,11 @@ class StuckDetector(Node):
                 f'still stuck after {self._stuck_reflex_after:.0f} s: freeing the wheels')
             self._start_reflex(direction, now, dist)
 
-    def _on_plan_status(self, msg: GoalStatusArray) -> None:
+    def _on_plan_status(self, raw: bytes) -> None:
         now = self._now()
-        for st in msg.status_list:
-            if st.status != GoalStatus.STATUS_ABORTED:
+        for key, status in goal_statuses(raw):
+            if status != GoalStatus.STATUS_ABORTED:
                 continue
-            key = bytes(st.goal_info.goal_id.uuid)
             if key in self._plan_seen:
                 continue
             self._plan_seen.add(key)

@@ -32,6 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stereo_common  # noqa: E402
 import stereo_visual_odometry  # noqa: E402
 
+from rclpy_lean import lean_events
+
 
 def _namespace_of(node: Node) -> str:
     return node.get_namespace().strip('/')
@@ -40,6 +42,7 @@ def _namespace_of(node: Node) -> str:
 class StereoDepthNode(Node):
     def __init__(self) -> None:
         super().__init__('stereo_depth_node')
+        lean_events(self)
 
         self.declare_parameter('left_image_topic', 'stereo_left/image_raw')
         self.declare_parameter('right_image_topic', 'stereo_right/image_raw')
