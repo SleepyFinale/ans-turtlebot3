@@ -103,9 +103,10 @@ class CollisionResolver(Node):
         # This many real blocks within give_up_window_sec with the robot within
         # 0.3 m of the same spot: cancel the navigation goal, so the explorer
         # picks another frontier instead of Nav2 retrying the same approach.
-        # On Inky one pocket among chair legs gave six real blocks in a minute.
-        # 0 disables.
-        self.declare_parameter('give_up_blocks', 3)
+        # On Inky one pocket among chair legs gave six real blocks in a minute;
+        # at 3, a goal into a cluttered corner cost ~20 s a cycle, six times in
+        # one run of a small room. 0 disables.
+        self.declare_parameter('give_up_blocks', 2)
         self.declare_parameter('give_up_window_sec', 60.0)
         # How long to wait for fresh sensor data after an abort.
         self.declare_parameter('wait_sec', 3.0)
@@ -433,7 +434,11 @@ class CollisionResolver(Node):
         if np.any(real | confirm):
             dist = np.hypot(b[:, 0], b[:, 1])
             # Ahead only: backing up gives no turning room from something beside the robot.
-            close = (real | confirm) & (b[:, 0] > 0.05) & (dist < self._backoff_within)
+            # Unverified cells count too: with LiDAR cells in the verdict the
+            # look-again back-off above is skipped, and a cell 0.21 m ahead in
+            # the cameras' blind zone then blocked retry after retry from the
+            # same spot with no room made.
+            close = (real | confirm | unsure) & (b[:, 0] > 0.05) & (dist < self._backoff_within)
             if np.any(close) and self._request_backoff(self._backoff):
                 actions.append(f'backing off {self._backoff:.2f} m for room to turn')
             rx, ry, _ = self._pose()

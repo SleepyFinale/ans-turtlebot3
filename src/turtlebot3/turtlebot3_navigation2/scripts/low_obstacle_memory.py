@@ -114,6 +114,14 @@ class LowObstacleMemory(Node):
         # line between them is that face, which the bumps alone left open.
         self.declare_parameter('bump_link_m', 0.6)
         self.declare_parameter('bump_link_sec', 120.0)
+        # Stereo marks are dropped when the depth node reports the pair out of
+        # alignment by at least forget_row_error_px, or for longer than
+        # forget_after_misaligned_sec. The check sits at 2 px and a pair just
+        # past it flaps (2.6 px out, 1.9 px recovered, 2.5 px out on Inky):
+        # each flap dropped every remembered low obstacle, and the robot drove
+        # back into what it had found. While misaligned no new marks come in.
+        self.declare_parameter('forget_row_error_px', 4.0)
+        self.declare_parameter('forget_after_misaligned_sec', 15.0)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         ns = self.get_namespace().strip('/')
@@ -130,6 +138,9 @@ class LowObstacleMemory(Node):
         self._bump_link = float(p('bump_link_m'))
         self._bump_link_sec = float(p('bump_link_sec'))
         self._recent_bumps = []  # (time, centroid x, centroid y)
+        self._forget_row_error = float(p('forget_row_error_px'))
+        self._forget_after_misaligned = float(p('forget_after_misaligned_sec'))
+        self._misaligned_since = None
         self._confirm_scans = max(1, int(p('confirm_scans')))
         self._confirm_window = float(p('confirm_window_sec'))
         self._confirm_move = float(p('confirm_move_m'))
@@ -330,10 +341,23 @@ class LowObstacleMemory(Node):
 
     def _on_stereo_status(self, msg: String) -> None:
         try:
-            status = json.loads(msg.data).get('status')
+            data = json.loads(msg.data)
+            status = data.get('status')
         except (ValueError, AttributeError):
             return
         if status != 'misaligned':
+            if status not in (None, 'tilted', 'no_images', 'stereo_failed'):
+                self._misaligned_since = None
+            return
+        now = self._now()
+        if self._misaligned_since is None:
+            self._misaligned_since = now
+        try:
+            row_error = float(data.get('row_error_px') or 0.0)
+        except (TypeError, ValueError):
+            row_error = 0.0
+        if row_error < self._forget_row_error \
+                and now - self._misaligned_since < self._forget_after_misaligned:
             return
         marks = [k for k, v in self._cells.items() if v[1] == 'mark']
         if marks or self._pending:
@@ -341,7 +365,8 @@ class LowObstacleMemory(Node):
                 del self._cells[key]
             self._pending.clear()
             self.get_logger().warning(
-                f'stereo out of alignment: forgot {len(marks)} remembered stereo cells')
+                f'stereo out of alignment ({row_error:.1f} px, '
+                f'{now - self._misaligned_since:.0f} s): forgot {len(marks)} remembered stereo cells')
 
     def _trim(self) -> None:
         if len(self._cells) <= self._max_cells:
