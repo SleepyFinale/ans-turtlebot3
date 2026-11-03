@@ -63,7 +63,7 @@ def _calibration_focus(path: str):
     return out[0], out[1]
 
 
-def _prepare_command(devices_and_focus):
+def _prepare_command(devices_and_focus, width: int, height: int, pixel_format: str):
     """One shell step that readies each camera before its driver opens it.
 
     UVC cameras time out (and can wedge until a USB reset) when controls are
@@ -80,13 +80,21 @@ def _prepare_command(devices_and_focus):
     the check streams one frame, which does not. v4l2-ctl exits 0 even then
     ("VIDIOC_REQBUFS returned -1 (Device or resource busy)"), so its output
     is what is checked.
+
+    The probe sets the driver's format first. After a cold boot (2026-11-03)
+    Inky's right Arducam opened but sent no frame at its power-on format,
+    for 15 s and every retry, until a format was set; then it streamed. The
+    unset probe timed out each time and the launch sat there for 70 s.
     """
+    fmt = f'width={int(width)},height={int(height)},pixelformat={pixel_format}'
     steps = []
     for device, focus in devices_and_focus:
         steps.append(
-            f'for i in $(seq 1 20); do out=$(timeout 3 v4l2-ctl -d {device} --stream-mmap=2 '
-            f'--stream-count=1 --stream-to=/dev/null 2>&1) && ! echo "$out" | grep -qiE "busy|returned -1" '
-            f'&& break; echo "{device} busy, waiting" >&2; sleep 0.5; done'
+            f'for i in $(seq 1 20); do out=$(timeout 3 v4l2-ctl -d {device} --set-fmt-video={fmt} '
+            f'--stream-mmap=2 --stream-count=1 --stream-to=/dev/null 2>&1); rc=$?; '
+            f'[ $rc -eq 0 ] && ! echo "$out" | grep -qiE "busy|returned -1" && break; '
+            f'if [ $rc -eq 124 ]; then echo "{device} sent no frame in 3 s, retrying" >&2; '
+            f'else echo "{device} busy, waiting" >&2; fi; sleep 0.5; done'
         )
         if focus is None:
             continue
@@ -218,7 +226,8 @@ def _setup(context):
             output='screen',
         ),
     ]
-    prepare = _prepare_command([(left_dev, left_focus), (right_dev, right_focus)])
+    prepare = _prepare_command(
+        [(left_dev, left_focus), (right_dev, right_focus)], width, height, pixel_format)
     info = LogInfo(msg=(
         f'stereo: left={left_dev} ({left_cam["card"]}) '
         f'right={right_dev} ({right_cam["card"]}) '

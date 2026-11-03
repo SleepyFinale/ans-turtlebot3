@@ -618,6 +618,11 @@ class StereoDepthNode(Node):
                 'drop_streak': 0,
                 'error': str(exc),
             })
+        finally:
+            # Also stamp the end: the first pairs (alignment verification,
+            # under the launch's CPU load) took over images_timeout_sec, and
+            # the watchdog then reported "No stereo pairs" mid-pair.
+            self._last_pair_s = time.monotonic()
 
     def _on_odom(self, msg: Odometry) -> None:
         self._odom_seen = True
