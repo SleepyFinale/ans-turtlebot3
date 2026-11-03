@@ -10,7 +10,7 @@ What runs on each robot, why, and how the pieces that keep it moving fit togethe
 | --- | --- | --- | --- |
 | Wheel encoders | `odom/wheel` | forward speed | all robots |
 | 9-axis IMU (OpenCR) | `imu` | heading, yaw rate | all robots (the magnetometer reads zero, so heading is gyro + accel) |
-| Stereo visual odometry | `odom/visual` | forward speed, yaw rate | robots with two cameras and a usable `config/stereo/<robot>.yaml` (Inky) |
+| Stereo visual odometry | `odom/visual` | forward speed (its yaw rate disagreed with the gyro by > 0.3 rad/s in one sample of ten while exploring, so it is no longer fused) | robots with two cameras and a usable `config/stereo/<robot>.yaml` (Inky) |
 | GPS via `navsat_transform` | `odometry/gps` | x, y | `outdoor:=true` only |
 | 360° LiDAR | — | through `slam_toolbox` scan matching (`map -> odom`) | all robots |
 

@@ -146,7 +146,9 @@ def main():
                 if last_lin and math.copysign(1, v) != last_lin[1] and t - last_lin[0] <= args.flip_window_sec:
                     lin_flips += 1
                 last_lin = (t, math.copysign(1, v))
-            if abs(w) > 0.05:
+            # Only turns of 0.3 rad/s or more either way: smaller sign changes
+            # are path-tracking corrections on a curve, not the robot swinging.
+            if abs(w) >= 0.3:
                 if last_ang and math.copysign(1, w) != last_ang[1] and t - last_ang[0] <= args.flip_window_sec:
                     ang_flips += 1
                 last_ang = (t, math.copysign(1, w))
@@ -155,7 +157,7 @@ def main():
         minutes = (t1 - t0) / 60.0
         print(f'cmd_vel: {len(cmd)} msgs, {rate:.1f} Hz mean, {bursts} pairs <20 ms apart')
         print(f'  drive reversals within {args.flip_window_sec:.1f} s: {lin_flips} '
-              f'({lin_flips / max(minutes, 1e-6):.1f}/min); turn reversals: {ang_flips} '
+              f'({lin_flips / max(minutes, 1e-6):.1f}/min); turn reversals (>= 0.3 rad/s each way): {ang_flips} '
               f'({ang_flips / max(minutes, 1e-6):.1f}/min)')
 
     # --- how the time was spent (measured motion, odom) --------------------

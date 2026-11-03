@@ -58,15 +58,18 @@
       imu0_remove_gravitational_acceleration: true
 
       # Stereo visual odometry (stereo_visual_odometry.py, run by
-      # stereo_depth_node from navigation2_slam.launch.py). Forward speed and yaw rate
-      # from the cameras, an independent check on the wheels and the gyro.
+      # stereo_depth_node from navigation2_slam.launch.py). Forward speed
+      # from the cameras, an independent check on the wheels.
       # Absent on robots without a calibrated pair; the EKF then runs on
       # wheels + IMU. Readings far from the current estimate are rejected.
       odom1: odom/visual
+      # Forward speed only. VO's yaw rate was off from the gyro by more than
+      # 0.3 rad/s in one sample of ten while exploring; the gyro alone tracks
+      # turns within a degree through full rotations.
       odom1_config: [false, false, false,
                      false, false, false,
                      true,  false, false,
-                     false, false, true,
+                     false, false, false,
                      false, false, false]
       odom1_differential: false
       odom1_relative: false
