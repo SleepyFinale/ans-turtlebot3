@@ -141,7 +141,8 @@ class StereoRefineExtrinsics(Node):
                 f'Re-alignment left {after:.2f} px of row error (limit {self._max_rms:.2f} px); '
                 'the file was not updated. If the scene was well lit and textured, the lens '
                 'calibration itself is off and only a new chessboard calibration fixes it: '
-                'ros2 run turtlebot3_navigation2 stereo_calibrate.py --ros-args -r __ns:=/inky'
+                'ros2 run turtlebot3_navigation2 stereo_calibrate.py '
+                f'--ros-args -r __ns:={self.get_namespace()}'
             )
             raise SystemExit(1)
         payload = dict(self._data)

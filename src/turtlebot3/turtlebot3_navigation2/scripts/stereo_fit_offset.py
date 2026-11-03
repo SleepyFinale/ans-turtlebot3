@@ -220,8 +220,12 @@ class StereoFitOffset(Node):
         # SGBM has no result left of numDisparities; walls are vertical, so a
         # band of rows around the LiDAR plane still sees the same surface and
         # tolerates the mount height and pitch being off.
-        inside = ((u >= 130) & (u < width - 2) & (v >= 8) & (v < height - 8)
-                  & (np.abs(rect[:, 0]) <= math.tan(self._max_bearing) * rect[:, 2]))
+        ahead = (u >= 130) & (u < width - 2) & (np.abs(rect[:, 0]) <= math.tan(self._max_bearing) * rect[:, 2])
+        inside = ahead & (v >= 8) & (v < height - 8)
+        # Where the LiDAR plane lands depends on camera_pitch_rad. With the
+        # default 20 deg on Clyde (mounted at ~6 deg) it was 10-24 rows above
+        # the image, and no return could match.
+        self._rows_ahead = v[ahead]
         gaps = []
         for left, right in self._pairs:
             disp = self._matcher.compute(
@@ -242,6 +246,16 @@ class StereoFitOffset(Node):
             return
         c0, n = self._offset(0.0, lidar)
         if c0 is None or n < self._min_samples:
+            rows = self._rows_ahead
+            height = self._size[1]
+            if rows.size and np.mean((rows < 8) | (rows >= height - 8)) > 0.5:
+                side = 'above' if np.median(rows) < height / 2 else 'below'
+                self.get_logger().error(
+                    f'Only {n} LiDAR returns matched: the LiDAR plane lands {side} the image '
+                    f'(row {np.median(rows):.0f} of {height}), so camera_pitch_rad '
+                    f'({float(self._data.get("camera_pitch_rad", 0.0)):.3f}) is far off. Run '
+                    'stereo_fit_floor.py first for a rough pitch, then this, then the floor fit again.')
+                return
             self.get_logger().error(
                 f'Only {n} LiDAR returns matched in the stereo view (need {self._min_samples}); '
                 'face walls or furniture 1-3 m away and retry.')
