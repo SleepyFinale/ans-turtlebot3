@@ -133,6 +133,14 @@ class StereoDepthNode(Node):
         # StereoBM's textureThreshold, applied to SGBM output. Blank floor
         # matches are not obstacles.
         self.declare_parameter('texture_threshold', 12.0)
+        # Obstacles also need texture that is not mostly a horizontal edge.
+        # SGBM matches along rows, so on an edge s px of row per px of column
+        # a row error of e px is e/s px of disparity. On Inky a baseboard
+        # foot ~4 deg off level, 1.3 m away, read as a 5 cm obstacle at
+        # 0.9 m in half the frames from 0.3 px of row error (gy/gx 5-7 there;
+        # textured floor is ~1.5, 95% under 3.5). Pixels whose vertical
+        # gradient is more than this times the horizontal one are skipped.
+        self.declare_parameter('max_vertical_texture_ratio', 3.0)
         # Drops only trust pixels with clear texture. Glossy or blank surfaces
         # mirror the room and would otherwise read as a hole.
         self.declare_parameter('drop_texture_threshold', 20.0)
@@ -214,6 +222,7 @@ class StereoDepthNode(Node):
         self._close_obstacle_m = float(self.get_parameter('close_obstacle_m').value)
         self._path_half_width = float(self.get_parameter('path_half_width_m').value)
         self._texture_threshold = float(self.get_parameter('texture_threshold').value)
+        self._max_vertical_texture = float(self.get_parameter('max_vertical_texture_ratio').value)
         self._drop_texture_threshold = float(self.get_parameter('drop_texture_threshold').value)
         self._cloud_stride = max(1, int(self.get_parameter('cloud_stride').value))
         self._alignment_period = max(0.0, float(self.get_parameter('alignment_check_sec').value))
@@ -779,6 +788,11 @@ class StereoDepthNode(Node):
         )
         grad_x = cv2.Sobel(left_r, cv2.CV_32F, 1, 0, ksize=3)
         texture = cv2.boxFilter(np.abs(grad_x), cv2.CV_32F, (5, 5))
+        textured = texture[mask] >= self._texture_threshold
+        if self._max_vertical_texture > 0.0:
+            grad_y = cv2.Sobel(left_r, cv2.CV_32F, 0, 1, ksize=3)
+            texture_y = cv2.boxFilter(np.abs(grad_y), cv2.CV_32F, (5, 5))
+            textured &= texture_y[mask] <= self._max_vertical_texture * texture[mask]
         now_s = time.monotonic()
         remembered = self._shadow_obstacle_m if now_s <= self._shadow_until_s else None
         blob = stereo_common.build_blob_scan(
@@ -797,7 +811,7 @@ class StereoDepthNode(Node):
             ground_x_min=self._ground_x_min,
             ground_x_max=self._ground_x_max,
             drop_z=self._drop_z,
-            obstacle_textured=texture[mask] >= self._texture_threshold,
+            obstacle_textured=textured,
             shadow_obstacle_m=remembered,
             drop_result=stereo_common.ray_drop_check(
                 disparity, texture, self._maps['floor'],
