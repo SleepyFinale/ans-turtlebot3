@@ -223,6 +223,14 @@ class StuckDetector(Node):
         # the memory's 20 min lifetime the robot stood there for minutes. A
         # real object is found again by the bumper and remembered. 0 disables.
         self.declare_parameter('forget_after_squeeze_sec', 20.0)
+        # With every costmap clear for failed plans, also move the robot
+        # nudge_max_m straight into the more open of front and back (by the
+        # LiDAR and the memory). Nav2 refused to plan from where Inky stood
+        # ("Starting point in lethal space") though nothing was within
+        # clearance_radius_m in the LiDAR: the lethal cells were SLAM map
+        # walls a few cm nearer than the LiDAR saw them now, which no clear
+        # or squeeze removes. Explorer goals failed for minutes. 0 disables.
+        self.declare_parameter('nudge_max_m', 0.15)
         self.declare_parameter('forget_radius_m', 0.6)
         self.declare_parameter('global_costmap_node', 'global_costmap/global_costmap')
         # Tilt escape. A Burger that drives onto a chair leg or a cable ends
@@ -362,6 +370,7 @@ class StuckDetector(Node):
         self._forget_after = float(p('forget_after_squeeze_sec'))
         self._forget_radius = float(p('forget_radius_m'))
         self._forget_pub = self.create_publisher(PointCloud2, 'memory/forget', 5)
+        self._nudge_max = float(p('nudge_max_m'))
         self._squeeze = None  # {'t0', 'pose'} while the radius is lowered
         self._radius_cli = self.create_client(
             SetParameters, f"{str(p('global_costmap_node')).strip('/')}/set_parameters")
@@ -656,6 +665,7 @@ class StuckDetector(Node):
         self._last_costmap_clear = now
         self._plan_failures.clear()
         self._clear_cli.call_async(ClearEntireCostmap.Request())
+        self._nudge_open(now)
         if squeeze:
             self._squeeze = {'t0': now, 'pose': self._wheel[-1][1][:2]}
             self.get_logger().warning(
@@ -666,6 +676,27 @@ class StuckDetector(Node):
         self.get_logger().warning(
             f'{self._plan_fail_count}+ plans failed in {self._plan_fail_window:.0f} s with the robot '
             'standing still: clearing the global costmap (stale LiDAR marks)')
+
+    def _nudge_open(self, now: float) -> None:
+        """Move straight toward whichever of front and back is more open."""
+        if self._nudge_max <= 0.0 or self._reflex is not None or not self._scans:
+            return
+        lidar, memory = self._obstacles()
+        pts = np.vstack([lidar, memory]) if len(memory) else lidar
+        strip = pts[np.abs(pts[:, 1]) <= self._body_half + 0.02] if len(pts) else pts
+        free = {}
+        for direction, edge in ((1.0, self._body_front), (-1.0, -self._body_rear)):
+            ahead = strip[strip[:, 0] * direction > edge * direction] if len(strip) else strip
+            gap = float(np.min(np.abs(ahead[:, 0] - edge))) if len(ahead) else 1.0
+            free[direction] = gap - self._reflex_margin
+        direction = max(free, key=free.get)
+        dist = min(self._nudge_max, free[direction])
+        if dist < 0.05:
+            return
+        if self._start_reflex(direction, now, dist):
+            self.get_logger().warning(
+                f'plans keep failing with the robot standing still: nudging '
+                f'{"forward" if direction > 0 else "back"} {dist:.2f} m into the more open side')
 
     def _forget_unexplained(self) -> None:
         """Ask low_obstacle_memory to drop nearby cells the LiDAR does not see now."""
