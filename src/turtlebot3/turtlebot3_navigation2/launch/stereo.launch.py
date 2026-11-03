@@ -72,17 +72,21 @@ def _prepare_command(devices_and_focus):
     on, and v4l2_camera writes focus_absolute before autofocus, so autofocus
     has to be off already when the node starts.
 
-    It also waits until each camera answers a query, then a second more. A
-    camera that had just been touched (the focus writes, USB autosuspend)
-    refused the driver's open with "Device or resource busy" in three of six
-    launches on Inky, and v4l2_camera never retries: stereo then ran on one
-    camera for the whole run.
+    It also waits until each camera delivers a frame, then a second more. A
+    camera still held by the previous run's driver, or just touched (the
+    focus writes, USB autosuspend), refused the driver's open with "Device or
+    resource busy", and v4l2_camera never retries: stereo then ran on one
+    camera for the whole run. A format query succeeds on a busy camera, so
+    the check streams one frame, which does not. v4l2-ctl exits 0 even then
+    ("VIDIOC_REQBUFS returned -1 (Device or resource busy)"), so its output
+    is what is checked.
     """
     steps = []
     for device, focus in devices_and_focus:
         steps.append(
-            f'for i in $(seq 1 25); do v4l2-ctl -d {device} --get-fmt-video >/dev/null 2>&1 && break; '
-            f'sleep 0.2; done'
+            f'for i in $(seq 1 20); do out=$(timeout 3 v4l2-ctl -d {device} --stream-mmap=2 '
+            f'--stream-count=1 --stream-to=/dev/null 2>&1) && ! echo "$out" | grep -qiE "busy|returned -1" '
+            f'&& break; echo "{device} busy, waiting" >&2; sleep 0.5; done'
         )
         if focus is None:
             continue
