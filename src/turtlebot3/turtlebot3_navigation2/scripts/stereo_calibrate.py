@@ -6,6 +6,7 @@ stays off until the written file has a real focal length.
 """
 
 import os
+import subprocess
 import sys
 import time
 
@@ -48,6 +49,14 @@ class StereoCalibrate(Node):
         self.declare_parameter('baseline_m', 0.0508)
         self.declare_parameter('preview_dir', '~/turtlebot3/logs/stereo_preview')
         self.declare_parameter('preview_period_sec', 1.0)
+        # The intrinsics only hold at one lens position. Without focus in the
+        # file the cameras stay on autofocus: Clyde's first calibration
+        # (2026-11-03) had 0.2 px corner error and its live rows were 8.9 px
+        # off a minute later. With no focus saved yet, each camera is locked
+        # where its autofocus sits now (point the robot along the floor at
+        # ~0.7 m first), or at focus_absolute when that is >= 0.
+        self.declare_parameter('focus_absolute', -1)
+        self.declare_parameter('swap_cameras', False)
 
         ns = self.get_namespace().strip('/')
         override = str(self.get_parameter('output_file').value).strip()
@@ -82,6 +91,7 @@ class StereoCalibrate(Node):
         self._preview_dir = os.path.expanduser(str(self.get_parameter('preview_dir').value).strip())
         self._preview_period = max(0.2, float(self.get_parameter('preview_period_sec').value))
         self._last_preview_s = 0.0
+        self._focus = self._lock_focus()
 
         import cv2
         import numpy as np
@@ -103,6 +113,50 @@ class StereoCalibrate(Node):
             f'squares={self._long_square:.4f} x {self._short_square:.4f} m). '
             f'Output: {self._output}. Live view: {preview_path}'
         )
+
+    def _lock_focus(self) -> dict:
+        """Focus values to save with the calibration, locking the lenses if none are saved yet."""
+        try:
+            with open(self._output, 'r', encoding='utf-8') as handle:
+                previous = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError):
+            previous = {}
+        keys = ('left_focus_absolute', 'right_focus_absolute')
+        if all(key in previous for key in keys):
+            # stereo.launch.py already locked the lenses to these.
+            return {key: previous[key] for key in keys}
+        cameras = stereo_common.list_stereo_cameras()
+        if len(cameras) < 2:
+            self.get_logger().warning(
+                'Could not find both cameras to lock focus; calibrating on autofocus.')
+            return {}
+        if bool(self.get_parameter('swap_cameras').value):
+            cameras[0], cameras[1] = cameras[1], cameras[0]
+        wanted = int(self.get_parameter('focus_absolute').value)
+        out = {}
+        for key, cam in zip(keys, cameras[:2]):
+            device = cam['path']
+            try:
+                value = wanted
+                if value < 0:
+                    text = subprocess.run(
+                        ['v4l2-ctl', '-d', device, '-C', 'focus_absolute'],
+                        capture_output=True, text=True, timeout=5, check=True).stdout
+                    value = int(text.split(':')[-1])
+                for control in ('focus_automatic_continuous=0', f'focus_absolute={value}'):
+                    subprocess.run(['v4l2-ctl', '-d', device, '-c', control],
+                                   capture_output=True, timeout=5, check=True)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                self.get_logger().warning(
+                    f'Could not lock focus on {device} ({exc}); it stays on autofocus and the '
+                    'calibration will drift with it. Is v4l-utils installed?')
+                continue
+            out[key] = value
+        if out:
+            self.get_logger().info(
+                'Locked focus ' + ', '.join(f'{k.split("_")[0]}={v}' for k, v in out.items())
+                + '; saved with the calibration so stereo.launch.py locks it too.')
+        return out
 
     def _on_pair(self, left_msg: Image, right_msg: Image) -> None:
         if self._done:
@@ -484,9 +538,7 @@ class StereoCalibrate(Node):
                 previous = yaml.safe_load(handle) or {}
         except (OSError, yaml.YAMLError):
             previous = {}
-        for key in ('left_focus_absolute', 'right_focus_absolute'):
-            if key in previous:
-                payload[key] = previous[key]
+        payload.update(self._focus)
         # Pitch and height fitted to the floor beat the built-in defaults; keep
         # them unless a different value was passed on the command line.
         defaults = {'camera_x_m': 0.0254, 'camera_height_m': 0.127,

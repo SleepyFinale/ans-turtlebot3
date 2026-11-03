@@ -87,7 +87,12 @@ def _prepare_command(devices_and_focus, width: int, height: int, pixel_format: s
     unset probe timed out each time and the launch sat there for 70 s.
     """
     fmt = f'width={int(width)},height={int(height)},pixelformat={pixel_format}'
-    steps = []
+    # Without v4l2-ctl every probe failed with 127 and was reported as busy
+    # 20 times per camera (Clyde, 2026-11-03).
+    steps = [
+        'command -v v4l2-ctl >/dev/null || { echo "v4l2-ctl not found (sudo apt install '
+        'v4l-utils): skipping the camera checks and focus lock" >&2; exit 0; }'
+    ]
     for device, focus in devices_and_focus:
         steps.append(
             f'for i in $(seq 1 20); do out=$(timeout 3 v4l2-ctl -d {device} --set-fmt-video={fmt} '
