@@ -215,6 +215,15 @@ class StuckDetector(Node):
         self.declare_parameter('squeeze_after_clear_sec', 90.0)
         self.declare_parameter('squeeze_sec', 60.0)
         self.declare_parameter('squeeze_release_m', 0.8)
+        # Still boxed in this long into a squeeze: forget remembered
+        # low-obstacle cells within forget_radius_m that no LiDAR return
+        # explains. On Inky a mark 0.22 m off the front corner (a shoe or a
+        # chair caster that had since moved, too close for stereo to look at
+        # and clear) closed the one way out of a pocket under a desk, and with
+        # the memory's 20 min lifetime the robot stood there for minutes. A
+        # real object is found again by the bumper and remembered. 0 disables.
+        self.declare_parameter('forget_after_squeeze_sec', 20.0)
+        self.declare_parameter('forget_radius_m', 0.6)
         self.declare_parameter('global_costmap_node', 'global_costmap/global_costmap')
         # Tilt escape. A Burger that drives onto a chair leg or a cable ends
         # up with one end raised; on Inky, a chair leg under the rear caster
@@ -350,6 +359,9 @@ class StuckDetector(Node):
         self._squeeze_after = float(p('squeeze_after_clear_sec'))
         self._squeeze_sec = float(p('squeeze_sec'))
         self._squeeze_release = float(p('squeeze_release_m'))
+        self._forget_after = float(p('forget_after_squeeze_sec'))
+        self._forget_radius = float(p('forget_radius_m'))
+        self._forget_pub = self.create_publisher(PointCloud2, 'memory/forget', 5)
         self._squeeze = None  # {'t0', 'pose'} while the radius is lowered
         self._radius_cli = self.create_client(
             SetParameters, f"{str(p('global_costmap_node')).strip('/')}/set_parameters")
@@ -632,6 +644,11 @@ class StuckDetector(Node):
             return
         if not self._clear_cli.service_is_ready():
             return
+        sq = self._squeeze
+        if sq is not None and self._forget_after > 0.0 and not sq.get('forgot') \
+                and now - sq['t0'] >= self._forget_after:
+            sq['forgot'] = True
+            self._forget_unexplained()
         squeeze = (
             self._squeeze_enabled and self._squeeze is None
             and now - self._last_costmap_clear < self._squeeze_after
@@ -649,6 +666,27 @@ class StuckDetector(Node):
         self.get_logger().warning(
             f'{self._plan_fail_count}+ plans failed in {self._plan_fail_window:.0f} s with the robot '
             'standing still: clearing the global costmap (stale LiDAR marks)')
+
+    def _forget_unexplained(self) -> None:
+        """Ask low_obstacle_memory to drop nearby cells the LiDAR does not see now."""
+        lidar, memory = self._obstacles()
+        if not len(memory):
+            return
+        near = memory[np.hypot(memory[:, 0], memory[:, 1]) <= self._forget_radius]
+        if len(lidar) and len(near):
+            d = np.hypot(near[:, None, 0] - lidar[None, :, 0], near[:, None, 1] - lidar[None, :, 1])
+            near = near[d.min(axis=1) > 0.07]
+        if not len(near):
+            return
+        header = Header()
+        header.stamp = self.get_clock().now().to_msg()
+        header.frame_id = self._base_frame
+        self._forget_pub.publish(point_cloud2.create_cloud_xyz32(
+            header, [[float(x), float(y), 0.02] for x, y in near]))
+        self.get_logger().warning(
+            f'still boxed in {self._forget_after:.0f} s into the squeeze: forgetting {len(near)} '
+            f'remembered low-obstacle cell(s) within {self._forget_radius:.1f} m that the LiDAR '
+            'does not see (a real one is found again by the bumper)')
 
     def _set_global_radius(self, radius: float) -> bool:
         if not self._radius_cli.service_is_ready():

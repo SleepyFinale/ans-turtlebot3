@@ -34,6 +34,13 @@ class MapWireCompressedRepublisher(Node):
         self.declare_parameter('output_topic', 'map_wire_z')
         self.declare_parameter('max_publish_hz', 1.0)
         self.declare_parameter('compression_level', 3)
+        # The last map is sent again this often (s) while no new one comes
+        # in. map_live only changes when the map does, and a robot standing
+        # still after its seeding move publishes nothing new; if the one map
+        # sent before the Zenoh link came up was not delivered as latched
+        # history, the central PC never got a map and start_central.sh gave
+        # up after 30 s. Also covers a Wi-Fi reconnect. 0 disables.
+        self.declare_parameter('resend_period_sec', 3.0)
 
         input_topic = self.get_parameter('input_topic').value
         output_topic = self.get_parameter('output_topic').value
@@ -44,6 +51,11 @@ class MapWireCompressedRepublisher(Node):
 
         compression_level = int(self.get_parameter('compression_level').value)
         self._compression_level = max(1, min(9, compression_level))
+        self._last_out = None
+        resend = float(self.get_parameter('resend_period_sec').value)
+        if resend > 0.0:
+            self._resend_period = resend
+            self.create_timer(resend, self._resend)
 
         # Reuse map-style QoS so late subscribers can still receive the latest
         # full grid without waiting for a fresh SLAM publication.
@@ -68,6 +80,14 @@ class MapWireCompressedRepublisher(Node):
         out.data = array.array(
             'B', zlib.compress(raw, level=self._compression_level))
         self._pub.publish(out)
+        self._last_publish_time = now
+        self._last_out = out
+
+    def _resend(self):
+        now = time.monotonic()
+        if self._last_out is None or now - self._last_publish_time < self._resend_period:
+            return
+        self._pub.publish(self._last_out)
         self._last_publish_time = now
 
 
