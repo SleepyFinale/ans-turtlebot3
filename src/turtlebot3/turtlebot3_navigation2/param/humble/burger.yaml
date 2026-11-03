@@ -289,8 +289,17 @@ behavior_server:
 velocity_smoother:
   ros__parameters:
     # Same as controller_frequency. At the default 20 Hz every controller
-    # command was sent twice. Other limits stay at the Nav2 defaults.
+    # command was sent twice.
     smoothing_frequency: 10.0
+    # Limits for the Burger (0.22 m/s, 2.84 rad/s). Nav2's defaults
+    # (2.5 m/s2) took it from standing to full speed in one 0.1 s step; on
+    # smooth tile a wheel then slipped or caught and the robot swung up to
+    # 1 rad/s the other way, and the controller turned in place to recover.
+    # Braking stays strong; stop gates act after the smoother in cmd_vel_mux.
+    max_velocity: [0.22, 0.0, 2.0]
+    min_velocity: [-0.22, 0.0, -2.0]
+    max_accel: [0.8, 0.0, 2.5]
+    max_decel: [-2.0, 0.0, -3.2]
 
 # Optional robot-side helper (enable_retrace_escape:=true); reads this file.
 nav2_retrace_escape:
