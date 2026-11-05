@@ -8,13 +8,14 @@ robots that do not have a pair are unchanged.
 
 import importlib.util
 import os
+import time
 
 from ament_index_python.packages import get_package_prefix
 from launch import LaunchDescription
 from launch.actions import (
-    DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction, RegisterEventHandler,
+    DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction, RegisterEventHandler, TimerAction,
 )
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
@@ -128,6 +129,15 @@ def _setup(context):
 
     common = _load_stereo_common()
     cameras = common.list_stereo_cameras()
+    # A camera that re-enumerates is gone for about a second, and Inky's left
+    # one did that at the very moment a launch looked (2026-11-05): the whole
+    # run then had no stereo. Wait for it on a robot calibrated for stereo.
+    if len(cameras) < 2 and common.calibration_is_usable(
+            common.calibration_file_path(ns, calib_override)):
+        deadline = time.monotonic() + 10.0
+        while len(cameras) < 2 and time.monotonic() < deadline:
+            time.sleep(0.5)
+            cameras = common.list_stereo_cameras()
     if len(cameras) < 2:
         return [LogInfo(
             msg=(
@@ -135,12 +145,6 @@ def _setup(context):
                 'not starting cameras or the depth node'
             )
         )]
-
-    left_cam, right_cam = cameras[0], cameras[1]
-    if swap:
-        left_cam, right_cam = right_cam, left_cam
-    left_dev = left_cam['path']
-    right_dev = right_cam['path']
 
     calib_path = common.calibration_file_path(ns, calib_override)
     prefix = f'{ns}/' if ns else ''
@@ -193,12 +197,12 @@ def _setup(context):
         'odom_frame': f'{prefix}odom',
     }
 
-    nodes = [
+    def _container(left_dev: str, right_dev: str) -> ComposableNodeContainer:
         # Both cameras and the pair throttle share one process with
         # intra-process comms: the 60 frames/s reach the throttle as pointers
         # instead of 2.3 MB/s of serialized images over loopback DDS, and two
         # fewer processes run. Only the 3 Hz pairs leave the container.
-        ComposableNodeContainer(
+        return ComposableNodeContainer(
             name='stereo_container',
             namespace=ns if ns else '',
             package='rclcpp_components',
@@ -220,31 +224,66 @@ def _setup(context):
                     extra_arguments=[{'use_intra_process_comms': True}],
                 ),
             ],
-        ),
-        Node(
-            package='turtlebot3_navigation2',
-            executable='stereo_depth_node.py',
-            additional_env=_SINGLE_THREAD_BLAS,
-            name='stereo_depth_node',
-            namespace=ns if ns else None,
-            parameters=[depth_params],
-            output='screen',
-        ),
-    ]
-    prepare = _prepare_command(
-        [(left_dev, left_focus), (right_dev, right_focus)], width, height, pixel_format)
-    info = LogInfo(msg=(
-        f'stereo: left={left_dev} ({left_cam["card"]}) '
-        f'right={right_dev} ({right_cam["card"]}) '
-        f'size={width}x{height} calibration={calib_path} '
-        f'visual_odometry={visual_odometry} '
-        f'focus={left_focus if left_focus is not None else "auto"}/'
-        f'{right_focus if right_focus is not None else "auto"}'
-    ))
+        )
+
+    depth_node = Node(
+        package='turtlebot3_navigation2',
+        executable='stereo_depth_node.py',
+        additional_env=_SINGLE_THREAD_BLAS,
+        name='stereo_depth_node',
+        namespace=ns if ns else None,
+        parameters=[depth_params],
+        output='screen',
+    )
+
+    # Starting one camera can knock the other off the shared USB hub (2 of 23
+    # starts on Inky, 2026-11-05), a camera can drop mid-run, and v4l2_camera
+    # never reopens a device, so either used to cost the whole run its stereo.
+    # stereo_depth_node stops the container when frames stop; this brings it
+    # back. Devices are listed again because a camera that re-enumerates can
+    # come back under another /dev/video number.
+    shutting_down = {'value': False}
+
+    def _note_shutdown(_context):
+        shutting_down['value'] = True
+
+    def _start_cameras(_context, first=False):
+        if shutting_down['value']:
+            return []
+        found = common.list_stereo_cameras()
+        if len(found) < 2:
+            return [
+                LogInfo(msg=f'stereo: {len(found)} camera(s) on USB; looking again in 5 s'),
+                TimerAction(period=5.0, actions=[
+                    OpaqueFunction(function=_start_cameras, kwargs={'first': first})]),
+            ]
+        left, right = (found[1], found[0]) if swap else (found[0], found[1])
+        prepare = _prepare_command(
+            [(left['path'], left_focus), (right['path'], right_focus)],
+            width, height, pixel_format)
+        container = _container(left['path'], right['path'])
+        return [
+            LogInfo(msg=(
+                f'stereo: left={left["path"]} ({left["card"]}) '
+                f'right={right["path"]} ({right["card"]}) '
+                f'size={width}x{height} calibration={calib_path} '
+                f'visual_odometry={visual_odometry} '
+                f'focus={left_focus if left_focus is not None else "auto"}/'
+                f'{right_focus if right_focus is not None else "auto"}'
+                + ('' if first else ' (restarting the cameras)')
+            )),
+            prepare,
+            RegisterEventHandler(OnProcessExit(
+                target_action=prepare,
+                on_exit=[container, *([depth_node] if first else [])])),
+            RegisterEventHandler(OnProcessExit(
+                target_action=container,
+                on_exit=[OpaqueFunction(function=_start_cameras)])),
+        ]
+
     return [
-        info,
-        prepare,
-        RegisterEventHandler(OnProcessExit(target_action=prepare, on_exit=nodes)),
+        RegisterEventHandler(OnShutdown(on_shutdown=[OpaqueFunction(function=_note_shutdown)])),
+        *_start_cameras(context, first=True),
     ]
 
 

@@ -8,7 +8,10 @@ nothing else, so Nav2 and the stop gate stay inactive until calibration exists.
 import json
 import math
 import os
+import signal
+import subprocess
 import sys
+import threading
 import time
 from collections import deque
 
@@ -87,6 +90,12 @@ class StereoDepthNode(Node):
         # No pair processed for this long: publish empty scans and report
         # status no_images (see _check_images).
         self.declare_parameter('images_timeout_sec', 2.0)
+        # With no frames for this long, stop the camera container; the launch
+        # starts it again (0 = never). v4l2_camera does not reopen a device that
+        # was busy at start or dropped off USB. The second value matches the
+        # 40 s the first start is given.
+        self.declare_parameter('camera_restart_after_sec', 8.0)
+        self.declare_parameter('camera_restart_cooldown_sec', 40.0)
         # base_scan is 0.172 m above base_link, and base_link is 0.010 m above
         # base_footprint, so the lidar plane is 0.182 m above the ground.
         self.declare_parameter('lidar_height_m', 0.182)
@@ -180,6 +189,24 @@ class StereoDepthNode(Node):
         self.declare_parameter('floor_refit_frames', 6)
         self.declare_parameter('floor_refit_max_height_m', 0.03)
         self.declare_parameter('floor_refit_max_pitch_deg', 5.0)
+        # Rows again, while driving. Inky's mount shifts when the robot starts
+        # moving and on bumps: on 2026-11-05 the rows sat 5 px off, the same
+        # across the whole image and at every range, for 445 s of a 530 s run,
+        # with stereo off and only one stop long enough for the re-fit above.
+        # A constant offset needs no full re-fit: the median over a few checks
+        # moves the right principal point in memory. Matches taken while moving
+        # read the same offset as still ones (5.25 and 5.12 px on that run), but
+        # one frame can be 2 px off while the robot rocks, because the cameras
+        # are not synchronized, so row_track_min_checks in a row must agree. On
+        # a run with a steady mount that fired once where a single check fired
+        # 27 times, each move back and forth adding error of its own.
+        self.declare_parameter('row_track_period_sec', 3.0)
+        self.declare_parameter('row_track_trigger_px', 1.5)
+        self.declare_parameter('row_track_min_checks', 2)
+        self.declare_parameter('row_track_min_matches', 100)
+        self.declare_parameter('row_track_window_sec', 10.0)
+        self.declare_parameter('row_track_max_spread_px', 2.0)
+        self.declare_parameter('row_track_max_total_px', 25.0)
         # Stereo visual odometry on the same pairs, published on odom/visual
         # for the bringup EKF. It has its own row-error tolerance, so it keeps
         # running while misalignment turns obstacle marking off.
@@ -238,6 +265,7 @@ class StereoDepthNode(Node):
         self._alignment_verified = self._alignment_period <= 0.0
         self._self_align = bool(self.get_parameter('self_align').value)
         self._realign_pts = []  # (left Nx2, right Nx2) raw matches gathered while still
+        self._row_samples = []  # (time, signed row errors) gathered while driving
         self._offset_gaps = []  # measured - expected disparity at LiDAR returns
         self._offset_frames = 0
         # Gap from the previous batch; a correction needs two that agree.
@@ -269,6 +297,8 @@ class StereoDepthNode(Node):
         self._last_image_s = {'left': time.monotonic() + 40.0, 'right': time.monotonic() + 40.0}
         self._images_lost = False
         self._last_images_warn_s = 0.0
+        self._last_camera_restart_s = time.monotonic()
+        self._camera_restarts = 0
         self._num_disp = 128
 
         # Two scans for one costmap layer: stereo_blob_scan marks confirmed
@@ -531,10 +561,46 @@ class StereoDepthNode(Node):
             self.get_logger().error(
                 f'No stereo pairs for {now - self._last_pair_s:.0f} s '
                 f'(no frames from: {", ".join(missing) or "neither; pairs do not match in time"}). '
-                'Stereo obstacles are OFF; the LiDAR still works. A camera that dropped off '
-                'USB ("No such device" from v4l2_camera) needs its cable reseated and the stack '
-                'restarted.')
+                'Stereo obstacles are OFF; the LiDAR still works. The cameras are restarted '
+                'automatically; if this repeats, reseat their USB cables.')
         self._images_lost = True
+        restart_after = float(self.get_parameter('camera_restart_after_sec').value)
+        if (
+            missing and restart_after > 0.0
+            and now - self._last_pair_s >= restart_after
+            and now - self._last_camera_restart_s
+                >= float(self.get_parameter('camera_restart_cooldown_sec').value)
+        ):
+            self._last_camera_restart_s = now
+            self._restart_cameras(missing, now - self._last_pair_s)
+
+    def _restart_cameras(self, missing, lost_for: float) -> None:
+        """Stop the camera container; stereo.launch.py starts it again when it exits."""
+        found = subprocess.run(
+            ['pgrep', '-f', '__node:=stereo_container'],
+            capture_output=True, text=True, check=False).stdout.split()
+        if not found:
+            return
+        self._camera_restarts += 1
+        self.get_logger().warning(
+            f'No frames from {", ".join(missing)} for {lost_for:.0f} s: restarting the cameras '
+            f'(restart {self._camera_restarts} this run)')
+        for pid in map(int, found):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                continue
+            # A process stuck on a dead device may ignore SIGTERM.
+            killer = threading.Timer(5.0, self._kill_if_alive, args=(pid,))
+            killer.daemon = True
+            killer.start()
+
+    @staticmethod
+    def _kill_if_alive(pid: int) -> None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
     def _on_raw(self, raw, queue, side: str) -> None:
         self._last_image_s[side] = time.monotonic()
@@ -653,15 +719,21 @@ class StereoDepthNode(Node):
         ex, ey = rx + drop_range * math.cos(yaw), ry + drop_range * math.sin(yaw)
         move = float(self.get_parameter('drop_confirm_move_m').value)
         # An artefact moves with the robot, so its edge shifts as far as the
-        # robot did; a real edge shifts only by the 5 cm range bins.
-        ok = False
+        # robot did; a real edge shifts only by the 5 cm range bins. Most earlier
+        # sightings must agree, not just one: a mirror image in a glossy floor
+        # holds its place in the image like the artefact above, and with many
+        # sightings the range bins let one pair agree by chance (15 false stops
+        # in one run on terrazzo; 0 this way). In simulation a real edge seen at
+        # 0.72 m is still confirmed with about 0.54 m to go, as it was before.
+        agree = eligible = 0
         for h in self._drop_hits:
             moved = math.hypot(rx - h[1], ry - h[2])
-            if moved >= move and math.hypot(ex - h[3], ey - h[4]) <= min(0.12, 0.5 * moved):
-                ok = True
-                break
+            if moved >= move:
+                eligible += 1
+                if math.hypot(ex - h[3], ey - h[4]) <= min(0.08, 0.4 * moved):
+                    agree += 1
         self._drop_hits.append((now, rx, ry, ex, ey))
-        return ok
+        return agree >= 1 and agree >= 0.6 * eligible
 
     def _still(self) -> bool:
         """Stopped for at least a second. The cameras are not synchronized, so
@@ -897,7 +969,13 @@ class StereoDepthNode(Node):
             return
         now = time.monotonic()
         # While gathering matches for a re-fit, check every second instead.
-        period = 1.0 if self._realign_pts else self._alignment_period
+        still = self._still()
+        if self._realign_pts:
+            period = 1.0
+        elif self._self_align and not still:
+            period = min(self._alignment_period, float(self.get_parameter('row_track_period_sec').value))
+        else:
+            period = self._alignment_period
         if self._last_alignment_s and (now - self._last_alignment_s) < period:
             return
         self._last_alignment_s = now
@@ -915,13 +993,15 @@ class StereoDepthNode(Node):
         if (
             self._self_align
             and error > float(self.get_parameter('realign_row_trigger_px').value)
-            and self._still()
+            and still
         ):
             if self._realign_rows(pts_l, pts_r):
                 return
         else:
             # Moving, or aligned again: matches gathered so far no longer belong together.
             self._realign_pts = []
+            if self._self_align and not still and self._track_rows(rows):
+                return
         if error > self._max_row_error:
             self._misaligned_checks += 1
         else:
@@ -941,6 +1021,56 @@ class StereoDepthNode(Node):
             )
         elif was:
             self.get_logger().info(f'Stereo alignment recovered ({error:.1f} px)')
+
+    def _track_rows(self, rows: np.ndarray) -> bool:
+        """Follow a constant row offset while driving. True when a correction was applied."""
+        now = time.monotonic()
+        window = float(self.get_parameter('row_track_window_sec').value)
+        self._row_samples = [s for s in self._row_samples if now - s[0] <= window]
+        self._row_samples.append((now, rows))
+        checks = int(self.get_parameter('row_track_min_checks').value)
+        recent = [s[1] for s in self._row_samples[-checks:]]
+        gathered = np.concatenate(recent)
+        if len(recent) < checks or gathered.size < int(self.get_parameter('row_track_min_matches').value):
+            return False
+        trigger = float(self.get_parameter('row_track_trigger_px').value)
+        medians = [float(np.median(r)) for r in recent]
+        if not (all(m > trigger for m in medians) or all(m < -trigger for m in medians)):
+            return False
+        offset = float(np.median(gathered))
+        spread = float(np.median(np.abs(gathered - offset)))
+        if spread > float(self.get_parameter('row_track_max_spread_px').value):
+            return False
+        self._row_samples = []
+        c = self._calib
+        # The row error's change per pixel of right cy: about +1, but stereoRectify rescales.
+        k2 = c['k2'].copy()
+        k2[1, 2] += 1.0
+        centre = np.array([[c['size'][0] / 2.0, c['size'][1] / 2.0]])
+        at = lambda k: float(stereo_common.rectified_row_error(
+            centre, centre, c['k1'], c['d1'], k, c['d2'], c['size'],
+            c['rotation'], c['translation'])[0])
+        slope = at(k2) - at(c['k2'])
+        if abs(slope) < 0.1:
+            return False
+        k2 = c['k2'].copy()
+        k2[1, 2] -= offset / slope
+        total = float(k2[1, 2] - self._calib_file['k2'][1, 2])
+        limit = float(self.get_parameter('row_track_max_total_px').value)
+        if abs(total) > limit:
+            self.get_logger().warning(
+                f'Stereo rows are {offset:+.1f} px off, but fixing it needs the right cy moved '
+                f'{total:+.1f} px from the file (limit {limit:.0f}). Check the camera mount.')
+            return False
+        self._apply_calib(dict(c, k2=k2))
+        self._misaligned_checks = 0
+        self._misaligned = False
+        self._alignment_verified = True
+        self._row_error_px = spread
+        self.get_logger().info(
+            f'Stereo rows drifted {offset:+.1f} px while driving, over {gathered.size} matches: '
+            f'right cy {total:+.1f} px from the file, in memory. A large value means a loose camera mount.')
+        return True
 
     def _realign_rows(self, pts_l: np.ndarray, pts_r: np.ndarray) -> bool:
         """Gather matches; once there are enough, re-fit the pose between the cameras.
