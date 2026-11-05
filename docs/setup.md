@@ -263,6 +263,65 @@ After ROS 2 Humble is fully installed on the Pi (including "Setup Sources" and "
 
    The script defaults to `COLCON_PARALLEL_JOBS=1` (safe for low-memory SBCs). Override when needed, e.g. `COLCON_PARALLEL_JOBS=2 ./scripts/build/rebuild_common.sh minimal`.
 
+## Fleet OS configuration (do this on every robot)
+
+Git carries the workspace, not the operating system. These changes were made by hand on Inky while the stack was tuned, so a robot set up from the steps above alone is missing them. Clyde was brought in line on 2026-11-03 by diffing the two Pis. Do this after the workspace builds and the [Wi-Fi](#wi-fi-switching-scriptsnetworkswitch_wifish) and [udev](#usb-port-settings-for-opencr) steps below are done.
+
+1. Log in as the robot user (`pinky`, not a shared account) and apply the settings. It needs internet, takes a few minutes, and is safe to re-run:
+
+   ```bash
+   cd ~/turtlebot3
+   sudo ./scripts/setup/robot_system_config.sh
+   ```
+
+2. Copy the tf2 overlay from a robot that has it. It is not in git:
+
+   ```bash
+   scp -r inky@inky:tf2_deadlock_fix ~/
+   ```
+
+3. Reboot, then check. Every line should say `ok`. The check changes nothing, so it also works for finding out how far a robot has drifted:
+
+   ```bash
+   sudo reboot
+   cd ~/turtlebot3
+   ./scripts/setup/robot_system_config.sh --check
+   ```
+
+4. Do the [per-robot steps](#per-robot-steps-not-scripted) below.
+
+### What the script sets, and why
+
+| Item | Why |
+| --- | --- |
+| `v4l-utils`, `ros-humble-v4l2-camera`, `ros-humble-cv-bridge`, `python3-opencv` | Stereo cameras and depth node. Without `v4l2-ctl`, `stereo.launch.py` skips its camera checks and focus lock. Not in the install list above |
+| `ros-humble-rmw-cyclonedds-cpp`, `iw` | Required by `ros_robot_env.bash` and the Wi-Fi power-save steps |
+| `chrony` replaces `systemd-timesyncd` | The time daemon Inky runs, so the fleet behaves the same. It also recovers better than timesyncd after Wi-Fi drops |
+| `python3-pip`, `python3.10-venv`; pip `--user` `numpy==1.26.4`, `pyzmq==27.1.0` | `numpy` overrides Ubuntu's 1.21.5, and Inky's stereo tuning ran on this version. Nothing in the repo imports `zmq`; it is here only so robots match |
+| `ros-humble-foxglove-bridge`, `ros-humble-image-transport-plugins`, `ros-humble-usb-cam` | Debug and visualisation tools. The fleet launch does not start them |
+| `tshark`, passwordless `sudo` for `tcpdump` and `tshark` (`/etc/sudoers.d/packet-capture`), capture capabilities on `tcpdump` | Packet captures for the security experiments only |
+| `metricbeat`, `packetbeat`, `heartbeat-elastic` disabled | They ship to Logstash at `192.168.0.76:5044`, unreachable from TAMU_WiFi, so they retry forever: about 470 MB RAM and 12% CPU, and they fill the journal |
+| `bluetooth`, `hciuart` disabled | Nothing uses Bluetooth, and it shares the Pi 4 radio with Wi-Fi |
+| `openvswitch-*`, `dpdk`, `rdma-core` removed if present | Unused, and they kept `ovs-vswitchd` and `ovsdb-server` running on Clyde. Skipped if netplan refers to Open vSwitch |
+| `/etc/networkd-dispatcher/routable.d/50-wifi-powersave-off` | Turns power save off after every reconnect. `wifi-powersave-off.service` above only covers the first link at boot |
+| `/etc/sysctl.d/60-cyclonedds.conf`: `net.core.rmem_max=8388608` | Cyclone asks for 8 MB receive buffers and the kernel caps them at 208 KB, so stereo traffic gets dropped on loopback ([details](navigation.md#ros-domain-and-dds-on-the-robot)) |
+| `/etc/systemd/journald.conf.d/size.conf`: `SystemMaxUse=200M` | Stops the journal growing without limit (Clyde's had reached 840 MB) |
+| `~/.bashrc` paths | Moves `scripts/ros_robot_env.bash` to `scripts/env/`. With the old paths the `if [ -f ... ]` hides the problem: shells silently get no RMW, domain or tf2 overlay |
+
+For security experiments, turn the beats back on with `sudo systemctl enable --now metricbeat packetbeat heartbeat-elastic`. First copy Inky's trimmed `/etc/packetbeat/packetbeat.yml` (ICMP, TCP and UDP only) and set the robot's own address under `Robot Self Ping` in `/etc/heartbeat/heartbeat.yml`.
+
+### The tf2 overlay
+
+`~/tf2_deadlock_fix` holds a patched `libtf2.so` that runs transform callbacks without holding `transformable_requests_mutex_`. Stock Humble tf2 can deadlock that mutex against `Buffer::waitForTransform`, and Nav2's laser callback then freezes `map -> odom` for the life of the controller. `ros_robot_env.bash` puts it on `LD_LIBRARY_PATH` when the file exists and says nothing when it does not, so a robot without it runs but can freeze mid-run. Inky and Clyde have the same build (`sha256sum` starts `3ccb0b44`), so copying works between Pis. The source is in `~/tf2_deadlock_fix/src/tf2`.
+
+### Per-robot steps (not scripted)
+
+- **Stereo calibration:** `config/stereo/<robot>.yaml`. Follow "Stereo recalibration order" in [navigation.md](navigation.md), starting at `stereo_calibrate.py`. Each camera pair needs its own; never copy one between robots. Inky's left camera is a 1080P and its right an 8MP; Clyde has two 8MP.
+- **Fitted hardware:** `config/sensors/<robot>.yaml` for anything that differs from the defaults, such as `ultrasonic: false` when no ultrasonic sensor is fitted. The defaults assume one is.
+- **Zenoh bridge:** [scripts/comms/ROBOT_ZENOH_SETUP.md](../scripts/comms/ROBOT_ZENOH_SETUP.md).
+
+Deliberately left per-robot: `~/.ssh/authorized_keys` (who may log in), and the hostname, which stays `ubuntu` on the Pis because the robot name comes from the user account.
+
 ---
 
 ## Wi‑Fi switching (`scripts/network/switch_wifi.sh`)

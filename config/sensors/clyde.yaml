@@ -1,0 +1,4 @@
+# Optional hardware fitted to this robot. The LiDAR, IMU and wheel encoders
+# are standard; stereo cameras are detected from /dev/video* and
+# config/stereo/<robot>.yaml. A robot without a file here keeps the defaults.
+ultrasonic: false   # none fitted; the OpenCR still publishes a constant 3.0 m

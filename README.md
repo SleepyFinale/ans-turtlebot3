@@ -6,7 +6,7 @@ This is the robot half of the fleet. Each Raspberry Pi runs bringup, SLAM Toolbo
 | --- | --- |
 | this README | running the robot, how the stack fits together, quick troubleshooting |
 | [docs/navigation.md](docs/navigation.md) | every node in detail: sensor fusion, the Zenoh link, motion commands, recovery, stuck detection, low-obstacle memory, stereo, tilt gate, Nav2 troubleshooting |
-| [docs/setup.md](docs/setup.md) | one-time Pi setup: Ubuntu, ROS 2 Humble, building this workspace, Wi-Fi, udev names, OpenCR firmware, LiDAR model |
+| [docs/setup.md](docs/setup.md) | one-time Pi setup: Ubuntu, ROS 2 Humble, building this workspace, fleet OS configuration, Wi-Fi, udev names, OpenCR firmware, LiDAR model |
 | [docs/diagnostics.md](docs/diagnostics.md) | debug captures and analyzers |
 | [docs/orca_hybrid_operator_runbook.md](docs/orca_hybrid_operator_runbook.md) | the ORCA experiment (off by default) |
 
