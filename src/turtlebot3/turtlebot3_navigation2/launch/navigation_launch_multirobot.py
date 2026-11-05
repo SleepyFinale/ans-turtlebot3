@@ -15,7 +15,10 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.actions import (
+    DeclareLaunchArgument, LogInfo, RegisterEventHandler, SetEnvironmentVariable, Shutdown)
+from launch.conditions import UnlessCondition
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
@@ -61,6 +64,29 @@ def generate_launch_description():
             arguments=['--ros-args', '--log-level', log_level],
             remappings=remappings + list(extra_remappings))
 
+    # Velocity pipeline: controller -> cmd_vel_nav -> smoother ->
+    # cmd_vel_smoothed, and behaviors -> cmd_vel_behavior. cmd_vel_mux
+    # (navigation2_slam.launch.py) picks one of those or a stuck_detector
+    # reflex and is the only node that publishes cmd_vel.
+    servers = [
+        server('nav2_controller', 'controller_server', [('cmd_vel', 'cmd_vel_nav')]),
+        server('nav2_planner', 'planner_server'),
+        server('nav2_behaviors', 'behavior_server', [('cmd_vel', 'cmd_vel_behavior')]),
+        server('nav2_bt_navigator', 'bt_navigator'),
+        server('nav2_velocity_smoother', 'velocity_smoother', [('cmd_vel', 'cmd_vel_nav')]),
+    ]
+
+    # With bonds off nothing notices a dead server and nothing can reactivate
+    # one, so the rest of the stack would look alive while no goal can ever
+    # run. Stop the launch, which also stops the fleet with an error.
+    def stop_when_dead(node):
+        return RegisterEventHandler(OnProcessExit(
+            target_action=node,
+            on_exit=[
+                LogInfo(msg='A Nav2 server exited; stopping the launch.'),
+                Shutdown(reason='Nav2 server exited', condition=UnlessCondition(use_respawn)),
+            ]))
+
     return LaunchDescription([
         SetEnvironmentVariable('RCUTILS_LOGGING_BUFFERED_STREAM', '1'),
         DeclareLaunchArgument('namespace', default_value=''),
@@ -72,15 +98,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_respawn', default_value='False'),
         DeclareLaunchArgument('log_level', default_value='info'),
 
-        # Velocity pipeline: controller -> cmd_vel_nav -> smoother ->
-        # cmd_vel_smoothed, and behaviors -> cmd_vel_behavior. cmd_vel_mux
-        # (navigation2_slam.launch.py) picks one of those or a stuck_detector
-        # reflex and is the only node that publishes cmd_vel.
-        server('nav2_controller', 'controller_server', [('cmd_vel', 'cmd_vel_nav')]),
-        server('nav2_planner', 'planner_server'),
-        server('nav2_behaviors', 'behavior_server', [('cmd_vel', 'cmd_vel_behavior')]),
-        server('nav2_bt_navigator', 'bt_navigator'),
-        server('nav2_velocity_smoother', 'velocity_smoother', [('cmd_vel', 'cmd_vel_nav')]),
+        *servers,
+        *[stop_when_dead(node) for node in servers],
         Node(
             package='nav2_lifecycle_manager',
             executable='lifecycle_manager',
