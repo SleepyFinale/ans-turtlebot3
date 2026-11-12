@@ -114,7 +114,7 @@ echo "  distro:   ${ROS_DISTRO}"
 echo "  ROS_LOCALHOST_ONLY: (unset)"
 echo "  CYCLONEDDS_URI: ${CYCLONEDDS_URI:-unset}"
 echo "  tf relay: /${ROBOT}/tf -> /${ROBOT}/tf_zenoh (best-effort; bridge does not subscribe to /tf)"
-echo "  failsafe: drive home after 15 s without a reply from ${CENTRAL_HOST} (FLEET_LINK_FAILSAFE=${FLEET_LINK_FAILSAFE:-1})"
+echo "  failsafe: drive home after 30 s without a reply from ${CENTRAL_HOST} (FLEET_LINK_FAILSAFE=${FLEET_LINK_FAILSAFE:-1})"
 echo ""
 
 RELAY_PID=""

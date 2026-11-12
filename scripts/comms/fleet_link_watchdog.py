@@ -2,7 +2,7 @@
 """Drive the robot home when it loses its link to the central PC.
 
 Started by start_zenoh_robot.sh, so it runs only in a fleet run. Every 2 s it
-pings the central PC. After loss_sec with no reply the robot is on its own:
+pings the central PC. After LOSS_S (30 s) with no reply the robot is on its own:
 Nav2 runs here, on the robot's own SLAM map, so this node sends it a
 NavigateToPose back to where the robot stood when the node started. The new
 goal replaces whatever goal the central explorer had given.
@@ -44,7 +44,10 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from tf2_msgs.msg import TFMessage
 
 PING_PERIOD_S = 2.0
-LOSS_S = 15.0           # no reply for this long -> drive home
+# No reply for this long -> drive home. 30 s, not 15: a roam that works can
+# still silence the link for about 20 s (Clyde, hall4 2026-11-12), and the
+# outages worth acting on last minutes.
+LOSS_S = 30.0
 RESTORE_S = 6.0         # replies for this long -> hand back to the explorer
 HOME_TOLERANCE_M = 0.3  # closer than this to home: do not send a goal
 RETRY_S = 10.0          # wait after a failed trip home before trying again
