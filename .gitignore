@@ -34,6 +34,16 @@ scripts/security/*_test.json
 # security: all TPM key material lives here (code lives in scripts/security/auth/)
 scripts/security/tpm/
 
+# Per-robot stereo calibration (changes constantly)
+config/stereo/blinky.yaml
+config/stereo/blinky.yaml.bak
+config/stereo/pinky.yaml
+config/stereo/pinky.yaml.bak
+config/stereo/inky.yaml
+config/stereo/inky.yaml.bak
+config/stereo/clyde.yaml
+config/stereo/clyde.yaml.bak
+
 # Editor swap/backup files
 *.swp
 *.swo

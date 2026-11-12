@@ -114,14 +114,19 @@ echo "  distro:   ${ROS_DISTRO}"
 echo "  ROS_LOCALHOST_ONLY: (unset)"
 echo "  CYCLONEDDS_URI: ${CYCLONEDDS_URI:-unset}"
 echo "  tf relay: /${ROBOT}/tf -> /${ROBOT}/tf_zenoh (best-effort; bridge does not subscribe to /tf)"
+echo "  failsafe: drive home after 15 s without a reply from ${CENTRAL_HOST} (FLEET_LINK_FAILSAFE=${FLEET_LINK_FAILSAFE:-1})"
 echo ""
 
 RELAY_PID=""
+WATCHDOG_PID=""
 cleanup() {
-  if [[ -n "${RELAY_PID}" ]] && kill -0 "${RELAY_PID}" 2>/dev/null; then
-    kill "${RELAY_PID}" 2>/dev/null || true
-    wait "${RELAY_PID}" 2>/dev/null || true
-  fi
+  local pid
+  for pid in "${RELAY_PID}" "${WATCHDOG_PID}"; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+    fi
+  done
 }
 trap cleanup EXIT INT TERM
 # C++ relay from turtlebot3_navigation2; the Python copy cost ~0.2 core on
@@ -134,5 +139,11 @@ else
   python3 "${SCRIPT_DIR}/tf_zenoh_publish.py" "${ROBOT}" &
 fi
 RELAY_PID=$!
+
+# Drives the robot home on its own map if the central PC stops answering,
+# and hands it back to the explorer when the link returns. Set
+# FLEET_LINK_FAILSAFE=0 to only log link changes.
+python3 "${SCRIPT_DIR}/fleet_link_watchdog.py" "${ROBOT}" "${CENTRAL_HOST}" &
+WATCHDOG_PID=$!
 
 "${ZENOH_BIN}" -c "$RUNTIME_CONFIG"
