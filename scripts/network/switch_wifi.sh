@@ -154,6 +154,19 @@ out, _n = re.subn(
     flags=re.IGNORECASE,
 )
 
+# TAMU access points send 802.11v steering requests ("WNM: Disassociation
+# Imminent"). On the Pis the roam they ask for often fails: every suggested AP
+# refuses within 10 s, wpa_supplicant backs off, and the robot is off the
+# network for minutes (Inky, 2026-11-12). Ignore those requests and roam on our
+# own instead: bgscan scans every 30 s once the signal is below -70 dBm (hourly
+# above it) and moves to a clearly better AP of the same SSID.
+for key, value in (("disable_btm", "1"), ("bgscan", '"simple:30:-70:3600"')):
+    if f"\n  {key}=" not in out:
+        out, n = re.subn(r"(eap=PEAP)\r?\n", r"\1\n  " + key + "=" + value.replace("\\", "\\\\") + "\n", out, count=1)
+        if n != 1:
+            print(f"patch_wpa: could not add {key}", file=sys.stderr)
+            sys.exit(1)
+
 if nt_hash:
     hexv = nt_hash
     if hexv.lower().startswith("(stdin)="):
