@@ -43,6 +43,8 @@ Before=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# A hung Wi-Fi step (e.g. a brcmfmac oops) must not hold boot and sshd forever.
+TimeoutStartSec=180
 ExecStart=$BOOT_WIFI_SCRIPT
 StandardOutput=journal
 StandardError=journal

@@ -36,6 +36,18 @@ SYSCTL_CONF=/etc/sysctl.d/60-cyclonedds.conf
 JOURNALD_CONF=/etc/systemd/journald.conf.d/size.conf
 SUDOERS_CAPTURE=/etc/sudoers.d/packet-capture
 STALE_BASHRC='turtlebot3/scripts/ros_(robot_env|domain_profile)\.bash'
+# brcmfmac on kernel 5.15.0-1113-raspi: the firmware's 802.1X 4-way handshake offload (FWSUP, bit 13)
+# never installs keys, so on TAMU_WiFi no data passes and the AP deauths after ~4 s. wpa_supplicant
+# does the handshake instead. The driver loads from the initramfs, so changes need update-initramfs.
+BRCMFMAC_CONF=/etc/modprobe.d/brcmfmac-no-fwsup.conf
+BRCMFMAC_OPTS='options brcmfmac feature_disable=0x2000'
+# Runs before every netplan-wpa-wlan0 start to add what netplan cannot express:
+# p2p_disabled=1 (a wpa_supplicant restart while the driver creates p2p-dev-wlan0 oopses brcmfmac
+# and hangs boot), and domain_suffix_match=net.tamu.edu for TAMU EAP-TLS.
+WPA_FIXUPS=/usr/local/sbin/netplan-wpa-fixups
+WPA_DROPIN=/etc/systemd/system/netplan-wpa-wlan0.service.d/fixups.conf
+# A hung Wi-Fi step must not hold boot (and sshd) forever.
+BOOT_WIFI_DROPIN=/etc/systemd/system/boot-wifi.service.d/timeout.conf
 
 failures=0
 report() {  # report <ok|fail|warn> <text>
@@ -83,6 +95,10 @@ run_check() {
   echo "Settings:"
   expect "Wi-Fi reconnect hook executable" test -x "$WIFI_HOOK"
   expect "Wi-Fi power save off now" bash -c "iw dev wlan0 get power_save | grep -q 'Power save: off'"
+  expect "brcmfmac 802.1X handshake offload disabled in $BRCMFMAC_CONF" grep -qx "$BRCMFMAC_OPTS" "$BRCMFMAC_CONF"
+  expect "brcmfmac 802.1X handshake offload off now" bash -c "! iw phy | grep -q 4WAY_HANDSHAKE_STA_1X"
+  expect "wpa_supplicant fixups hook installed" bash -c "test -x $WPA_FIXUPS && grep -q $WPA_FIXUPS $WPA_DROPIN"
+  expect "boot-wifi start timeout set" grep -q '^TimeoutStartSec=' "$BOOT_WIFI_DROPIN"
   expect "net.core.rmem_max is 8388608" test "$(cat /proc/sys/net/core/rmem_max)" = 8388608
   expect "journald capped in $JOURNALD_CONF" grep -q '^SystemMaxUse=200M' "$JOURNALD_CONF"
   expect "sudo tcpdump and tshark without a password" bash -c \
@@ -183,6 +199,31 @@ exit 0
 EOF
 chmod 755 "$WIFI_HOOK"
 iw dev wlan0 set power_save off || true
+
+echo "== Wi-Fi driver and wpa_supplicant"
+if ! grep -qxs "$BRCMFMAC_OPTS" "$BRCMFMAC_CONF"; then
+  printf '# See scripts/setup/robot_system_config.sh and docs/setup.md.\n%s\n' "$BRCMFMAC_OPTS" > "$BRCMFMAC_CONF"
+  update-initramfs -u
+fi
+cat > "$WPA_FIXUPS" << 'EOF'
+#!/bin/sh
+# ExecStartPre of netplan-wpa-wlan0.service (installed by robot_system_config.sh).
+# Adds to netplan's generated wpa_supplicant config what netplan cannot express.
+conf=/run/netplan/wpa-wlan0.conf
+[ -f "$conf" ] || exit 0
+# No P2P device: restarting wpa_supplicant while brcmfmac creates p2p-dev-wlan0 oopses the driver.
+grep -q '^p2p_disabled=' "$conf" || sed -i '1a p2p_disabled=1' "$conf"
+# TAMU EAP-TLS (SecureW2 JoinNow cert): only trust a RADIUS certificate for net.tamu.edu.
+if grep -q 'eap=TLS' "$conf" && ! grep -q 'domain_suffix_match' "$conf"; then
+  sed -i '/eap=TLS/a\  domain_suffix_match="net.tamu.edu"' "$conf"
+fi
+exit 0
+EOF
+chmod 755 "$WPA_FIXUPS"
+mkdir -p "$(dirname "$WPA_DROPIN")" "$(dirname "$BOOT_WIFI_DROPIN")"
+printf '[Service]\nExecStartPre=%s\n' "$WPA_FIXUPS" > "$WPA_DROPIN"
+printf '[Service]\nTimeoutStartSec=180\n' > "$BOOT_WIFI_DROPIN"
+systemctl daemon-reload
 
 echo "== Kernel UDP buffers"
 echo 'net.core.rmem_max=8388608' > "$SYSCTL_CONF"

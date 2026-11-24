@@ -304,6 +304,9 @@ Git carries the workspace, not the operating system. These changes were made by 
 | `bluetooth`, `hciuart` disabled | Nothing uses Bluetooth, and it shares the Pi 4 radio with Wi-Fi |
 | `openvswitch-*`, `dpdk`, `rdma-core` removed if present | Unused, and they kept `ovs-vswitchd` and `ovsdb-server` running on Clyde. Skipped if netplan refers to Open vSwitch |
 | `/etc/networkd-dispatcher/routable.d/50-wifi-powersave-off` | Turns power save off after every reconnect. `wifi-powersave-off.service` above only covers the first link at boot |
+| `/etc/modprobe.d/brcmfmac-no-fwsup.conf` (`feature_disable=0x2000`), then `update-initramfs -u` | On kernel 5.15.0-1113-raspi the Wi-Fi firmware's 802.1X 4-way handshake offload never installs the keys. EAP succeeds, but no data passes (not even DHCP), and the TAMU access point deauths the robot about 4 s later, over and over. With the offload off, wpa_supplicant does the handshake. Found on Inky 2026-11-24. The driver loads from the initramfs, so the option needs `update-initramfs` |
+| `/usr/local/sbin/netplan-wpa-fixups`, run as `ExecStartPre` of `netplan-wpa-wlan0.service` | Adds what netplan cannot express to the generated wpa_supplicant config: `p2p_disabled=1` and, for TAMU EAP-TLS, `domain_suffix_match="net.tamu.edu"`. Without P2P off, restarting wpa_supplicant while brcmfmac is still creating `p2p-dev-wlan0` crashed the driver (kernel oops) and hung boot |
+| `boot-wifi.service` start timeout 180 s (drop-in) | A hung Wi-Fi step must not hold boot, and with it sshd, forever. Before this, the unit had no limit |
 | `/etc/sysctl.d/60-cyclonedds.conf`: `net.core.rmem_max=8388608` | Cyclone asks for 8 MB receive buffers and the kernel caps them at 208 KB, so stereo traffic gets dropped on loopback ([details](navigation.md#ros-domain-and-dds-on-the-robot)) |
 | `/etc/systemd/journald.conf.d/size.conf`: `SystemMaxUse=200M` | Stops the journal growing without limit (Clyde's had reached 840 MB) |
 | `~/.bashrc` paths | Moves `scripts/ros_robot_env.bash` to `scripts/env/`. With the old paths the `if [ -f ... ]` hides the problem: shells silently get no RMW, domain or tf2 overlay |
@@ -358,6 +361,27 @@ After cloning `~/turtlebot3` on a robot, set up Wi-Fi management in this order:
    sudo ./scripts/network/switch_wifi.sh tamu
    ./scripts/network/switch_wifi.sh status
    ```
+
+### TAMU_WiFi certificate (EAP-TLS)
+
+`switch_wifi.sh tamu` uses certificate login (EAP-TLS) when `/etc/wpa_supplicant/tamu/client.crt` and `client.key` exist, and the NetID password (PEAP) otherwise. `boot-wifi.service` runs `switch_wifi.sh tamu` at every boot, so the same choice applies then. Force a method with `TAMU_EAP=tls` or `TAMU_EAP=peap`. TAMU issues the certificate through SecureW2 JoinNow, which needs a browser and Duo, so it cannot run on a robot. Inky's was set up on 2026-11-24 like this:
+
+1. On a PC with a browser, run TAMU's `SecureW2_JoinNow.run` (TAMU KB article 2159) and sign in. It saves the certificate in `~/.joinnow/tls-client-certs/` and creates a NetworkManager connection named like `TAMU_WiFi [19c4a1a1]`.
+2. Convert the key to unencrypted PEM. The `.p12` passphrase is stored in that connection:
+
+   ```bash
+   umask 077
+   nmcli -s -g 802-1x.private-key-password con show "TAMU_WiFi [xxxxxxxx]" > pw
+   openssl pkcs12 -in ~/.joinnow/tls-client-certs/<name>.p12 -nocerts -nodes -passin file:pw | openssl pkey -out client.key
+   shred -u pw
+   cp ~/.joinnow/tls-client-certs/<name>.crt client.crt
+   cp ~/.joinnow/*-certs-bundle.pem ca-bundle.pem
+   ```
+
+3. Copy the three files to the robot as `/etc/wpa_supplicant/tamu/{client.crt,client.key,ca-bundle.pem}`: directory mode 700, files mode 600, owner root.
+4. Run `sudo ./scripts/network/switch_wifi.sh tamu`. The EAP identity is the certificate CN (`<UIN>@tamu.edu`). `scripts/setup/robot_system_config.sh` installs `netplan-wpa-fixups`, which adds `domain_suffix_match="net.tamu.edu"`.
+
+The certificate is valid for 10 years and is tied to the NetID that enrolled it, not to the robot.
 
 ### Static IPs on the Azure hotspot
 
