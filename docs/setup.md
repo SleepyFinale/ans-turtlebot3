@@ -333,7 +333,7 @@ This repo includes a helper script to switch the robot’s Wi‑Fi between the *
 
 - Script path: `scripts/network/switch_wifi.sh`
 - Netplan override file used: `/etc/netplan/99-wifi-switch.yaml`
-- Default TAMU NetID identity is built into the script (`schen08`); override with `TAMU_IDENTITY` / `TAMU_PASSWORD` if needed.
+- TAMU uses the EAP-TLS certificate when one is installed (below). Without it, PEAP uses NetID `schen08` (`TAMU_IDENTITY`) and reads the password from `TAMU_PASSWORD` or `/etc/wpa_supplicant/tamu/peap-password` (root:root, mode 600). The password is not in git.
 
 ### Recommended right after cloning this repo
 
@@ -375,7 +375,7 @@ After cloning `~/turtlebot3` on a robot, set up Wi-Fi management in this order:
    openssl pkcs12 -in ~/.joinnow/tls-client-certs/<name>.p12 -nocerts -nodes -passin file:pw | openssl pkey -out client.key
    shred -u pw
    cp ~/.joinnow/tls-client-certs/<name>.crt client.crt
-   cp ~/.joinnow/*-certs-bundle.pem ca-bundle.pem
+   cp ~/.joinnow/*certs-bundle.pem ca-bundle.pem
    ```
 
 3. Copy the three files to the robot as `/etc/wpa_supplicant/tamu/{client.crt,client.key,ca-bundle.pem}`: directory mode 700, files mode 600, owner root.
@@ -404,7 +404,7 @@ cd ~/turtlebot3
 # Connect to Azure hotspot with static IP (per robot/user)
 sudo ./scripts/network/switch_wifi.sh azure
 
-# Connect to TAMU_WiFi with DHCP (WPA enterprise; credentials default in script)
+# Connect to TAMU_WiFi with DHCP (EAP-TLS certificate, or PEAP with the password file)
 sudo ./scripts/network/switch_wifi.sh tamu
 
 # Show current Wi‑Fi SSID and wlan0 IP

@@ -16,7 +16,8 @@
 #   tamu:   TAMU_WiFi (DHCP). EAP-TLS when $TAMU_TLS_DIR/client.crt and client.key exist
 #           (SecureW2 JoinNow certificate), otherwise PEAP + wpa patch per TAMU Pi KB.
 #           Force a method with TAMU_EAP=tls or TAMU_EAP=peap.
-#           PEAP defaults: identity schen08 (override with TAMU_IDENTITY / TAMU_PASSWORD)
+#           PEAP: identity schen08 (TAMU_IDENTITY); password from TAMU_PASSWORD or
+#           /etc/wpa_supplicant/tamu/peap-password (root-only; never commit it)
 #
 #   Optional: TAMU_CA_CERT=… (PEM) to validate RADIUS cert; TAMU_PASSWORD_NT_HASH=… for password=hash:… (KB 528)
 #             TAMU_DOMAIN_SUFFIX=tamu.edu only if Help Desk says your cert needs domain_suffix_match
@@ -43,10 +44,8 @@ AZURE_IP_CLYDE="172.20.10.16"
 # TAMU campus WiFi (WPA Enterprise). SSID must match the network name (see TAMU WiFi KB).
 TAMU_SSID="TAMU_WiFi"
 TAMU_IDENTITY="${TAMU_IDENTITY:-schen08}"
-# Single-quoted default so the trailing $ is literal (not an empty expansion).
-if [ -z "${TAMU_PASSWORD:-}" ]; then
-  TAMU_PASSWORD='REMOVED-SEE-DOCS'
-fi
+# PEAP password: never in git. From TAMU_PASSWORD, else the first line of a root-only file on the robot.
+TAMU_PASSWORD_FILE="${TAMU_PASSWORD_FILE:-/etc/wpa_supplicant/tamu/peap-password}"
 # Optional PEM for ca-certificate (unset = none, matching TAMU Pi KB 528). Example: USERTrust under /etc/ssl/certs.
 TAMU_CA_CERT="${TAMU_CA_CERT:-}"
 # EAP-TLS (SecureW2 JoinNow certificate). Files, root-only: client.crt, client.key (unencrypted PEM),
@@ -313,6 +312,15 @@ case "${1:-}" in
     fi
     if [ -n "${TAMU_CA_CERT:-}" ] && [ ! -r "${TAMU_CA_CERT}" ]; then
       echo "TAMU_CA_CERT is set but not readable: ${TAMU_CA_CERT}"
+      exit 1
+    fi
+    if [ -z "${TAMU_PASSWORD:-}" ] && [ -r "$TAMU_PASSWORD_FILE" ]; then
+      TAMU_PASSWORD="$(head -n1 "$TAMU_PASSWORD_FILE")"
+    fi
+    if [ -z "${TAMU_PASSWORD:-}" ]; then
+      echo "No TAMU EAP-TLS certificate in ${TAMU_TLS_DIR} and no PEAP password." >&2
+      echo "Install the certificate (docs/setup.md, \"TAMU_WiFi certificate (EAP-TLS)\"), or put the NetID" >&2
+      echo "password in ${TAMU_PASSWORD_FILE} (root:root, mode 600), or set TAMU_PASSWORD." >&2
       exit 1
     fi
     # TAMU KB528: NetID must be lowercase in identity.
